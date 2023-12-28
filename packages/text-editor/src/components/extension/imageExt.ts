@@ -21,10 +21,7 @@ import { type Node as ProseMirrorNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { type EditorView } from '@tiptap/pm/view'
 
-/**
- * @public
- */
-export type FileAttachFunction = (file: File) => Promise<{ file: string, type: string } | undefined>
+import { type FileAttachFunction } from './types'
 
 /**
  * @public

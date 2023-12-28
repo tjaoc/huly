@@ -19,7 +19,7 @@
   import { registerFocus } from '@hcengineering/ui'
   import CollaborativeTextEditor from './CollaborativeTextEditor.svelte'
   import { FocusExtension } from './extension/focus'
-  import { FileAttachFunction } from './extension/imageExt'
+  import { type FileAttachFunction } from './extension/types'
   import textEditorPlugin from '../plugin'
   import { minioDocumentId, mongodbDocumentId, platformDocumentId } from '../provider'
   import { RefAction, TextNodeAction } from '../types'

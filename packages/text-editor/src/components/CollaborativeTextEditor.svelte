@@ -44,7 +44,9 @@
   import { noSelectionRender, renderCursor } from './editor/collaboration'
   import { defaultEditorAttributes } from './editor/editorProps'
   import { EmojiExtension } from './extension/emoji'
-  import { FileAttachFunction, ImageExtension } from './extension/imageExt'
+  import { ImageExtension } from './extension/imageExt'
+  import { type FileAttachFunction } from './extension/types'
+  import { FileExtension } from './extension/fileExt'
   import { InlinePopupExtension } from './extension/inlinePopup'
   import { InlineStyleToolbarExtension } from './extension/inlineStyleToolbar'
   import { completionConfig, defaultExtensions } from './extensions'
@@ -204,6 +206,12 @@
   const optionalExtensions: AnyExtension[] = []
 
   if (attachFile !== undefined) {
+    optionalExtensions.push(
+      FileExtension.configure({
+        inline: true,
+        attachFile
+      })
+    )
     optionalExtensions.push(
       ImageExtension.configure({
         inline: true,

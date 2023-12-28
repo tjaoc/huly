@@ -23656,7 +23656,7 @@ packages:
     dev: false
 
   file:projects/text-editor.tgz(@types/node@16.11.68)(bufferutil@4.0.7)(esbuild@0.16.17)(postcss-load-config@4.0.1)(postcss@8.4.31)(prosemirror-model@1.19.3)(ts-node@10.9.1):
-    resolution: {integrity: sha512-s3a0AnlJS8WBnLjA5ggHaLcbSh9tT9DA6Szy9wYWGJzt9R82/nfhh4qMOLWbvHbTgOu/ieWGrhG2FpWAzHSwzw==, tarball: file:projects/text-editor.tgz}
+    resolution: {integrity: sha512-+sAcR5GMYGPgpN5NqXhSsjf6KS6zoIRV5srutaifGuKu9EYpVKJCZPS0Or81BNODPbfZ1Tec7j8VHZbgdZQV5g==, tarball: file:projects/text-editor.tgz}
     id: file:projects/text-editor.tgz
     name: '@rush-temp/text-editor'
     version: 0.0.0
@@ -23697,6 +23697,7 @@ packages:
       eslint-plugin-n: 15.7.0(eslint@8.54.0)
       eslint-plugin-promise: 6.1.1(eslint@8.54.0)
       eslint-plugin-svelte: 2.35.0(eslint@8.54.0)(svelte@4.2.5)(ts-node@10.9.1)
+      filesize: 8.0.7
       jest: 29.7.0(@types/node@16.11.68)(ts-node@10.9.1)
       prettier: 3.1.0
       prettier-plugin-svelte: 3.1.0(prettier@3.1.0)(svelte@4.2.5)

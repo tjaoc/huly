@@ -25,7 +25,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 import Typography from '@tiptap/extension-typography'
 import StarterKit from '@tiptap/starter-kit'
-import { ImageNode, ReferenceNode, TodoItemNode, TodoListNode } from './nodes'
+import { ImageNode, FileNode, ReferenceNode, TodoItemNode, TodoListNode } from './nodes'
 
 /**
  * @public
@@ -100,6 +100,7 @@ export const defaultExtensions: AnyExtension[] = [
 export const serverExtensions: AnyExtension[] = [
   ...defaultExtensions,
   ImageNode,
+  FileNode,
   ReferenceNode,
   TodoItemNode,
   TodoListNode
