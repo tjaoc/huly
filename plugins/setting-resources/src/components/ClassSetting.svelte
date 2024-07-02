@@ -13,8 +13,7 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
-  import core, { Class, Doc, Obj, Ref } from '@hcengineering/core'
+  import core, { Class, Doc, Obj, Ref, isOwnerOrMaintainer } from '@hcengineering/core'
   import { IntlString } from '@hcengineering/platform'
   import { createQuery, getClient } from '@hcengineering/presentation'
   import {
@@ -48,9 +47,8 @@
   | undefined = undefined
   export let withoutHeader = false
   export let useOfClassAttributes = true
-  export let visibleNav: boolean = true
 
-  const dispatch = createEventDispatcher()
+  const canEdit = isOwnerOrMaintainer()
 
   const loc = getLocation()
   const client = getClient()
@@ -104,7 +102,7 @@
 
 <div class="hulyComponent">
   {#if !withoutHeader}
-    <Header minimize={!visibleNav} on:resize={(event) => dispatch('change', event.detail)}>
+    <Header>
       <Breadcrumb icon={setting.icon.Clazz} label={setting.string.ClassSetting} size={'large'} isCurrent />
     </Header>
   {/if}
@@ -119,7 +117,13 @@
         </div>
       </div>
       <Scroller>
-        <NavGroup label={setting.string.Classes} selected={_class !== undefined} categoryName={'classes'} second>
+        <NavGroup
+          label={setting.string.Classes}
+          highlighted={_class !== undefined}
+          categoryName={'classes'}
+          noDivider
+          isFold
+        >
           <ClassHierarchy
             {classes}
             {_class}
@@ -137,7 +141,7 @@
       <Scroller align={'center'} padding={'var(--spacing-3)'} bottomPadding={'var(--spacing-3)'}>
         <div class="hulyComponent-content">
           {#if _class !== undefined}
-            <ClassAttributes {_class} {ofClass} {attributeMapper} />
+            <ClassAttributes {_class} {ofClass} {attributeMapper} disabled={!canEdit} />
           {/if}
         </div>
       </Scroller>

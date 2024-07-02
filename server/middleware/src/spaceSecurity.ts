@@ -31,7 +31,6 @@ import core, {
   SearchOptions,
   SearchQuery,
   SearchResult,
-  ServerStorage,
   Space,
   Tx,
   TxCUD,
@@ -45,7 +44,7 @@ import core, {
   systemAccountEmail
 } from '@hcengineering/core'
 import platform, { PlatformError, Severity, Status } from '@hcengineering/platform'
-import { Middleware, SessionContext, TxMiddlewareResult } from '@hcengineering/server-core'
+import { Middleware, SessionContext, TxMiddlewareResult, type ServerStorage } from '@hcengineering/server-core'
 import { BaseMiddleware } from './base'
 import { getUser, isOwner, isSystem, mergeTargets } from './utils'
 
@@ -71,6 +70,7 @@ export class SpaceSecurityMiddleware extends BaseMiddleware implements Middlewar
     core.space.DerivedTx,
     core.space.Model,
     core.space.Space,
+    core.space.Workspace,
     core.space.Tx
   ]
 
@@ -87,6 +87,10 @@ export class SpaceSecurityMiddleware extends BaseMiddleware implements Middlewar
     res.spaceMeasureCtx = ctx.newChild('space chain', {})
     res.spaceSecurityInit = res.init(res.spaceMeasureCtx)
     return res
+  }
+
+  private resyncDomains (): void {
+    this.spaceSecurityInit = this.init(this.spaceMeasureCtx)
   }
 
   private addMemberSpace (member: Ref<Account>, space: Ref<Space>): void {
@@ -394,6 +398,11 @@ export class SpaceSecurityMiddleware extends BaseMiddleware implements Middlewar
           await this.brodcastEvent(ctx, [cud.objectId])
         }
       }
+    } else if (tx._class === core.class.TxWorkspaceEvent) {
+      const event = tx as TxWorkspaceEvent
+      if (event.event === WorkspaceEvent.BulkUpdate) {
+        this.resyncDomains()
+      }
     }
   }
 
@@ -415,16 +424,27 @@ export class SpaceSecurityMiddleware extends BaseMiddleware implements Middlewar
       it.target = mergeTargets(targets, it.target)
     })
 
-    await this.waitInit()
-    for (const tt of ctx.derived) {
-      for (const t of tt.derived) {
-        if (this.storage.hierarchy.isDerived(t._class, core.class.TxCUD)) {
-          await this.processTxSpaceDomain(t as TxCUD<Doc>)
+    return res
+  }
+
+  override async handleBroadcast (
+    txes: Tx[],
+    targets?: string | string[] | undefined,
+    exclude?: string[] | undefined
+  ): Promise<void> {
+    for (const tx of txes) {
+      const h = this.storage.hierarchy
+      if (h.isDerived(tx._class, core.class.TxCUD)) {
+        const cudTx = tx as TxCUD<Doc>
+        await this.processTxSpaceDomain(cudTx)
+      } else if (tx._class === core.class.TxWorkspaceEvent) {
+        const event = tx as TxWorkspaceEvent
+        if (event.event === WorkspaceEvent.BulkUpdate) {
+          this.resyncDomains()
         }
       }
     }
-
-    return res
+    await this.next?.handleBroadcast(txes, targets, exclude)
   }
 
   private getAllAllowedSpaces (account: Account, isData: boolean): Ref<Space>[] {

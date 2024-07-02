@@ -28,6 +28,7 @@ import ClassPresenter from './components/ClassPresenter.svelte'
 import ClassRefPresenter from './components/ClassRefPresenter.svelte'
 import CollaborativeDocEditor from './components/CollaborativeDocEditor.svelte'
 import CollaborativeHTMLEditor from './components/CollaborativeHTMLEditor.svelte'
+import CollaborativeDocActivityPresenter from './components/CollaborativeDocActivityPresenter.svelte'
 import ColorsPopup from './components/ColorsPopup.svelte'
 import DateEditor from './components/DateEditor.svelte'
 import DatePresenter from './components/DatePresenter.svelte'
@@ -39,6 +40,7 @@ import EditDoc from './components/EditDoc.svelte'
 import EnumArrayEditor from './components/EnumArrayEditor.svelte'
 import EnumEditor from './components/EnumEditor.svelte'
 import EnumPresenter from './components/EnumPresenter.svelte'
+import FileSizePresenter from './components/FileSizePresenter.svelte'
 import HTMLEditor from './components/HTMLEditor.svelte'
 import HTMLPresenter from './components/HTMLPresenter.svelte'
 import HyperlinkEditor from './components/HyperlinkEditor.svelte'
@@ -71,6 +73,7 @@ import UpDownNavigator from './components/UpDownNavigator.svelte'
 import ValueSelector from './components/ValueSelector.svelte'
 import ViewletContentView from './components/ViewletContentView.svelte'
 import ViewletSettingButton from './components/ViewletSettingButton.svelte'
+import ViewletPanelHeader from './components/ViewletPanelHeader.svelte'
 import ArrayFilter from './components/filter/ArrayFilter.svelte'
 import DateFilter from './components/filter/DateFilter.svelte'
 import DateFilterPresenter from './components/filter/DateFilterPresenter.svelte'
@@ -220,7 +223,8 @@ export {
   TreeNode,
   UpDownNavigator,
   ViewletContentView,
-  ViewletSettingButton
+  ViewletSettingButton,
+  ViewletPanelHeader
 }
 
 function PositionElementAlignment (e?: Event): PopupAlignment | undefined {
@@ -273,6 +277,7 @@ export default async (): Promise<Resources> => ({
     HTMLEditor,
     CollaborativeDocEditor,
     CollaborativeHTMLEditor,
+    CollaborativeDocActivityPresenter,
     ListView,
     GrowPresenter,
     DividerPresenter,
@@ -281,6 +286,7 @@ export default async (): Promise<Resources> => ({
     SpaceTypeSelector,
     EnumArrayEditor,
     EnumPresenter,
+    FileSizePresenter,
     StatusPresenter,
     StatusRefPresenter,
     DateFilterPresenter,

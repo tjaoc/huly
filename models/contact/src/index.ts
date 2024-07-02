@@ -36,6 +36,7 @@ import {
   DOMAIN_MODEL,
   DateRangeMode,
   IndexKind,
+  type Blob,
   type Class,
   type Domain,
   type Markup,
@@ -50,10 +51,11 @@ import {
   Model,
   Prop,
   ReadOnly,
-  TypeAttachment,
+  TypeBlob,
   TypeBoolean,
   TypeCollaborativeMarkup,
   TypeDate,
+  TypeRecord,
   TypeRef,
   TypeString,
   TypeTimestamp,
@@ -104,10 +106,23 @@ export class TContact extends TDoc implements Contact {
   @Index(IndexKind.FullText)
     name!: string
 
-  @Prop(TypeAttachment(), contact.string.Avatar)
+  @Prop(TypeString(), contact.string.Avatar)
   @Index(IndexKind.FullText)
   @Hidden()
-    avatar?: string | null
+    avatarType!: AvatarType
+
+  @Prop(TypeBlob(), contact.string.Avatar)
+  @Index(IndexKind.FullText)
+  @Hidden()
+    avatar!: Ref<Blob> | null | undefined
+
+  @Prop(TypeRecord(), contact.string.Avatar)
+  @Index(IndexKind.FullText)
+  @Hidden()
+    avatarProps?: {
+    color?: string
+    url?: string
+  }
 
   @Prop(Collection(contact.class.Channel), contact.string.ContactInfo)
     channels?: number
@@ -261,6 +276,11 @@ export function createModel (builder: Builder): void {
     components: { input: chunter.component.ChatMessageInput }
   })
 
+  builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
+    ofClass: contact.class.Member,
+    components: { input: chunter.component.ChatMessageInput }
+  })
+
   builder.mixin(contact.mixin.Employee, core.class.Class, view.mixin.ObjectFactory, {
     component: contact.component.CreateEmployee
   })
@@ -359,15 +379,6 @@ export function createModel (builder: Builder): void {
     component: contact.component.Contacts,
     label: contact.string.Contacts,
     index: 100
-  })
-
-  builder.createDoc(activity.class.TxViewlet, core.space.Model, {
-    objectClass: contact.class.Person,
-    icon: contact.icon.Person,
-    txClass: core.class.TxUpdateDoc,
-    labelComponent: contact.activity.TxNameChange,
-    display: 'inline',
-    match: { 'operations.name': { $exists: true } }
   })
 
   builder.createDoc(activity.class.DocUpdateMessageViewlet, core.space.Model, {
@@ -494,6 +505,16 @@ export function createModel (builder: Builder): void {
   builder.mixin(contact.class.Person, core.class.Class, view.mixin.ObjectEditor, {
     editor: contact.component.EditPerson,
     pinned: true
+  })
+
+  builder.mixin(core.class.Account, core.class.Class, view.mixin.Aggregation, {
+    createAggregationManager: contact.aggregation.CreatePersonAggregationManager,
+    setStoreFunc: contact.function.SetPersonStore,
+    filterFunc: contact.function.PersonFilterFunction
+  })
+
+  builder.mixin(core.class.Account, core.class.Class, view.mixin.Groupping, {
+    grouppingManager: contact.aggregation.GrouppingPersonManager
   })
 
   builder.mixin(contact.mixin.Employee, core.class.Class, view.mixin.ObjectEditor, {
@@ -707,6 +728,16 @@ export function createModel (builder: Builder): void {
       getUrl: contact.function.GetGravatarUrl
     },
     contact.avatarProvider.Gravatar
+  )
+
+  builder.createDoc(
+    contact.class.AvatarProvider,
+    core.space.Model,
+    {
+      type: AvatarType.EXTERNAL,
+      getUrl: contact.function.GetExternalUrl
+    },
+    contact.avatarProvider.Color
   )
 
   builder.mixin(contact.class.Person, core.class.Class, view.mixin.ObjectPresenter, {

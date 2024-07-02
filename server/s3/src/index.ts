@@ -1,5 +1,5 @@
 //
-// Copyright © 2022 Hardcore Engineering Inc.
+// Copyright © 2024 Hardcore Engineering Inc.
 //
 // Licensed under the Eclipse Public License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License. You may
@@ -13,15 +13,20 @@
 // limitations under the License.
 //
 
-import { S3 } from '@aws-sdk/client-s3'
+import { CopyObjectCommand, GetObjectCommand, PutObjectCommand, S3 } from '@aws-sdk/client-s3'
+import { Upload } from '@aws-sdk/lib-storage'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import core, {
   toWorkspaceString,
   withContext,
   type Blob,
+  type BlobLookup,
+  type Branding,
   type MeasureContext,
   type Ref,
-  type WorkspaceId
+  type WorkspaceId,
+  type WorkspaceIdWithUrl
 } from '@hcengineering/core'
 
 import {
@@ -29,11 +34,12 @@ import {
   type ListBlobResult,
   type StorageAdapter,
   type StorageConfig,
+  type StorageConfiguration,
   type UploadedObjectInfo
 } from '@hcengineering/server-core'
 import { Readable } from 'stream'
 
-import { removeAllObjects } from '@hcengineering/storage'
+import { removeAllObjects, type BlobLookupResult, type BucketInfo } from '@hcengineering/storage'
 import type { ReadableStream } from 'stream/web'
 
 export interface S3Config extends StorageConfig {
@@ -47,6 +53,11 @@ export interface S3Config extends StorageConfig {
 
   // A prefix string to be added to a bucketId in case rootBucket not used
   bucketPrefix?: string
+
+  // If not specified will be enabled
+  allowPresign?: string
+  // Expire time for presigned URIs
+  expireTime?: string
 }
 
 /**
@@ -54,7 +65,9 @@ export interface S3Config extends StorageConfig {
  */
 export class S3Service implements StorageAdapter {
   static config = 's3'
+  expireTime: number
   client: S3
+  contentTypes?: string[]
   constructor (readonly opt: S3Config) {
     this.client = new S3({
       endpoint: opt.endpoint,
@@ -64,6 +77,50 @@ export class S3Service implements StorageAdapter {
       },
       region: opt.region ?? 'auto'
     })
+
+    this.expireTime = parseInt(this.opt.expireTime ?? '168') * 3600 // use 7 * 24 - hours as default value for expireF
+    this.contentTypes = opt.contentTypes
+  }
+
+  async initialize (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {}
+
+  async lookup (
+    ctx: MeasureContext,
+    workspaceId: WorkspaceIdWithUrl,
+    branding: Branding | null,
+    docs: Blob[]
+  ): Promise<BlobLookupResult> {
+    const result: BlobLookupResult = {
+      lookups: [],
+      updates: new Map()
+    }
+    const now = Date.now()
+    for (const d of docs) {
+      // Let's add current from URI for previews.
+      const bl = d as BlobLookup
+      const command = new GetObjectCommand({
+        Bucket: this.getBucketId(workspaceId),
+        Key: this.getDocumentKey(workspaceId, d.storageId),
+        ResponseCacheControl: 'max-age=9d'
+      })
+      if (
+        (bl.downloadUrl === undefined || (bl.downloadUrlExpire ?? 0) < now) &&
+        (this.opt.allowPresign ?? 'true') === 'true'
+      ) {
+        bl.downloadUrl = await getSignedUrl(this.client, command, {
+          expiresIn: this.expireTime
+        })
+        bl.downloadUrlExpire = now + this.expireTime * 1000
+        result.updates?.set(bl._id, {
+          downloadUrl: bl.downloadUrl,
+          downloadUrlExpire: bl.downloadUrlExpire
+        })
+      }
+
+      result.lookups.push(bl)
+    }
+    // this.client.presignedUrl(httpMethod, bucketName, objectName, callback)
+    return result
   }
 
   /**
@@ -76,8 +133,6 @@ export class S3Service implements StorageAdapter {
   getBucketFolder (workspaceId: WorkspaceId): string {
     return toWorkspaceString(workspaceId, '.')
   }
-
-  async initialize (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {}
 
   async close (): Promise<void> {}
 
@@ -92,8 +147,6 @@ export class S3Service implements StorageAdapter {
         // No bucket exisrs
         return false
       }
-      // Ignore
-      console.error(err)
     }
     // No API to check is bucket exists or not, so we need to call make and check if it already exists.
     return false
@@ -106,7 +159,72 @@ export class S3Service implements StorageAdapter {
         Bucket: this.getBucketId(workspaceId)
       })
     } catch (err: any) {
+      if (err.Code === 'BucketAlreadyOwnedByYou') {
+        return
+      }
+      ctx.error('error during create bucket', { err })
+    }
+  }
+
+  async listBuckets (ctx: MeasureContext, productId: string): Promise<BucketInfo[]> {
+    try {
+      if (this.opt.rootBucket !== undefined) {
+        const info = new Map<string, BucketInfo>()
+        let token: string | undefined
+
+        while (true) {
+          const res = await this.client.listObjectsV2({
+            Bucket: this.opt.rootBucket,
+            Prefix: '',
+            Delimiter: '/',
+            ContinuationToken: token
+          })
+          for (const data of res.CommonPrefixes ?? []) {
+            const wsName = data.Prefix?.split('/')?.[0]
+            if (wsName !== undefined && !info.has(wsName)) {
+              info.set(wsName, {
+                name: wsName,
+                delete: async () => {
+                  await this.delete(ctx, { name: wsName, productId })
+                },
+                list: async () => await this.listStream(ctx, { name: wsName, productId })
+              })
+            }
+          }
+          if (res.IsTruncated === true) {
+            token = res.NextContinuationToken
+          } else {
+            break
+          }
+        }
+        return Array.from(info.values())
+      } else {
+        const productPostfix = this.getBucketFolder({
+          name: '',
+          productId
+        })
+        const buckets = await this.client.listBuckets()
+        return (buckets.Buckets ?? [])
+          .filter((it) => it.Name !== undefined && it.Name.endsWith(productPostfix))
+          .map((it) => {
+            let name = it.Name ?? ''
+            name = name.slice(0, name.length - productPostfix.length)
+            return {
+              name,
+              delete: async () => {
+                await this.delete(ctx, { name, productId })
+              },
+              list: async () => await this.listStream(ctx, { name, productId })
+            }
+          })
+      }
+    } catch (err: any) {
+      if (err.Code === 'NoSuchBucket') {
+        return []
+      }
+      ctx.error('failed to list buckets', { rootBucket: this.opt.rootBucket })
       console.error(err)
+      return []
     }
   }
 
@@ -126,13 +244,16 @@ export class S3Service implements StorageAdapter {
 
   @withContext('delete')
   async delete (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {
+    try {
+      await removeAllObjects(ctx, this, workspaceId)
+    } catch (err: any) {
+      ctx.error('failed t oclean all objecrs', { error: err })
+    }
     if (this.opt.rootBucket === undefined) {
-      // We should
+      // We should also delete bucket
       await this.client.deleteBucket({
         Bucket: this.getBucketId(workspaceId)
       })
-    } else {
-      await removeAllObjects(ctx, this, workspaceId, this.getBucketFolder(workspaceId) + '/')
     }
   }
 
@@ -143,21 +264,34 @@ export class S3Service implements StorageAdapter {
     return key
   }
 
+  rootPrefix (workspaceId: WorkspaceId): string | undefined {
+    return this.opt.rootBucket !== undefined ? this.getBucketFolder(workspaceId) + '/' : undefined
+  }
+
+  async copy (sourceId: WorkspaceId, targetId: WorkspaceId, objectName: string): Promise<void> {
+    const copyOp = new CopyObjectCommand({
+      Bucket: this.getBucketId(targetId),
+      Key: this.getDocumentKey(targetId, objectName),
+      CopySource: `${this.getBucketId(sourceId)}/${this.getDocumentKey(sourceId, objectName)}`
+    })
+    await this.client.send(copyOp)
+  }
+
   @withContext('listStream')
   async listStream (
     ctx: MeasureContext,
     workspaceId: WorkspaceId,
     prefix?: string | undefined
   ): Promise<BlobStorageIterator> {
-    const hasMore = true
+    let hasMore = true
     const buffer: ListBlobResult[] = []
     let token: string | undefined
 
-    const rootPrefix = this.opt.rootBucket !== undefined ? this.getBucketFolder(workspaceId) + '/' : undefined
+    const rootPrefix = this.rootPrefix(workspaceId)
     return {
       next: async (): Promise<ListBlobResult | undefined> => {
         try {
-          if (hasMore) {
+          if (hasMore && buffer.length === 0) {
             const res = await this.client.listObjectsV2({
               Bucket: this.getBucketId(workspaceId),
               Prefix: rootPrefix !== undefined ? rootPrefix + (prefix ?? '') : prefix ?? '',
@@ -165,6 +299,8 @@ export class S3Service implements StorageAdapter {
             })
             if (res.IsTruncated === true) {
               token = res.NextContinuationToken
+            } else {
+              hasMore = false
             }
 
             for (const data of res.Contents ?? []) {
@@ -174,7 +310,7 @@ export class S3Service implements StorageAdapter {
                 _class: core.class.Blob,
                 etag: data.ETag ?? '',
                 size: data.Size ?? 0,
-                provider: 's3',
+                provider: this.opt.name,
                 space: core.space.Configuration,
                 modifiedBy: core.account.ConfigUser,
                 modifiedOn: data.LastModified?.getTime() ?? 0,
@@ -183,9 +319,8 @@ export class S3Service implements StorageAdapter {
             }
           }
         } catch (err: any) {
-          console.error(err)
+          ctx.error('Failed to get list', { error: err, workspaceId: workspaceId.name, prefix })
         }
-
         if (buffer.length > 0) {
           return buffer.shift()
         }
@@ -197,17 +332,19 @@ export class S3Service implements StorageAdapter {
     }
   }
 
+  @withContext('stat')
   async stat (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<Blob | undefined> {
     try {
       const result = await this.client.headObject({
         Bucket: this.getBucketId(workspaceId),
         Key: this.getDocumentKey(workspaceId, objectName)
       })
+      const rootPrefix = this.rootPrefix(workspaceId)
       return {
         provider: '',
         _class: core.class.Blob,
-        _id: objectName as Ref<Blob>,
-        storageId: objectName,
+        _id: this.stripPrefix(rootPrefix, objectName) as Ref<Blob>,
+        storageId: this.stripPrefix(rootPrefix, objectName),
         contentType: result.ContentType ?? '',
         size: result.ContentLength ?? 0,
         etag: result.ETag ?? '',
@@ -254,16 +391,57 @@ export class S3Service implements StorageAdapter {
     contentType: string,
     size?: number
   ): Promise<UploadedObjectInfo> {
-    const result = await this.client.putObject({
-      Bucket: this.getBucketId(workspaceId),
-      Key: this.getDocumentKey(workspaceId, objectName),
-      ContentLength: size,
-      ContentType: contentType,
-      Body: stream
-    })
-    return {
-      etag: result.ETag ?? '',
-      versionId: result.VersionId ?? null
+    if (size !== undefined && size < 1024 * 1024 * 5) {
+      return await ctx.with(
+        'simple-put',
+        {},
+        async () => {
+          const cmd = new PutObjectCommand({
+            Bucket: this.getBucketId(workspaceId),
+            Key: this.getDocumentKey(workspaceId, objectName),
+            ContentType: contentType,
+            ContentLength: size,
+            Body: stream
+          })
+          const response = await this.client.send(cmd)
+          return {
+            etag: response.ETag ?? '',
+            versionId: response.VersionId ?? null
+          }
+        },
+        { size, objectName, workspaceId: workspaceId.name }
+      )
+      // Less 5Mb
+    } else {
+      return await ctx.with(
+        'multipart-upload',
+        {},
+        async () => {
+          const uploadTask = new Upload({
+            client: this.client,
+            params: {
+              Bucket: this.getBucketId(workspaceId),
+              Key: this.getDocumentKey(workspaceId, objectName),
+              ContentType: contentType,
+              Body: stream
+            },
+
+            // (optional) concurrency configuration
+            // queueSize: 1,
+
+            // (optional) size of each part, in bytes, at least 5MB
+            partSize: 1024 * 1024 * 5,
+            leavePartsOnError: false
+          })
+
+          const output = await uploadTask.done()
+          return {
+            etag: output.ETag ?? '',
+            versionId: output.VersionId ?? null
+          }
+        },
+        { size, objectName, workspaceId: workspaceId.name }
+      )
     }
   }
 
@@ -273,12 +451,8 @@ export class S3Service implements StorageAdapter {
     const chunks: Buffer[] = []
 
     await new Promise((resolve, reject) => {
-      data.on('readable', () => {
-        let chunk
-        while ((chunk = data.read()) !== null) {
-          const b = chunk as Buffer
-          chunks.push(b)
-        }
+      data.on('data', (chunk) => {
+        chunks.push(chunk)
       })
 
       data.on('end', () => {
@@ -286,12 +460,14 @@ export class S3Service implements StorageAdapter {
         resolve(null)
       })
       data.on('error', (err) => {
+        data.destroy()
         reject(err)
       })
     })
     return chunks
   }
 
+  @withContext('partial')
   async partial (
     ctx: MeasureContext,
     workspaceId: WorkspaceId,
@@ -302,4 +478,31 @@ export class S3Service implements StorageAdapter {
     const range = length !== undefined ? `bytes=${offset}-${offset + length}` : `bytes=${offset}-`
     return await this.doGet(ctx, workspaceId, objectName, range)
   }
+}
+
+export function processConfigFromEnv (storageConfig: StorageConfiguration): string | undefined {
+  const endpoint = process.env.S3_ENDPOINT
+  if (endpoint === undefined) {
+    return 'S3_ENDPOINT'
+  }
+  const accessKey = process.env.S3_ACCESS_KEY
+  if (accessKey === undefined) {
+    return 'S3_ACCESS_KEY'
+  }
+
+  const secretKey = process.env.S3_SECRET_KEY
+  if (secretKey === undefined) {
+    return 'S3_SECRET_KEY'
+  }
+
+  const minioConfig: S3Config = {
+    kind: 's3',
+    name: 's3',
+    region: 'auto',
+    endpoint,
+    accessKey,
+    secretKey
+  }
+  storageConfig.storages.push(minioConfig)
+  storageConfig.default = 's3'
 }

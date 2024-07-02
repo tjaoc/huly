@@ -21,8 +21,6 @@ import {
   CollectionSize,
   Data,
   Doc,
-  DocManager,
-  IdMap,
   Markup,
   Mixin,
   Ref,
@@ -30,13 +28,12 @@ import {
   Space,
   Status,
   Timestamp,
-  Type,
-  WithLookup
+  Type
 } from '@hcengineering/core'
 import { Asset, IntlString, Plugin, Resource, plugin } from '@hcengineering/platform'
 import { Preference } from '@hcengineering/preference'
 import { TagCategory, TagElement, TagReference } from '@hcengineering/tags'
-import task, {
+import {
   ProjectTypeDescriptor,
   Task,
   Project as TaskProject,
@@ -45,7 +42,6 @@ import task, {
   TaskTypeDescriptor
 } from '@hcengineering/task'
 import { AnyComponent, ComponentExtensionId, Location, ResolvedLocation } from '@hcengineering/ui'
-import { PaletteColorIndexes } from '@hcengineering/ui/src/colors'
 import { Action, ActionCategory, IconProps } from '@hcengineering/view'
 
 /**
@@ -354,29 +350,6 @@ export interface Component extends Doc {
 
 /**
  * @public
- *
- * Allow to query for status keys/values.
- */
-export class ComponentManager extends DocManager {
-  get (ref: Ref<WithLookup<Component>>): WithLookup<Component> | undefined {
-    return this.getIdMap().get(ref) as WithLookup<Component>
-  }
-
-  getDocs (): Array<WithLookup<Component>> {
-    return this.docs as Component[]
-  }
-
-  getIdMap (): IdMap<WithLookup<Component>> {
-    return this.byId as IdMap<WithLookup<Component>>
-  }
-
-  filter (predicate: (value: Component) => boolean): Component[] {
-    return this.getDocs().filter(predicate)
-  }
-}
-
-/**
- * @public
  */
 export const trackerId = 'tracker' as Plugin
 
@@ -521,6 +494,7 @@ const pluginState = plugin(trackerId, {
     Location: '' as Resource<(loc: Location) => Promise<ResolvedLocation | undefined>>
   },
   string: {
+    TrackerApplication: '' as IntlString,
     ConfigLabel: '' as IntlString,
     NewRelatedIssue: '' as IntlString,
     IssueNotificationTitle: '' as IntlString,
@@ -545,48 +519,6 @@ const pluginState = plugin(trackerId, {
   }
 })
 export default pluginState
-
-/**
- * @public
- */
-export const classicIssueTaskStatuses: TaskStatusFactory[] = [
-  {
-    category: task.statusCategory.UnStarted,
-    statuses: [['Backlog', PaletteColorIndexes.Cloud, pluginState.status.Backlog]]
-  },
-  { category: task.statusCategory.ToDo, statuses: [['Todo', PaletteColorIndexes.Porpoise, pluginState.status.Todo]] },
-  {
-    category: task.statusCategory.Active,
-    statuses: [['In Progress', PaletteColorIndexes.Cerulean, pluginState.status.InProgress]]
-  },
-  { category: task.statusCategory.Won, statuses: [['Done', PaletteColorIndexes.Grass, pluginState.status.Done]] },
-  {
-    category: task.statusCategory.Lost,
-    statuses: [['Canceled', PaletteColorIndexes.Coin, pluginState.status.Canceled]]
-  }
-]
-
-/**
- * @public
- */
-export const baseIssueTaskStatuses: TaskStatusFactory[] = [
-  {
-    category: task.statusCategory.UnStarted,
-    statuses: [['Backlog', PaletteColorIndexes.Cloud, pluginState.status.Backlog]]
-  },
-  {
-    category: task.statusCategory.Active,
-    statuses: [
-      ['Coding', PaletteColorIndexes.Porpoise, pluginState.status.Coding],
-      ['Under review', PaletteColorIndexes.Cerulean, pluginState.status.UnderReview]
-    ]
-  },
-  { category: task.statusCategory.Won, statuses: [['Done', PaletteColorIndexes.Grass, pluginState.status.Done]] },
-  {
-    category: task.statusCategory.Lost,
-    statuses: [['Canceled', PaletteColorIndexes.Coin, pluginState.status.Canceled]]
-  }
-]
 
 /**
  * @public

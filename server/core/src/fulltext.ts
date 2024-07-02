@@ -29,7 +29,6 @@ import core, {
   type SearchOptions,
   type SearchQuery,
   type SearchResult,
-  type ServerStorage,
   type Tx,
   type TxCUD,
   type TxCollectionCUD,
@@ -46,7 +45,8 @@ import { type FullTextIndexPipeline } from './indexer'
 import { createStateDoc } from './indexer/utils'
 import { getScoringConfig, mapSearchResultDoc } from './mapper'
 import { type StorageAdapter } from './storage'
-import type { FullTextAdapter, IndexedDoc, WithFind } from './types'
+import type { FullTextAdapter, IndexedDoc, ServerStorage, WithFind } from './types'
+import { Analytics } from '@hcengineering/analytics'
 
 /**
  * @public
@@ -178,7 +178,7 @@ export class FullTextIndex implements WithFind {
         }
       }
     } catch (err: any) {
-      console.error(err)
+      Analytics.handleError(err)
     }
 
     classes = classes.filter((it, idx, arr) => arr.indexOf(it) === idx)
@@ -249,16 +249,13 @@ export class FullTextIndex implements WithFind {
     // Just assign scores based on idex
     result.forEach((it) => {
       const idDoc = indexedDocMap.get(it._id)
-      const { _score, id, _class, ...extra } = idDoc as any
+      const { _score } = idDoc as any
       it.$source = {
-        ...extra,
         $score: _score
       }
     })
     if (scoreSearch !== undefined) {
       result.sort((a, b) => scoreSearch * ((a.$source?.$score ?? 0) - (b.$source?.$score ?? 0)))
-    }
-    if (scoreSearch !== undefined) {
       if (options?.limit !== undefined && options?.limit < result.length) {
         result = toFindResult(result.slice(0, options?.limit), result.total)
       }

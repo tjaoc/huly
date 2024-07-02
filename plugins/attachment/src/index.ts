@@ -14,19 +14,23 @@
 // limitations under the License.
 //
 
-import type { AttachedDoc, Class, Ref } from '@hcengineering/core'
+import type { AttachedDoc, Blob, Class, Ref } from '@hcengineering/core'
 import type { Asset, Plugin } from '@hcengineering/platform'
 import { IntlString, plugin, Resource } from '@hcengineering/platform'
 import type { Preference } from '@hcengineering/preference'
-import { type BlobMetadata } from '@hcengineering/presentation'
 import { AnyComponent } from '@hcengineering/ui'
+
+/**
+ * @public
+ */
+export type BlobMetadata = Record<string, any>
 
 /**
  * @public
  */
 export interface Attachment extends AttachedDoc {
   name: string
-  file: string
+  file: Ref<Blob>
   size: number
   type: string
   lastModified: number
@@ -78,7 +82,7 @@ export default plugin(attachmentId, {
     SavedAttachments: '' as Ref<Class<SavedAttachments>>
   },
   helper: {
-    UploadFile: '' as Resource<(file: File) => Promise<string>>,
+    UploadFile: '' as Resource<(file: File) => Promise<Ref<Blob>>>,
     DeleteFile: '' as Resource<(id: string) => Promise<void>>
   },
   string: {

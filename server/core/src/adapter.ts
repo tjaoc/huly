@@ -66,16 +66,22 @@ export interface RawDBAdapter {
     workspace: WorkspaceId,
     domain: Domain,
     query: DocumentQuery<T>,
-    options?: Omit<FindOptions<T>, 'projection' | 'lookup'>
+    options?: Omit<FindOptions<T>, 'projection' | 'lookup' | 'total'>
   ) => Promise<FindResult<T>>
   findStream: <T extends Doc>(
     ctx: MeasureContext,
     workspace: WorkspaceId,
     domain: Domain,
     query: DocumentQuery<T>,
-    options?: Omit<FindOptions<T>, 'projection' | 'lookup'>
+    options?: Omit<FindOptions<T>, 'projection' | 'lookup' | 'total'>
   ) => Promise<RawDBAdapterStream<T>>
   upload: <T extends Doc>(ctx: MeasureContext, workspace: WorkspaceId, domain: Domain, docs: T[]) => Promise<void>
+  update: <T extends Doc>(
+    ctx: MeasureContext,
+    workspace: WorkspaceId,
+    domain: Domain,
+    docs: Map<Ref<T>, DocumentUpdate<T>>
+  ) => Promise<void>
   clean: <T extends Doc>(ctx: MeasureContext, workspace: WorkspaceId, domain: Domain, docs: Ref<T>[]) => Promise<void>
   close: () => Promise<void>
 }
@@ -101,7 +107,7 @@ export interface DbAdapter {
   ) => Promise<FindResult<T>>
   tx: (ctx: MeasureContext, ...tx: Tx[]) => Promise<TxResult[]>
 
-  find: (ctx: MeasureContext, domain: Domain) => StorageIterator
+  find: (ctx: MeasureContext, domain: Domain, recheck?: boolean) => StorageIterator
 
   load: (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]) => Promise<Doc[]>
   upload: (ctx: MeasureContext, domain: Domain, docs: Doc[]) => Promise<void>
@@ -127,5 +133,5 @@ export type DbAdapterFactory = (
   url: string,
   workspaceId: WorkspaceId,
   modelDb: ModelDb,
-  storage?: StorageAdapter
+  storage: StorageAdapter
 ) => Promise<DbAdapter>

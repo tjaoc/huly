@@ -15,23 +15,23 @@
 //
 -->
 <script lang="ts">
-  import { type Class, type CollaborativeDoc, type Doc, type Ref } from '@hcengineering/core'
   import { type DocumentId, type PlatformDocumentId } from '@hcengineering/collaborator-client'
+  import { type Class, type CollaborativeDoc, type Doc, type Ref } from '@hcengineering/core'
   import { IntlString, getMetadata, translate } from '@hcengineering/platform'
-  import { markupToJSON } from '@hcengineering/text'
   import presentation, { getFileUrl, getImageSize } from '@hcengineering/presentation'
-  import view from '@hcengineering/view'
+  import { markupToJSON } from '@hcengineering/text'
   import {
     AnySvelteComponent,
     Button,
     IconSize,
     Loading,
     PopupAlignment,
+    ThrottledCaller,
     getEventPositionElement,
     getPopupPositionElement,
-    ThrottledCaller,
     themeStore
   } from '@hcengineering/ui'
+  import view from '@hcengineering/view'
   import { AnyExtension, Editor, FocusPosition, mergeAttributes } from '@tiptap/core'
   import Collaboration, { isChangeOrigin } from '@tiptap/extension-collaboration'
   import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
@@ -39,12 +39,12 @@
   import { createEventDispatcher, getContext, onDestroy, onMount } from 'svelte'
   import { Doc as YDoc } from 'yjs'
 
-  import { deleteAttachment } from '../command/deleteAttachment'
   import { Completion } from '../Completion'
+  import { deleteAttachment } from '../command/deleteAttachment'
   import { textEditorCommandHandler } from '../commands'
   import { EditorKit } from '../kits/editor-kit'
   import textEditorPlugin from '../plugin'
-  import { MinioProvider } from '../provider/minio'
+  import { DirectStorageProvider } from '../provider/storage'
   import { TiptapCollabProvider } from '../provider/tiptap'
   import { formatCollaborativeDocumentId, formatPlatformDocumentId } from '../provider/utils'
   import {
@@ -64,18 +64,18 @@
   import { noSelectionRender, renderCursor } from './editor/collaboration'
   import { defaultEditorAttributes } from './editor/editorProps'
   import { EmojiExtension } from './extension/emoji'
-  import { ImageUploadExtension } from './extension/imageUploadExt'
-  import { type FileAttachFunction } from './extension/types'
   import { FileUploadExtension } from './extension/fileUploadExt'
-  import { LeftMenuExtension } from './extension/leftMenu'
+  import { ImageUploadExtension } from './extension/imageUploadExt'
   import { InlineCommandsExtension } from './extension/inlineCommands'
   import { InlinePopupExtension } from './extension/inlinePopup'
   import { InlineStyleToolbarExtension } from './extension/inlineStyleToolbar'
+  import { LeftMenuExtension } from './extension/leftMenu'
+  import { type FileAttachFunction } from './extension/types'
   import { completionConfig, inlineCommandsConfig } from './extensions'
 
   export let collaborativeDoc: CollaborativeDoc
   export let initialCollaborativeDoc: CollaborativeDoc | undefined = undefined
-  export let field: string | undefined = undefined
+  export let field: string
 
   export let objectClass: Ref<Class<Doc>> | undefined
   export let objectId: Ref<Doc> | undefined
@@ -135,7 +135,7 @@
   const ydoc = getContext<YDoc>(CollaborationIds.Doc) ?? new YDoc()
   const contextProvider = getContext<TiptapCollabProvider>(CollaborationIds.Provider)
 
-  const localProvider = contextProvider === undefined ? new MinioProvider(documentId, ydoc) : undefined
+  const localProvider = contextProvider === undefined ? new DirectStorageProvider(collaborativeDoc, ydoc) : undefined
 
   const remoteProvider: TiptapCollabProvider =
     contextProvider ??
@@ -167,6 +167,15 @@
   let placeHolderStr: string = ''
 
   $: ph = translate(placeholder, {}, $themeStore.language).then((r) => {
+    if (editor !== undefined && placeHolderStr !== r) {
+      const placeholderIndex = editor.extensionManager.extensions.findIndex(
+        (extension) => extension.name === 'placeholder'
+      )
+      if (placeholderIndex !== -1) {
+        editor.extensionManager.extensions[placeholderIndex].options.placeholder = r
+        editor.view.dispatch(editor.state.tr)
+      }
+    }
     placeHolderStr = r
   })
 
@@ -288,7 +297,7 @@
       optionalExtensions.push(
         ImageUploadExtension.configure({
           attachFile,
-          uploadUrl: getMetadata(presentation.metadata.UploadURL)
+          getFileUrl
         })
       )
     }
@@ -308,7 +317,8 @@
             ...(canEmbedImages ? [{ id: 'image', label: textEditorPlugin.string.Image, icon: view.icon.Image }] : []),
             { id: 'table', label: textEditorPlugin.string.Table, icon: view.icon.Table2 },
             { id: 'code-block', label: textEditorPlugin.string.CodeBlock, icon: view.icon.CodeBlock },
-            { id: 'separator-line', label: textEditorPlugin.string.SeparatorLine, icon: view.icon.SeparatorLine }
+            { id: 'separator-line', label: textEditorPlugin.string.SeparatorLine, icon: view.icon.SeparatorLine },
+            { id: 'todo-list', label: textEditorPlugin.string.TodoList, icon: view.icon.TodoList }
           ],
           handleSelect: handleLeftMenuClick
         })
@@ -339,10 +349,7 @@
       return
     }
 
-    const size = await getImageSize(
-      file,
-      getFileUrl(attached.file, 'full', getMetadata(presentation.metadata.UploadURL))
-    )
+    const size = await getImageSize(file, getFileUrl(attached.file))
 
     editor.commands.insertContent(
       {
@@ -405,6 +412,9 @@
         )
         editor.commands.focus(pos, { scrollIntoView: false })
         break
+      case 'todo-list':
+        editor.commands.toggleTaskList()
+        break
       case 'separator-line':
         editor.commands.setHorizontalRule()
         break
@@ -423,7 +433,7 @@
       element,
       editorProps: { attributes: mergeAttributes(defaultEditorAttributes, editorAttributes, { class: 'flex-grow' }) },
       extensions: [
-        EditorKit.configure({ history: false }),
+        EditorKit.configure({ history: false, submit: false }),
         ...optionalExtensions,
         Placeholder.configure({ placeholder: placeHolderStr }),
         InlineStyleToolbarExtension.configure({

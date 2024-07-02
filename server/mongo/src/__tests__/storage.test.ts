@@ -35,8 +35,7 @@ import core, {
   type WorkspaceId,
   type SessionOperationContext,
   type ParamsType,
-  type FullParamsType,
-  type ServerStorage
+  type FullParamsType
 } from '@hcengineering/core'
 import {
   type ContentTextAdapter,
@@ -46,7 +45,8 @@ import {
   type DbConfiguration,
   DummyDbAdapter,
   DummyFullTextAdapter,
-  type FullTextAdapter
+  type FullTextAdapter,
+  type ServerStorage
 } from '@hcengineering/server-core'
 import { createMongoAdapter, createMongoTxAdapter } from '..'
 import { getMongoClient, type MongoClientReference, shutdown } from '../utils'
@@ -177,7 +177,8 @@ describe('mongo operations', () => {
     const ctx = new MeasureMetricsContext('client', {})
     serverStorage = await createServerStorage(ctx, conf, {
       upgrade: false,
-      broadcast: () => {}
+      broadcast: () => {},
+      branding: null
     })
     const soCtx: SessionOperationContext = {
       ctx,
@@ -193,6 +194,7 @@ describe('mongo operations', () => {
     }
     client = await createClient(async (handler) => {
       const st: ClientConnection = {
+        isConnected: () => true,
         findAll: async (_class, query, options) => await serverStorage.findAll(ctx, _class, query, options),
         tx: async (tx) => await serverStorage.tx(soCtx, tx),
         searchFulltext: async () => ({ docs: [] }),

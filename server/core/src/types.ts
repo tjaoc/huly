@@ -19,9 +19,11 @@ import {
   type Class,
   type Doc,
   type DocumentQuery,
+  type Domain,
   type FindOptions,
   type FindResult,
   type Hierarchy,
+  type LoadModelResponse,
   type LowLevelStorage,
   type MeasureContext,
   type ModelDb,
@@ -30,7 +32,6 @@ import {
   type SearchOptions,
   type SearchQuery,
   type SearchResult,
-  type ServerStorage,
   type SessionOperationContext,
   type Space,
   type Storage,
@@ -39,7 +40,8 @@ import {
   type TxFactory,
   type TxResult,
   type WorkspaceId,
-  type WorkspaceIdWithUrl
+  type WorkspaceIdWithUrl,
+  type Branding
 } from '@hcengineering/core'
 import type { Asset, Resource } from '@hcengineering/platform'
 import { type Readable } from 'stream'
@@ -49,10 +51,38 @@ import { type StorageAdapter } from './storage'
 /**
  * @public
  */
+export interface ServerStorage extends LowLevelStorage {
+  hierarchy: Hierarchy
+  modelDb: ModelDb
+  findAll: <T extends Doc>(
+    ctx: MeasureContext,
+    _class: Ref<Class<T>>,
+    query: DocumentQuery<T>,
+    options?: FindOptions<T> & {
+      domain?: Domain // Allow to find for Doc's in specified domain only.
+      prefix?: string
+    }
+  ) => Promise<FindResult<T>>
+  searchFulltext: (ctx: MeasureContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
+  tx: (ctx: SessionOperationContext, tx: Tx) => Promise<TxResult>
+  apply: (ctx: SessionOperationContext, tx: Tx[], broadcast: boolean) => Promise<TxResult>
+  close: () => Promise<void>
+  loadModel: (last: Timestamp, hash?: string) => Promise<Tx[] | LoadModelResponse>
+  workspaceId: WorkspaceIdWithUrl
+  branding: Branding | null
+  storageAdapter: StorageAdapter
+}
+
+/**
+ * @public
+ */
 export interface SessionContext extends SessionOperationContext {
   userEmail: string
   sessionId: string
   admin?: boolean
+
+  workspace: WorkspaceIdWithUrl
+  branding: Branding | null
 }
 
 /**
@@ -66,6 +96,7 @@ export interface Middleware {
     query: DocumentQuery<T>,
     options?: FindOptions<T>
   ) => Promise<FindResult<T>>
+  handleBroadcast: HandleBroadcastFunc
   searchFulltext: (ctx: SessionContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
 }
 
@@ -73,10 +104,11 @@ export interface Middleware {
  * @public
  */
 export type BroadcastFunc = (tx: Tx[], targets?: string | string[], exclude?: string[]) => void
+
 /**
  * @public
  */
-export type HandledBroadcastFunc = (tx: Tx[], targets?: string[]) => Tx[]
+export type HandleBroadcastFunc = (tx: Tx[], targets?: string | string[], exclude?: string[]) => Promise<void>
 
 /**
  * @public
@@ -109,8 +141,10 @@ export interface Pipeline extends LowLevelStorage {
  * @public
  */
 export interface TriggerControl {
+  operationContext: SessionOperationContext
   ctx: MeasureContext
   workspace: WorkspaceIdWithUrl
+  branding: Branding | null
   txFactory: TxFactory
   findAll: Storage['findAll']
   findAllCtx: <T extends Doc>(
@@ -179,7 +213,7 @@ export interface EmbeddingSearchOption {
 export interface IndexedDoc {
   id: Ref<Doc>
   _class: Ref<Class<Doc>>[]
-  space: Ref<Space>
+  space: Ref<Space>[]
   modifiedOn: Timestamp
   modifiedBy: Ref<Account>
   attachedTo?: Ref<Doc>
@@ -407,6 +441,7 @@ export interface ServerStorageOptions {
   upgrade: boolean
 
   broadcast: BroadcastFunc
+  branding: Branding | null
 }
 
 export interface ServiceAdapter {
@@ -427,6 +462,8 @@ export interface StorageConfig {
   kind: string
   endpoint: string
   port?: number
+
+  contentTypes?: string[]
 }
 
 export interface StorageConfiguration {

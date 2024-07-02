@@ -23,10 +23,9 @@ import {
   SearchOptions,
   SearchQuery,
   SearchResult,
-  ServerStorage,
   Tx
 } from '@hcengineering/core'
-import { Middleware, SessionContext, TxMiddlewareResult } from '@hcengineering/server-core'
+import { Middleware, SessionContext, TxMiddlewareResult, type ServerStorage } from '@hcengineering/server-core'
 
 /**
  * @public
@@ -48,6 +47,12 @@ export abstract class BaseMiddleware {
 
   async searchFulltext (ctx: SessionContext, query: SearchQuery, options: SearchOptions): Promise<SearchResult> {
     return await this.provideSearchFulltext(ctx, query, options)
+  }
+
+  async handleBroadcast (tx: Tx[], targets?: string | string[], exclude?: string[]): Promise<void> {
+    if (this.next !== undefined) {
+      await this.next.handleBroadcast(tx, targets, exclude)
+    }
   }
 
   protected async provideTx (ctx: SessionContext, tx: Tx): Promise<TxMiddlewareResult> {

@@ -14,21 +14,31 @@
 -->
 <script lang="ts">
   import { type Attachment } from '@hcengineering/attachment'
-  import { getResource } from '@hcengineering/platform'
+  import { getEmbeddedLabel, getResource } from '@hcengineering/platform'
   import {
     FilePreviewPopup,
-    getFileUrl,
-    previewTypes,
     canPreviewFile,
-    getPreviewAlignment
+    getBlobHref,
+    getPreviewAlignment,
+    previewTypes
   } from '@hcengineering/presentation'
-  import { Action as UIAction, ActionIcon, IconMoreH, IconOpen, Menu, closeTooltip, showPopup } from '@hcengineering/ui'
+  import {
+    ActionIcon,
+    IconMoreH,
+    IconOpen,
+    Menu,
+    Action as UIAction,
+    closeTooltip,
+    showPopup,
+    tooltip
+  } from '@hcengineering/ui'
   import view, { Action } from '@hcengineering/view'
 
+  import type { WithLookup } from '@hcengineering/core'
   import attachmentPlugin from '../plugin'
   import FileDownload from './icons/FileDownload.svelte'
 
-  export let attachment: Attachment
+  export let attachment: WithLookup<Attachment>
   export let isSaved = false
   export let removable = false
 
@@ -61,9 +71,8 @@
     showPopup(
       FilePreviewPopup,
       {
-        file: attachment.file,
+        file: attachment.$lookup?.file ?? attachment.file,
         name: attachment.name,
-        contentType: attachment.type ?? '',
         metadata: attachment.metadata
       },
       getPreviewAlignment(attachment.type ?? '')
@@ -121,29 +130,32 @@
 </script>
 
 <div class="flex">
-  <a
-    class="mr-1 flex-row-center gap-2 p-1"
-    href={getFileUrl(attachment.file, 'full', attachment.name)}
-    download={attachment.name}
-    bind:this={download}
-    on:click|stopPropagation
-  >
-    {#if canPreview}
+  {#await getBlobHref(attachment.$lookup?.file, attachment.file, attachment.name) then href}
+    <a
+      class="mr-1 flex-row-center gap-2 p-1"
+      {href}
+      download={attachment.name}
+      bind:this={download}
+      use:tooltip={{ label: getEmbeddedLabel(attachment.name) }}
+      on:click|stopPropagation
+    >
+      {#if canPreview}
+        <ActionIcon
+          icon={IconOpen}
+          size={'medium'}
+          action={(evt) => {
+            showPreview(evt)
+          }}
+        />
+      {/if}
       <ActionIcon
-        icon={IconOpen}
+        icon={FileDownload}
         size={'medium'}
-        action={(evt) => {
-          showPreview(evt)
+        action={() => {
+          download.click()
         }}
       />
-    {/if}
-    <ActionIcon
-      icon={FileDownload}
-      size={'medium'}
-      action={() => {
-        download.click()
-      }}
-    />
-  </a>
+    </a>
+  {/await}
   <ActionIcon icon={IconMoreH} size={'medium'} action={showMenu} />
 </div>

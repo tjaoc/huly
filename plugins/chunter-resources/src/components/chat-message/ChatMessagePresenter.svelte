@@ -30,6 +30,7 @@
   import ChatMessageInput from './ChatMessageInput.svelte'
 
   export let value: WithLookup<ChatMessage> | undefined
+  export let doc: Doc | undefined = undefined
   export let showNotify: boolean = false
   export let isHighlighted: boolean = false
   export let isSelected: boolean = false
@@ -53,8 +54,9 @@
   export let onClick: (() => void) | undefined = undefined
 
   const client = getClient()
+  const { pendingCreatedDocs } = client
   const hierarchy = client.getHierarchy()
-
+  const STALE_TIMEOUT_MS = 5000
   const userQuery = createQuery()
   const currentAccount = getCurrentAccount()
 
@@ -87,10 +89,13 @@
       parentMessage = res as DisplayActivityMessage
     })
 
-  $: value &&
-    client.findOne(value.attachedToClass, { _id: value.attachedTo }).then((result) => {
+  $: if (doc && value?.attachedTo === doc._id) {
+    object = doc
+  } else if (value) {
+    void client.findOne(value.attachedToClass, { _id: value.attachedTo }).then((result) => {
       object = result
     })
+  }
 
   $: parentMessage &&
     client.findOne(parentMessage.attachedToClass, { _id: parentMessage.attachedTo }).then((result) => {
@@ -98,6 +103,21 @@
     })
 
   $: links = showLinksPreview ? getLinks(value?.message) : []
+
+  let stale = false
+  let markStaleId: NodeJS.Timeout | undefined
+  $: pending = value?._id !== undefined && $pendingCreatedDocs[value._id]
+  $: if (pending) {
+    markStaleId = setTimeout(() => {
+      stale = true
+    }, STALE_TIMEOUT_MS)
+  } else {
+    if (markStaleId !== undefined) {
+      clearTimeout(markStaleId)
+      markStaleId = undefined
+    }
+    stale = false
+  }
 
   function getLinks (content?: string): HTMLLinkElement[] {
     if (!content) {
@@ -181,6 +201,8 @@
     {hoverable}
     {hoverStyles}
     {skipLabel}
+    {pending}
+    {stale}
     showDatePreposition={hideLink}
     {type}
     {onClick}

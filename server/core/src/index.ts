@@ -16,6 +16,7 @@
 
 export type { StorageAdapter } from '@hcengineering/storage'
 export * from './adapter'
+export * from './benchmark'
 export * from './configuration'
 export * from './fulltext'
 export * from './indexer'
@@ -27,4 +28,3 @@ export * from './server'
 export * from './storage'
 export * from './types'
 export * from './utils'
-export * from './benchmark'

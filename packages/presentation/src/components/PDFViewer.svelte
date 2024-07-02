@@ -14,14 +14,14 @@
 -->
 <script lang="ts">
   // import { Doc } from '@hcengineering/core'
+  import type { Blob, Ref } from '@hcengineering/core'
   import { Button, Dialog, Label, Spinner } from '@hcengineering/ui'
   import { createEventDispatcher, onMount } from 'svelte'
-  import presentation from '..'
-  import { getFileUrl } from '../utils'
-  import Download from './icons/Download.svelte'
+  import presentation, { getBlobSrcFor } from '..'
   import ActionContext from './ActionContext.svelte'
+  import Download from './icons/Download.svelte'
 
-  export let file: string | undefined
+  export let file: Blob | Ref<Blob> | undefined
   export let name: string
   export let contentType: string | undefined
   // export let popupOptions: PopupOptions
@@ -44,7 +44,9 @@
     }
   })
   let download: HTMLAnchorElement
-  $: src = file === undefined ? '' : getFileUrl(file, 'full', name)
+
+  $: srcRef = getBlobSrcFor(file, name)
+
   $: isImage = contentType !== undefined && contentType.startsWith('image/')
 
   let frame: HTMLIFrameElement | undefined = undefined
@@ -83,37 +85,41 @@
   </svelte:fragment>
 
   <svelte:fragment slot="utils">
-    {#if !isLoading && src !== ''}
-      <a class="no-line" href={src} download={name} bind:this={download}>
-        <Button
-          icon={Download}
-          kind={'ghost'}
-          on:click={() => {
-            download.click()
-          }}
-          showTooltip={{ label: presentation.string.Download }}
-        />
-      </a>
-    {/if}
+    {#await srcRef then src}
+      {#if !isLoading && src !== ''}
+        <a class="no-line" href={src} download={name} bind:this={download}>
+          <Button
+            icon={Download}
+            kind={'ghost'}
+            on:click={() => {
+              download.click()
+            }}
+            showTooltip={{ label: presentation.string.Download }}
+          />
+        </a>
+      {/if}
+    {/await}
   </svelte:fragment>
 
-  {#if !isLoading}
-    {#if src === ''}
-      <div class="centered">
-        <Label label={presentation.string.FailedToPreview} />
-      </div>
-    {:else if isImage}
-      <div class="pdfviewer-content img">
-        <img class="img-fit" {src} alt="" />
-      </div>
+  {#await srcRef then src}
+    {#if !isLoading}
+      {#if src === ''}
+        <div class="centered">
+          <Label label={presentation.string.FailedToPreview} />
+        </div>
+      {:else if isImage}
+        <div class="pdfviewer-content img">
+          <img class="img-fit" {src} alt="" />
+        </div>
+      {:else}
+        <iframe bind:this={frame} class="pdfviewer-content" src={src + '#view=FitH&navpanes=0'} title="" />
+      {/if}
     {:else}
-      <iframe bind:this={frame} class="pdfviewer-content" src={src + '#view=FitH&navpanes=0'} title="" />
+      <div class="centered">
+        <Spinner size="medium" />
+      </div>
     {/if}
-  {:else}
-    <div class="centered">
-      <Spinner size="medium" />
-    </div>
-  {/if}
+  {/await}
 </Dialog>
 
 <style lang="scss">

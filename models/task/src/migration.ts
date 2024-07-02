@@ -18,6 +18,7 @@ import {
   DOMAIN_STATUS,
   DOMAIN_TX,
   TxOperations,
+  toIdMap,
   type Attribute,
   type Class,
   type Doc,
@@ -29,8 +30,8 @@ import {
   type TxUpdateDoc
 } from '@hcengineering/core'
 import {
-  createDefaultSpace,
   createOrUpdate,
+  migrateSpace,
   tryMigrate,
   tryUpgrade,
   type MigrateOperation,
@@ -50,24 +51,19 @@ import {
   type TaskType
 } from '@hcengineering/task'
 
+import { DOMAIN_KANBAN, DOMAIN_TASK } from '.'
 import task from './plugin'
-import { DOMAIN_TASK } from '.'
 
 /**
  * @public
  */
 export async function createSequence (tx: TxOperations, _class: Ref<Class<Doc>>): Promise<void> {
   if ((await tx.findOne(task.class.Sequence, { attachedTo: _class })) === undefined) {
-    await tx.createDoc(task.class.Sequence, task.space.Sequence, {
+    await tx.createDoc(task.class.Sequence, core.space.Workspace, {
       attachedTo: _class,
       sequence: 0
     })
   }
-}
-
-async function createDefaults (client: MigrationUpgradeClient): Promise<void> {
-  await createDefaultSpace(client, task.space.Sequence, { name: 'Sequences' })
-  await createDefaultSpace(client, task.space.Statuses, { name: 'Statuses' })
 }
 
 export async function migrateDefaultStatusesBase<T extends Task> (
@@ -566,14 +562,33 @@ function areSameArrays (arr1: any[] | undefined, arr2: any[] | undefined): boole
 
 export const taskOperation: MigrateOperation = {
   async migrate (client: MigrationClient): Promise<void> {
-    await tryMigrate(client, taskId, [])
-  },
-  async upgrade (client: MigrationUpgradeClient): Promise<void> {
-    await tryUpgrade(client, taskId, [
+    await tryMigrate(client, taskId, [
       {
-        state: 'defaults-v2',
-        func: createDefaults
+        state: 'migrate-tt-model-states',
+        func: async (client) => {
+          const prTaskTypes = client.model.findAllSync(task.class.TaskType, {})
+
+          const allModelStatuses = toIdMap(client.model.findAllSync(core.class.Status, {}))
+          for (const tt of prTaskTypes) {
+            const missing = tt.statuses.filter((it) => !allModelStatuses.has(it))
+            await client.update(
+              DOMAIN_TX,
+              { objectId: { $in: missing }, objectSpace: 'task:space:Statuses' },
+              { $set: { objectSpace: core.space.Model } }
+            )
+          }
+        }
       },
+      {
+        state: 'removeDeprecatedSpace',
+        func: async (client: MigrationClient) => {
+          await migrateSpace(client, task.space.Sequence, core.space.Workspace, [DOMAIN_KANBAN])
+        }
+      }
+    ])
+  },
+  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>): Promise<void> {
+    await tryUpgrade(state, client, taskId, [
       {
         state: 'u-task-001',
         func: async (client) => {
@@ -582,7 +597,7 @@ export const taskOperation: MigrateOperation = {
           await createOrUpdate(
             tx,
             tags.class.TagCategory,
-            tags.space.Tags,
+            core.space.Workspace,
             {
               icon: tags.icon.Tags,
               label: 'Text Label',

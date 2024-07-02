@@ -14,33 +14,49 @@
 // limitations under the License.
 //
 
-import { type Channel, type Contact, getGravatarUrl, getName, type Person } from '@hcengineering/contact'
 import {
+  type Channel,
+  type AvatarInfo,
+  type Contact,
+  getGravatarUrl,
+  getName,
+  type Person,
+  type PersonAccount
+} from '@hcengineering/contact'
+import {
+  DocManager,
   type Class,
   type Client,
+  type Data,
   type DocumentQuery,
   type Ref,
   type RelatedDocument,
   type WithLookup
 } from '@hcengineering/core'
 import login from '@hcengineering/login'
-import { type IntlString, type Resources, getResource } from '@hcengineering/platform'
-import { MessageBox, type ObjectSearchResult, getClient, getFileUrl } from '@hcengineering/presentation'
+import { getResource, type IntlString, type Resources } from '@hcengineering/platform'
+import { MessageBox, getBlobRef, getClient, type ObjectSearchResult } from '@hcengineering/presentation'
 import {
+  getPlatformAvatarColorByName,
+  getPlatformAvatarColorForTextDef,
+  getPlatformColorDef,
+  hexColorToNumber,
+  parseURL,
+  showPopup,
+  themeStore,
   type AnyComponent,
   type AnySvelteComponent,
-  type IconSize,
-  type TooltipAlignment,
-  getIconSize2x,
-  parseURL,
-  showPopup
+  type ColorDefinition,
+  type TooltipAlignment
 } from '@hcengineering/ui'
 import AccountArrayEditor from './components/AccountArrayEditor.svelte'
 import AccountBox from './components/AccountBox.svelte'
 import AssigneeBox from './components/AssigneeBox.svelte'
 import AssigneePopup from './components/AssigneePopup.svelte'
 import Avatar from './components/Avatar.svelte'
+import AvatarRef from './components/AvatarRef.svelte'
 import ChannelFilter from './components/ChannelFilter.svelte'
+import ChannelIcon from './components/ChannelIcon.svelte'
 import ChannelPanel from './components/ChannelPanel.svelte'
 import ChannelPresenter from './components/ChannelPresenter.svelte'
 import Channels from './components/Channels.svelte'
@@ -48,6 +64,7 @@ import ChannelsDropdown from './components/ChannelsDropdown.svelte'
 import ChannelsEditor from './components/ChannelsEditor.svelte'
 import ChannelsPresenter from './components/ChannelsPresenter.svelte'
 import ChannelsView from './components/ChannelsView.svelte'
+import CollaborationUserAvatar from './components/CollaborationUserAvatar.svelte'
 import CombineAvatars from './components/CombineAvatars.svelte'
 import ContactArrayEditor from './components/ContactArrayEditor.svelte'
 import ContactPresenter from './components/ContactPresenter.svelte'
@@ -55,18 +72,16 @@ import ContactRefPresenter from './components/ContactRefPresenter.svelte'
 import Contacts from './components/Contacts.svelte'
 import ContactsTabs from './components/ContactsTabs.svelte'
 import CreateEmployee from './components/CreateEmployee.svelte'
+import CreateGuest from './components/CreateGuest.svelte'
 import CreateOrganization from './components/CreateOrganization.svelte'
 import CreatePerson from './components/CreatePerson.svelte'
-import CollaborationUserAvatar from './components/CollaborationUserAvatar.svelte'
 import DeleteConfirmationPopup from './components/DeleteConfirmationPopup.svelte'
 import EditEmployee from './components/EditEmployee.svelte'
 import EditMember from './components/EditMember.svelte'
 import EditOrganization from './components/EditOrganization.svelte'
+import EditOrganizationPanel from './components/EditOrganizationPanel.svelte'
 import EditPerson from './components/EditPerson.svelte'
 import EditableAvatar from './components/EditableAvatar.svelte'
-import PersonAccountFilterValuePresenter from './components/PersonAccountFilterValuePresenter.svelte'
-import PersonAccountPresenter from './components/PersonAccountPresenter.svelte'
-import PersonAccountRefPresenter from './components/PersonAccountRefPresenter.svelte'
 import EmployeeArrayEditor from './components/EmployeeArrayEditor.svelte'
 import EmployeeBox from './components/EmployeeBox.svelte'
 import EmployeeBrowser from './components/EmployeeBrowser.svelte'
@@ -82,33 +97,34 @@ import MembersPresenter from './components/MembersPresenter.svelte'
 import MergePersons from './components/MergePersons.svelte'
 import OrganizationEditor from './components/OrganizationEditor.svelte'
 import OrganizationPresenter from './components/OrganizationPresenter.svelte'
+import PersonAccountFilterValuePresenter from './components/PersonAccountFilterValuePresenter.svelte'
+import PersonAccountPresenter from './components/PersonAccountPresenter.svelte'
+import PersonAccountRefPresenter from './components/PersonAccountRefPresenter.svelte'
 import PersonEditor from './components/PersonEditor.svelte'
+import PersonIcon from './components/PersonIcon.svelte'
 import PersonPresenter from './components/PersonPresenter.svelte'
 import PersonRefPresenter from './components/PersonRefPresenter.svelte'
 import SelectAvatars from './components/SelectAvatars.svelte'
+import SelectUsersPopup from './components/SelectUsersPopup.svelte'
 import SocialEditor from './components/SocialEditor.svelte'
 import SpaceMembers from './components/SpaceMembers.svelte'
+import SpaceMembersEditor from './components/SpaceMembersEditor.svelte'
+import SystemAvatar from './components/SystemAvatar.svelte'
 import UserBox from './components/UserBox.svelte'
 import UserBoxItems from './components/UserBoxItems.svelte'
 import UserBoxList from './components/UserBoxList.svelte'
+import UserDetails from './components/UserDetails.svelte'
 import UserInfo from './components/UserInfo.svelte'
+import UsersList from './components/UsersList.svelte'
 import UsersPopup from './components/UsersPopup.svelte'
 import ActivityChannelPresenter from './components/activity/ActivityChannelPresenter.svelte'
+import NameChangedActivityMessage from './components/activity/NameChangedActivityMessage.svelte'
+import IconAddMember from './components/icons/AddMember.svelte'
 import ExpandRightDouble from './components/icons/ExpandRightDouble.svelte'
 import IconMembers from './components/icons/Members.svelte'
-import TxNameChange from './components/activity/TxNameChange.svelte'
-import NameChangedActivityMessage from './components/activity/NameChangedActivityMessage.svelte'
-import SystemAvatar from './components/SystemAvatar.svelte'
-import PersonIcon from './components/PersonIcon.svelte'
-import UsersList from './components/UsersList.svelte'
-import SelectUsersPopup from './components/SelectUsersPopup.svelte'
-import IconAddMember from './components/icons/AddMember.svelte'
-import UserDetails from './components/UserDetails.svelte'
-import EditOrganizationPanel from './components/EditOrganizationPanel.svelte'
-import ChannelIcon from './components/ChannelIcon.svelte'
-import CreateGuest from './components/CreateGuest.svelte'
-import SpaceMembersEditor from './components/SpaceMembersEditor.svelte'
+import { AggregationManager } from '@hcengineering/view-resources'
 
+import { get, writable } from 'svelte/store'
 import contact from './plugin'
 import {
   channelIdentifierProvider,
@@ -127,59 +143,61 @@ import {
   getCurrentEmployeeName,
   getCurrentEmployeePosition,
   getPersonTooltip,
+  grouppingPersonManager,
   resolveLocation
 } from './utils'
 
 export * from './utils'
 export { employeeByIdStore, employeesStore } from './utils'
 export {
-  Channels,
-  ChannelsEditor,
-  ContactRefPresenter,
-  ContactPresenter,
-  ChannelsView,
-  ChannelsDropdown,
-  EmployeePresenter,
-  PersonPresenter,
-  OrganizationPresenter,
-  EmployeeBrowser,
-  MemberPresenter,
-  EmployeeArrayEditor,
-  EmployeeEditor,
-  PersonAccountRefPresenter,
-  PersonAccountPresenter,
-  MembersPresenter,
-  EditPerson,
-  EmployeeRefPresenter,
   AccountArrayEditor,
   AccountBox,
-  CreateOrganization,
-  ExpandRightDouble,
-  EditableAvatar,
-  UserBox,
   AssigneeBox,
   AssigneePopup,
   Avatar,
-  UsersPopup,
-  EmployeeBox,
-  UserBoxList,
-  Members,
-  SpaceMembers,
+  AvatarRef,
+  Channels,
+  ChannelsDropdown,
+  ChannelsEditor,
+  ChannelsView,
   CombineAvatars,
-  UserInfo,
-  IconMembers,
-  SelectAvatars,
-  UserBoxItems,
-  MembersBox,
-  PersonRefPresenter,
-  SystemAvatar,
-  PersonIcon,
-  UsersList,
-  SelectUsersPopup,
-  IconAddMember,
-  UserDetails,
+  ContactPresenter,
+  ContactRefPresenter,
+  CreateGuest,
+  CreateOrganization,
   DeleteConfirmationPopup,
-  CreateGuest
+  EditPerson,
+  EditableAvatar,
+  EmployeeArrayEditor,
+  EmployeeBox,
+  EmployeeBrowser,
+  EmployeeEditor,
+  EmployeePresenter,
+  EmployeeRefPresenter,
+  ExpandRightDouble,
+  IconAddMember,
+  IconMembers,
+  MemberPresenter,
+  Members,
+  MembersBox,
+  MembersPresenter,
+  OrganizationPresenter,
+  PersonAccountPresenter,
+  PersonAccountRefPresenter,
+  PersonIcon,
+  PersonPresenter,
+  PersonRefPresenter,
+  SelectAvatars,
+  SelectUsersPopup,
+  SpaceMembers,
+  SystemAvatar,
+  UserBox,
+  UserBoxItems,
+  UserBoxList,
+  UserDetails,
+  UserInfo,
+  UsersList,
+  UsersPopup
 }
 
 const toObjectSearchResult = (e: WithLookup<Contact>): ObjectSearchResult => ({
@@ -279,6 +297,16 @@ async function openChannelURL (doc: Channel): Promise<void> {
   }
 }
 
+function filterPerson (doc: PersonAccount, target: PersonAccount): boolean {
+  return doc.person === target.person && doc._id !== target._id
+}
+
+export const personStore = writable<DocManager<PersonAccount>>(new DocManager([]))
+
+function setStore (manager: DocManager<PersonAccount>): void {
+  personStore.set(manager)
+}
+
 export interface PersonLabelTooltip {
   personLabel?: IntlString
   placeholderLabel?: IntlString
@@ -287,13 +315,24 @@ export interface PersonLabelTooltip {
   props?: any
 }
 
+function getPersonColor (person: Data<WithLookup<AvatarInfo>>, name: string): ColorDefinition {
+  const dark = get(themeStore).dark
+
+  if (person.avatarProps?.color !== undefined) {
+    if (person.avatarProps?.color?.startsWith('#')) {
+      return getPlatformColorDef(hexColorToNumber(person.avatarProps?.color), dark)
+    }
+    return getPlatformAvatarColorByName(person.avatarProps?.color, dark)
+  }
+  return getPlatformAvatarColorForTextDef(name, dark)
+}
+
 export default async (): Promise<Resources> => ({
   actionImpl: {
     KickEmployee: kickEmployee,
     OpenChannel: openChannelURL
   },
   activity: {
-    TxNameChange,
     NameChangedActivityMessage
   },
   component: {
@@ -330,6 +369,7 @@ export default async (): Promise<Resources> => ({
     ChannelFilter,
     MergePersons,
     Avatar,
+    AvatarRef,
     UserBoxList,
     ChannelPresenter,
     ChannelPanel,
@@ -362,19 +402,34 @@ export default async (): Promise<Resources> => ({
     ) => await queryContact(contact.class.Organization, client, query, filter)
   },
   function: {
-    GetFileUrl: (file: string, size: IconSize, fileName?: string) => {
-      return [
-        getFileUrl(file, size, fileName),
-        getFileUrl(file, size, fileName) + ' 1x',
-        getFileUrl(file, getIconSize2x(size), fileName) + ' 2x'
-      ]
+    GetFileUrl: async (person: Data<WithLookup<AvatarInfo>>, name: string, width: number) => {
+      if (person.avatar == null) {
+        return {
+          color: getPersonColor(person, name)
+        }
+      }
+      const blobRef = await getBlobRef(person.$lookup?.avatar, person.avatar, undefined, width)
+      return {
+        url: blobRef.src,
+        srcSet: blobRef.srcset,
+        color: getPersonColor(person, name)
+      }
     },
-    GetGravatarUrl: (file: string, size: IconSize, fileName?: string) => [
-      getGravatarUrl(file, size),
-      getGravatarUrl(file, size) + ' 1x',
-      getGravatarUrl(file, getIconSize2x(size)) + ' 2x'
-    ],
-    GetColorUrl: (uri: string) => [uri],
+    GetGravatarUrl: async (person: Data<WithLookup<AvatarInfo>>, name: string, width: number = 64) => ({
+      url: person.avatarProps?.url !== undefined ? getGravatarUrl(person.avatarProps?.url, width) : undefined,
+      srcSet:
+        person.avatarProps?.url !== undefined
+          ? `${getGravatarUrl(person.avatarProps?.url, width)} 1x, ${getGravatarUrl(person.avatarProps?.url, width * 2)} 2x`
+          : undefined,
+      color: getPersonColor(person, name)
+    }),
+    GetColorUrl: async (person: Data<WithLookup<AvatarInfo>>, name: string) => ({
+      color: getPersonColor(person, name)
+    }),
+    GetExternalUrl: async (person: Data<WithLookup<AvatarInfo>>, name: string) => ({
+      color: getPersonColor(person, name),
+      url: person.avatarProps?.url
+    }),
     EmployeeSort: employeeSort,
     FilterChannelInResult: filterChannelInResult,
     FilterChannelNinResult: filterChannelNinResult,
@@ -390,9 +445,16 @@ export default async (): Promise<Resources> => ({
     ContactTitleProvider: contactTitleProvider,
     PersonTooltipProvider: getPersonTooltip,
     ChannelTitleProvider: channelTitleProvider,
-    ChannelIdentifierProvider: channelIdentifierProvider
+    ChannelIdentifierProvider: channelIdentifierProvider,
+    SetPersonStore: setStore,
+    PersonFilterFunction: filterPerson
   },
   resolver: {
     Location: resolveLocation
+  },
+  aggregation: {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    CreatePersonAggregationManager: AggregationManager.create,
+    GrouppingPersonManager: grouppingPersonManager
   }
 })

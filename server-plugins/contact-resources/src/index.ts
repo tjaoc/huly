@@ -133,24 +133,11 @@ export async function OnContactDelete (
     return []
   }
 
-  const avatar: string | undefined = [removeContact.avatar].filter((x): x is string => x !== undefined).slice(-1)[0]
-
-  if (avatar === undefined) {
+  if (removeContact.avatar == null) {
     return []
   }
 
-  if (avatar?.includes('://') && !avatar?.startsWith('image://')) {
-    return []
-  }
-  if (avatar === '') {
-    return []
-  }
-
-  await storageAdapter.remove(ctx, workspace, [avatar])
-
-  if (avatar != null) {
-    await removeAllObjects(ctx, storageAdapter, workspace, avatar)
-  }
+  await removeAllObjects(ctx, storageAdapter, workspace, removeContact.avatar)
 
   const result: Tx[] = []
 
@@ -215,10 +202,10 @@ export async function OnChannelUpdate (tx: Tx, control: TriggerControl): Promise
  */
 export async function personHTMLPresenter (doc: Doc, control: TriggerControl): Promise<string> {
   const person = doc as Person
-  const front = getMetadata(serverCore.metadata.FrontUrl) ?? ''
+  const front = control.branding?.front ?? getMetadata(serverCore.metadata.FrontUrl) ?? ''
   const path = `${workbenchId}/${control.workspace.workspaceUrl}/${contactId}/${doc._id}`
   const link = concatLink(front, path)
-  return `<a href="${link}">${getName(control.hierarchy, person)}</a>`
+  return `<a href="${link}">${getName(control.hierarchy, person, control.branding?.lastNameFirst)}</a>`
 }
 
 /**
@@ -226,7 +213,7 @@ export async function personHTMLPresenter (doc: Doc, control: TriggerControl): P
  */
 export function personTextPresenter (doc: Doc, control: TriggerControl): string {
   const person = doc as Person
-  return `${getName(control.hierarchy, person)}`
+  return `${getName(control.hierarchy, person, control.branding?.lastNameFirst)}`
 }
 
 /**
@@ -234,7 +221,7 @@ export function personTextPresenter (doc: Doc, control: TriggerControl): string 
  */
 export async function organizationHTMLPresenter (doc: Doc, control: TriggerControl): Promise<string> {
   const organization = doc as Organization
-  const front = getMetadata(serverCore.metadata.FrontUrl) ?? ''
+  const front = control.branding?.front ?? getMetadata(serverCore.metadata.FrontUrl) ?? ''
   const path = `${workbenchId}/${control.workspace.workspaceUrl}/${contactId}/${doc._id}`
   const link = concatLink(front, path)
   return `<a href="${link}">${organization.name}</a>`
@@ -253,7 +240,7 @@ export function organizationTextPresenter (doc: Doc): string {
  */
 export function contactNameProvider (hierarchy: Hierarchy, props: Record<string, string>): string {
   const _class = props._class !== undefined ? (props._class as Ref<Class<Doc>>) : contact.class.Contact
-  return formatContactName(hierarchy, _class, props.name ?? '')
+  return formatContactName(hierarchy, _class, props.name ?? '', props.lastNameFirst)
 }
 
 export async function getCurrentEmployeeName (control: TriggerControl, context: Record<string, Doc>): Promise<string> {
@@ -262,7 +249,7 @@ export async function getCurrentEmployeeName (control: TriggerControl, context: 
   })
   if (account === undefined) return ''
   const employee = (await control.findAll(contact.class.Person, { _id: account.person }))[0]
-  return employee !== undefined ? formatName(employee.name) : ''
+  return employee !== undefined ? formatName(employee.name, control.branding?.lastNameFirst) : ''
 }
 
 export async function getCurrentEmployeeEmail (control: TriggerControl, context: Record<string, Doc>): Promise<string> {
@@ -294,7 +281,7 @@ export async function getContactName (
   const value = context[contact.class.Contact] as Contact
   if (value === undefined) return
   if (control.hierarchy.isDerived(value._class, contact.class.Person)) {
-    return getName(control.hierarchy, value)
+    return getName(control.hierarchy, value, control.branding?.lastNameFirst)
   } else {
     return value.name
   }

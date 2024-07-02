@@ -15,7 +15,7 @@
 
 import activity from '@hcengineering/activity'
 import contact from '@hcengineering/contact'
-import { AccountRole, DOMAIN_MODEL, type Account, type Domain, type Ref } from '@hcengineering/core'
+import { AccountRole, DOMAIN_MODEL, type Account, type Blob, type Domain, type Ref } from '@hcengineering/core'
 import { Mixin, Model, type Builder, UX } from '@hcengineering/model'
 import core, { TClass, TConfiguration, TDoc } from '@hcengineering/model-core'
 import view, { createAction } from '@hcengineering/model-view'
@@ -105,7 +105,7 @@ export class TInviteSettings extends TConfiguration implements InviteSettings {
 
 @Model(setting.class.WorkspaceSetting, core.class.Doc, DOMAIN_SETTING)
 export class TWorkspaceSetting extends TDoc implements WorkspaceSetting {
-  icon?: string
+  icon?: Ref<Blob>
 }
 
 @Mixin(setting.mixin.SpaceTypeEditor, core.class.Class)
@@ -353,22 +353,6 @@ export function createModel (builder: Builder): void {
       modern: true
     },
     setting.ids.SettingApp
-  )
-
-  builder.createDoc(
-    activity.class.TxViewlet,
-    core.space.Model,
-    {
-      objectClass: setting.class.Integration,
-      icon: setting.icon.Integrations,
-      txClass: core.class.TxUpdateDoc,
-      label: setting.string.IntegrationWith,
-      labelComponent: setting.activity.TxIntegrationDisable,
-      display: 'inline',
-      editable: false,
-      hideOnRemove: true
-    },
-    setting.ids.TxIntegrationDisable
   )
 
   builder.createDoc(

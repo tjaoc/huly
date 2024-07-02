@@ -12,11 +12,13 @@ export class LeftSideMenuPage extends CommonPage {
   buttonChunter = (): Locator => this.page.locator('button[id$="ApplicationLabelChunter"]')
   buttonContacts = (): Locator => this.page.locator('button[id$="Contacts"]')
   buttonTracker = (): Locator => this.page.locator('button[id$="TrackerApplication"]')
+  buttonRecruiting = (): Locator => this.page.locator('[id="app-recruit\\:string\\:RecruitApplication"]')
   buttonNotification = (): Locator => this.page.locator('button[id$="Inbox"]')
-  buttonDocuments = (): Locator => this.page.locator('button[id$="DocumentApplication"]')
+  buttonDocuments = (): Locator => this.page.locator('button[id$="document:string:DocumentApplication"]')
   profileButton = (): Locator => this.page.locator('#profile-button')
   inviteToWorkspaceButton = (): Locator => this.page.locator('button:has-text("Invite to workspace")')
   getInviteLinkButton = (): Locator => this.page.locator('button:has-text("Get invite link")')
+  clickCloseOnInviteLinkButton = (): Locator => this.page.getByRole('button', { name: 'Close' })
 
   // Actions
   async openProfileMenu (): Promise<void> {
@@ -49,6 +51,14 @@ export class LeftSideMenuPage extends CommonPage {
 
   async clickDocuments (): Promise<void> {
     await this.buttonDocuments().click()
+  }
+
+  async clickRecruiting (): Promise<void> {
+    await this.buttonRecruiting().click()
+  }
+
+  async clickOnCloseInvite (): Promise<void> {
+    await this.clickCloseOnInviteLinkButton().click()
   }
 
   // Retrieve the last token from local storage

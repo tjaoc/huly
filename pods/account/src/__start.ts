@@ -13,6 +13,7 @@
 // limitations under the License.
 //
 
+import { loadBrandingMap } from '@hcengineering/server-core'
 import { serveAccount } from '@hcengineering/account-service'
 import { MeasureMetricsContext, newMetrics, type Tx } from '@hcengineering/core'
 import builder, { getModelVersion, migrateOperations } from '@hcengineering/model-all'
@@ -24,4 +25,6 @@ const txes = JSON.parse(JSON.stringify(builder(enabled, disabled).getTxes())) as
 
 const metricsContext = new MeasureMetricsContext('account', {}, {}, newMetrics())
 
-serveAccount(metricsContext, getModelVersion(), txes, migrateOperations, '')
+const brandingPath = process.env.BRANDING_PATH
+
+serveAccount(metricsContext, getModelVersion(), txes, migrateOperations, '', loadBrandingMap(brandingPath))

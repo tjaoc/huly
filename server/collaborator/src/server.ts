@@ -19,7 +19,6 @@ import { Token, decodeToken } from '@hcengineering/server-token'
 import { ServerKit } from '@hcengineering/text'
 import { Hocuspocus } from '@hocuspocus/server'
 import bp from 'body-parser'
-import compression from 'compression'
 import cors from 'cors'
 import express from 'express'
 import { IncomingMessage, createServer } from 'http'
@@ -58,26 +57,16 @@ export async function start (
   const app = express()
   app.use(cors())
   app.use(bp.json())
-  app.use(
-    compression({
-      filter: (req, res) => {
-        if (req.headers['x-no-compression'] != null) {
-          // don't compress responses with this request header
-          return false
-        }
-
-        // fallback to standard filter function
-        return compression.filter(req, res)
-      },
-      level: 1,
-      memLevel: 9
-    })
-  )
-
   const extensions = [
     ServerKit.configure({
       image: {
-        uploadUrl: config.UploadUrl
+        getBlobRef: async (fileId, name, size) => {
+          const sz = size !== undefined ? `&size=${size}` : ''
+          return {
+            src: `${config.UploadUrl}?file=${fileId}`,
+            srcset: `${config.UploadUrl}?file=${fileId}${sz}`
+          }
+        }
       }
     })
   ]
@@ -175,9 +164,6 @@ export async function start (
       return
     }
 
-    const token = decodeToken(authHeader.split(' ')[1])
-    const context = getContext(token)
-
     const request = req.body as RpcRequest
     const method = methods[request.method]
     if (method === undefined) {
@@ -186,6 +172,10 @@ export async function start (
       }
       res.status(400).send(response)
     } else {
+      const token = decodeToken(authHeader.split(' ')[1])
+      const context = getContext(token)
+
+      rpcCtx.info('rpc', { method: request.method, connectionId: context.connectionId, mode: token.extra?.mode ?? '' })
       await rpcCtx.with('/rpc', { method: request.method }, async (ctx) => {
         try {
           const response: RpcResponse = await rpcCtx.with(request.method, {}, async (ctx) => {
@@ -201,22 +191,7 @@ export async function start (
 
   const wss = new WebSocketServer({
     noServer: true,
-    perMessageDeflate: {
-      zlibDeflateOptions: {
-        chunkSize: 32 * 1024,
-        memLevel: 9,
-        level: 1
-      },
-      zlibInflateOptions: {
-        chunkSize: 32 * 1024,
-        memLevel: 9,
-        level: 1
-      },
-      // Below options specified as default values.
-      concurrencyLimit: 10, // Limits zlib concurrency for perf.
-      threshold: 1024 // Size (in bytes) below which messages
-      // should not be compressed if context takeover is disabled.
-    }
+    perMessageDeflate: false
   })
 
   wss.on('connection', (incoming: WebSocket, request: IncomingMessage) => {

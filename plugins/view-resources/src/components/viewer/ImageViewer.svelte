@@ -14,27 +14,27 @@
 -->
 <script lang="ts">
   import { type Blob, type Ref } from '@hcengineering/core'
-  import { type BlobMetadata, getFileUrl } from '@hcengineering/presentation'
+  import { getBlobRef, type BlobMetadata } from '@hcengineering/presentation'
 
-  export let value: Ref<Blob>
+  export let value: Blob | Ref<Blob>
   export let name: string
-  export let contentType: string
   export let metadata: BlobMetadata | undefined
+  export let fit: boolean = false
 
-  $: src = value === undefined ? '' : getFileUrl(value, 'full', name)
+  $: p = typeof value === 'string' ? getBlobRef(undefined, value, name) : getBlobRef(value, value._id)
+  $: width = metadata?.originalWidth ? `min(${metadata.originalWidth / metadata?.pixelRatio ?? 1}px, 100%)` : '100%'
+  $: height = metadata?.originalHeight
+    ? `min(${metadata.originalHeight / metadata?.pixelRatio ?? 1}px, ${fit ? '100%' : '80vh'})`
+    : '100%'
 </script>
 
-{#if src}
-  <img class="w-full h-full img-fit" {src} alt="" />
-{/if}
-
-<style lang="scss">
-  .img-fit {
-    margin: 0 auto;
-    width: fit-content;
-    height: fit-content;
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-  }
-</style>
+{#await p then blobRef}
+  <img
+    class="object-contain mx-auto"
+    style:max-width={width}
+    style:max-height={height}
+    src={blobRef.src}
+    srcset={blobRef.srcset}
+    alt={name}
+  />
+{/await}

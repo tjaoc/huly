@@ -31,6 +31,7 @@ import {
 import core, {
   getCurrentAccount,
   toIdMap,
+  type Account,
   type Class,
   type Client,
   type Doc,
@@ -39,8 +40,14 @@ import core, {
   type Ref,
   type Timestamp,
   type TxOperations,
-  type Account,
-  type UserStatus
+  type UserStatus,
+  type WithLookup,
+  AggregateValue,
+  type Space,
+  type Hierarchy,
+  type DocumentQuery,
+  AggregateValueData,
+  matchQuery
 } from '@hcengineering/core'
 import notification, { type DocNotifyContext, type InboxNotification } from '@hcengineering/notification'
 import { getEmbeddedLabel, getResource, translate } from '@hcengineering/platform'
@@ -54,11 +61,12 @@ import {
   type ResolvedLocation,
   type TabItem
 } from '@hcengineering/ui'
-import view, { type Filter } from '@hcengineering/view'
-import { FilterQuery } from '@hcengineering/view-resources'
+import view, { type GrouppingManager, type Filter } from '@hcengineering/view'
+import { FilterQuery, accessDeniedStore } from '@hcengineering/view-resources'
 import { derived, get, writable } from 'svelte/store'
 
 import contact from './plugin'
+import { personStore } from '.'
 
 export function formatDate (dueDateMs: Timestamp): string {
   return new Date(dueDateMs).toLocaleString('default', {
@@ -261,6 +269,7 @@ async function generateLocation (loc: Location, id: Ref<Contact>): Promise<Resol
   const client = getClient()
   const doc = await client.findOne(contact.class.Contact, { _id: id })
   if (doc === undefined) {
+    accessDeniedStore.set(true)
     console.error(`Could not find contact ${id}.`)
     return undefined
   }
@@ -287,14 +296,14 @@ async function generateLocation (loc: Location, id: Ref<Contact>): Promise<Resol
   }
 }
 
-export const employeeByIdStore = writable<IdMap<Employee>>(new Map())
-export const employeesStore = writable<Employee[]>([])
+export const employeeByIdStore = writable<IdMap<WithLookup<Employee>>>(new Map())
+export const employeesStore = writable<Array<WithLookup<Employee>>>([])
 
 export const personAccountByIdStore = writable<IdMap<PersonAccount>>(new Map())
 
 export const channelProviders = writable<ChannelProvider[]>([])
 
-export const personAccountPersonByIdStore = writable<IdMap<Person>>(new Map())
+export const personAccountPersonByIdStore = writable<IdMap<WithLookup<Person>>>(new Map())
 
 export const statusByUserStore = writable<Map<Ref<Account>, UserStatus>>(new Map())
 
@@ -311,10 +320,19 @@ function fillStores (): void {
     const accountPersonQuery = createQuery(true)
 
     const query = createQuery(true)
-    query.query(contact.mixin.Employee, {}, (res) => {
-      employeesStore.set(res)
-      employeeByIdStore.set(toIdMap(res))
-    })
+    query.query(
+      contact.mixin.Employee,
+      {},
+      (res) => {
+        employeesStore.set(res)
+        employeeByIdStore.set(toIdMap(res))
+      },
+      {
+        lookup: {
+          avatar: core.class.Blob
+        }
+      }
+    )
 
     const accountQ = createQuery(true)
     accountQ.query(contact.class.PersonAccount, {}, (res) => {
@@ -322,11 +340,16 @@ function fillStores (): void {
 
       const persons = res.map((it) => it.person)
 
-      accountPersonQuery.query(
+      accountPersonQuery.query<Person>(
         contact.class.Person,
         { _id: { $in: persons }, [contact.mixin.Employee]: { $exists: false } },
         (res) => {
           personAccountPersonByIdStore.set(toIdMap(res))
+        },
+        {
+          lookup: {
+            avatar: core.class.Blob
+          }
         }
       )
     })
@@ -414,4 +437,110 @@ export async function channelTitleProvider (client: Client, ref: Ref<Channel>, d
   if (channel === undefined) return ''
 
   return channel.value
+}
+
+/**
+ * @public
+ */
+export const grouppingPersonManager: GrouppingManager = {
+  groupByCategories: groupByPersonAccountCategories,
+  groupValues: groupPersonAccountValues,
+  groupValuesWithEmpty: groupPersonAccountValuesWithEmpty,
+  hasValue: hasPersonAccountValue
+}
+
+/**
+ * @public
+ */
+export function groupByPersonAccountCategories (categories: any[]): AggregateValue[] {
+  const mgr = get(personStore)
+
+  const existingCategories: AggregateValue[] = [new AggregateValue(undefined, [])]
+  const personMap = new Map<string, AggregateValue>()
+
+  const usedSpaces = new Set<Ref<Space>>()
+  const personAccountList: Array<WithLookup<PersonAccount>> = []
+  for (const v of categories) {
+    const personAccount = mgr.getIdMap().get(v)
+    if (personAccount !== undefined) {
+      personAccountList.push(personAccount)
+      usedSpaces.add(personAccount.space)
+    }
+  }
+
+  for (const personAccount of personAccountList) {
+    if (personAccount !== undefined) {
+      let fst = personMap.get(personAccount.person)
+      if (fst === undefined) {
+        const people = mgr
+          .getDocs()
+          .filter(
+            (it) => it.person === personAccount.person && (categories.includes(it._id) || usedSpaces.has(it.space))
+          )
+          .sort((a, b) => a.email.localeCompare(b.email))
+          .map((it) => new AggregateValueData(it.person, it._id, it.space))
+        fst = new AggregateValue(personAccount.person, people)
+        personMap.set(personAccount.person, fst)
+        existingCategories.push(fst)
+      }
+    }
+  }
+  return existingCategories
+}
+
+/**
+ * @public
+ */
+export function groupPersonAccountValues (val: Doc[], targets: Set<any>): Doc[] {
+  const values = val
+  const result: Doc[] = []
+  const unique = [...new Set(val.map((c) => (c as PersonAccount).person))]
+  unique.forEach((label, i) => {
+    let exists = false
+    values.forEach((c) => {
+      if ((c as PersonAccount).person === label) {
+        if (!exists) {
+          result[i] = c
+          exists = targets.has(c?._id)
+        }
+      }
+    })
+  })
+  return result
+}
+
+/**
+ * @public
+ */
+export function hasPersonAccountValue (value: Doc | undefined | null, values: any[]): boolean {
+  const mgr = get(personStore)
+  const personSet = new Set(mgr.filter((it) => it.person === (value as PersonAccount)?.person).map((it) => it._id))
+  return values.some((it) => personSet.has(it))
+}
+
+/**
+ * @public
+ */
+export function groupPersonAccountValuesWithEmpty (
+  hierarchy: Hierarchy,
+  _class: Ref<Class<Doc>>,
+  key: string,
+  query: DocumentQuery<Doc> | undefined
+): Array<Ref<Doc>> {
+  const mgr = get(personStore)
+  let personAccountList = mgr.getDocs()
+  if (query !== undefined) {
+    const { [key]: st, space } = query
+    const resQuery: DocumentQuery<Doc> = {}
+    if (space !== undefined) {
+      resQuery.space = space
+    }
+    if (st !== undefined) {
+      resQuery._id = st
+    }
+    personAccountList = matchQuery<Doc>(personAccountList, resQuery, _class, hierarchy) as unknown as Array<
+    WithLookup<PersonAccount>
+    >
+  }
+  return personAccountList.map((it) => it._id)
 }

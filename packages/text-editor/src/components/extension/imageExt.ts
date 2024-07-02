@@ -14,8 +14,8 @@
 //
 import { FilePreviewPopup } from '@hcengineering/presentation'
 import { ImageNode, type ImageOptions as ImageNodeOptions } from '@hcengineering/text'
-import { type IconSize, getIconSize2x, showPopup } from '@hcengineering/ui'
-import { mergeAttributes, nodeInputRule } from '@tiptap/core'
+import { showPopup } from '@hcengineering/ui'
+import { nodeInputRule } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
 /**
@@ -26,9 +26,7 @@ export type ImageAlignment = 'center' | 'left' | 'right'
 /**
  * @public
  */
-export interface ImageOptions extends ImageNodeOptions {
-  uploadUrl: string
-}
+export interface ImageOptions extends ImageNodeOptions {}
 
 export interface ImageAlignmentOptions {
   align?: ImageAlignment
@@ -63,11 +61,6 @@ declare module '@tiptap/core' {
  */
 export const inputRegex = /(?:^|\s)(!\[(.+|:?)]\((\S+)(?:(?:\s+)["'](\S+)["'])?\))$/
 
-// This is a simplified version of getFileUrl from presentation plugin, which we cannot use
-export function getFileUrl (fileId: string, size: IconSize = 'full', uploadUrl: string): string {
-  return `${uploadUrl}?file=${fileId}&size=${size as string}`
-}
-
 /**
  * @public
  */
@@ -76,7 +69,7 @@ export const ImageExtension = ImageNode.extend<ImageOptions>({
     return {
       inline: true,
       HTMLAttributes: {},
-      uploadUrl: ''
+      getBlobRef: async () => ({ src: '', srcset: '' })
     }
   },
 
@@ -89,54 +82,6 @@ export const ImageExtension = ImageNode.extend<ImageOptions>({
         tag: 'img[src]'
       }
     ]
-  },
-
-  renderHTML ({ node, HTMLAttributes }) {
-    const divAttributes = {
-      class: 'text-editor-image-container',
-      'data-type': this.name,
-      'data-align': node.attrs.align
-    }
-
-    const imgAttributes = mergeAttributes(
-      {
-        'data-type': this.name
-      },
-      this.options.HTMLAttributes,
-      HTMLAttributes
-    )
-
-    const uploadUrl = this.options.uploadUrl ?? ''
-
-    const id = imgAttributes['file-id']
-    if (id != null) {
-      imgAttributes.src = getFileUrl(id, 'full', uploadUrl)
-      let width: IconSize | undefined
-      switch (imgAttributes.width) {
-        case '32px':
-          width = 'small'
-          break
-        case '64px':
-          width = 'medium'
-          break
-        case '128px':
-        case '256px':
-          width = 'large'
-          break
-        case '512px':
-          width = 'x-large'
-          break
-      }
-      if (width !== undefined) {
-        imgAttributes.src = getFileUrl(id, width, uploadUrl)
-        imgAttributes.srcset =
-          getFileUrl(id, width, uploadUrl) + ' 1x,' + getFileUrl(id, getIconSize2x(width), uploadUrl) + ' 2x'
-      }
-      imgAttributes.class = 'text-editor-image'
-      imgAttributes.contentEditable = false
-    }
-
-    return ['div', divAttributes, ['img', imgAttributes]]
   },
 
   addCommands () {
@@ -204,7 +149,6 @@ export const ImageExtension = ImageNode.extend<ImageOptions>({
               {
                 file: fileId,
                 name: fileName,
-                contentType: 'image/*',
                 fullSize: true,
                 showIcon: false
               },

@@ -111,10 +111,11 @@ export default plugin(coreId, {
     Account: '' as Ref<Class<Account>>,
     Type: '' as Ref<Class<Type<any>>>,
     TypeString: '' as Ref<Class<Type<string>>>,
-    TypeAttachment: '' as Ref<Class<Type<string>>>,
+    TypeBlob: '' as Ref<Class<Type<Ref<Blob>>>>,
     TypeIntlString: '' as Ref<Class<Type<IntlString>>>,
     TypeHyperlink: '' as Ref<Class<Type<Hyperlink>>>,
     TypeNumber: '' as Ref<Class<Type<number>>>,
+    TypeFileSize: '' as Ref<Class<Type<number>>>,
     TypeMarkup: '' as Ref<Class<Type<string>>>,
     TypeRank: '' as Ref<Class<Type<Rank>>>,
     TypeRecord: '' as Ref<Class<Type<Record<any, any>>>>,
@@ -158,7 +159,8 @@ export default plugin(coreId, {
     DerivedTx: '' as Ref<Space>,
     Model: '' as Ref<Space>,
     Space: '' as Ref<TypedSpace>,
-    Configuration: '' as Ref<Space>
+    Configuration: '' as Ref<Space>,
+    Workspace: '' as Ref<Space>
   },
   account: {
     System: '' as Ref<Account>,
@@ -201,6 +203,7 @@ export default plugin(coreId, {
     Array: '' as IntlString,
     Name: '' as IntlString,
     Enum: '' as IntlString,
+    Size: '' as IntlString,
     Description: '' as IntlString,
     ShortDescription: '' as IntlString,
     Descriptor: '' as IntlString,

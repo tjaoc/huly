@@ -17,12 +17,13 @@
   import { DocNotifyContext } from '@hcengineering/notification'
   import activity, { ActivityMessage, ActivityMessagesFilter } from '@hcengineering/activity'
   import { getClient } from '@hcengineering/presentation'
-  import { getMessageFromLoc } from '@hcengineering/activity-resources'
+  import { getMessageFromLoc, messageInFocus } from '@hcengineering/activity-resources'
   import { location as locationStore } from '@hcengineering/ui'
 
   import chunter from '../plugin'
   import ChannelScrollView from './ChannelScrollView.svelte'
   import { ChannelDataProvider } from '../channelDataProvider'
+  import { onDestroy } from 'svelte'
 
   export let object: Doc
   export let context: DocNotifyContext | undefined
@@ -35,8 +36,23 @@
   let dataProvider: ChannelDataProvider | undefined
   let selectedMessageId: Ref<ActivityMessage> | undefined = undefined
 
-  locationStore.subscribe((newLocation) => {
-    selectedMessageId = getMessageFromLoc(newLocation)
+  const unsubscribe = messageInFocus.subscribe((id) => {
+    if (id !== undefined && id !== selectedMessageId) {
+      selectedMessageId = id
+    }
+
+    messageInFocus.set(undefined)
+  })
+
+  const unsubscribeLocation = locationStore.subscribe((newLocation) => {
+    const id = getMessageFromLoc(newLocation)
+    selectedMessageId = id
+    messageInFocus.set(id)
+  })
+
+  onDestroy(() => {
+    unsubscribe()
+    unsubscribeLocation()
   })
 
   $: isDocChannel = !hierarchy.isDerived(object._class, chunter.class.ChunterSpace)
@@ -55,7 +71,7 @@
       // For now loading all messages for documents with activity. Need to correct handle aggregation with pagination.
       // Perhaps we should load all activity messages once, and keep loading in chunks only for ChatMessages then merge them correctly with activity messages
       const loadAll = isDocChannel
-      dataProvider = new ChannelDataProvider(attachedTo, _class, lastViewedTimestamp, selectedMessageId, loadAll)
+      dataProvider = new ChannelDataProvider(attachedTo, _class, lastViewedTimestamp ?? 0, selectedMessageId, loadAll)
     }
   }
 </script>

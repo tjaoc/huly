@@ -48,6 +48,13 @@ import view, { viewId } from '@hcengineering/view'
 import workbench, { workbenchId } from '@hcengineering/workbench'
 
 import { bitrixId } from '@hcengineering/bitrix'
+import love, { loveId } from '@hcengineering/love'
+import print, { printId } from '@hcengineering/print'
+import sign from '@hcengineering/sign'
+import { productsId } from '@hcengineering/products'
+import { questionsId } from '@hcengineering/questions'
+import { trainingId } from '@hcengineering/training'
+import { documentsId } from '@hcengineering/controlled-documents'
 
 import '@hcengineering/activity-assets'
 import '@hcengineering/attachment-assets'
@@ -78,9 +85,15 @@ import '@hcengineering/time-assets'
 import '@hcengineering/tracker-assets'
 import '@hcengineering/view-assets'
 import '@hcengineering/workbench-assets'
+import '@hcengineering/love-assets'
+import '@hcengineering/print-assets'
+import '@hcengineering/questions-assets'
+import '@hcengineering/training-assets'
+import '@hcengineering/products-assets'
+import '@hcengineering/controlled-documents-assets'
 
 import { coreId } from '@hcengineering/core'
-import presentation, { presentationId } from '@hcengineering/presentation'
+import presentation, { parsePreviewConfig, presentationId } from '@hcengineering/presentation'
 import textEditor, { textEditorId } from '@hcengineering/text-editor'
 
 import { setMetadata } from '@hcengineering/platform'
@@ -101,11 +114,32 @@ interface Config {
   COLLABORATOR_URL: string
   COLLABORATOR_API_URL: string
   PUSH_PUBLIC_KEY: string
-  TITLE?: string
-  LANGUAGES?: string
-  DEFAULT_LANGUAGE?: string
-  LAST_NAME_FIRST?: string
+  BRANDING_URL?: string
+  PREVIEW_CONFIG: string
+  LOVE_ENDPOINT?: string
+  LIVEKIT_WS?: string
+  SIGN_URL?: string
+  PRINT_URL?: string
 }
+
+export interface Branding {
+  title?: string
+  links?: {
+    rel: string
+    href: string
+    type?: string
+    sizes?: string
+  }[]
+  languages?: string
+  lastNameFirst?: string
+  defaultLanguage?: string
+  defaultApplication?: string
+  defaultSpace?: string
+  defaultSpecial?: string
+  initWorkspace?: string
+}
+
+export type BrandingMap = Record<string, Branding>
 
 const devConfig = process.env.CLIENT_TYPE === 'dev-production'
 
@@ -145,18 +179,25 @@ function configureI18n(): void {
    addStringsLoader(timeId, async (lang: string) => await import(`@hcengineering/time-assets/lang/${lang}.json`))
    addStringsLoader(documentId, async (lang: string) => await import(`@hcengineering/document-assets/lang/${lang}.json`))
    addStringsLoader(guestId, async (lang: string) => await import(`@hcengineering/guest-assets/lang/${lang}.json`))
+   addStringsLoader(documentsId, async (lang: string) => await import(`@hcengineering/controlled-documents-assets/lang/${lang}.json`))
+   addStringsLoader(productsId, async (lang: string) => await import(`@hcengineering/products-assets/lang/${lang}.json`))
+   addStringsLoader(questionsId, async (lang: string) => await import(`@hcengineering/questions-assets/lang/${lang}.json`))
+   addStringsLoader(trainingId, async (lang: string) => await import(`@hcengineering/training-assets/lang/${lang}.json`))
+   addStringsLoader(loveId, async (lang: string) => await import(`@hcengineering/love-assets/lang/${lang}.json`))
+   addStringsLoader(printId, async (lang: string) => await import(`@hcengineering/print-assets/lang/${lang}.json`))
 }
 
 export async function configurePlatform() {
   setMetadata(platform.metadata.LoadHelper, async (loader) => {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
       try {
         return loader()
       } catch (err: any) {
-        if (err.message.includes('Loading chunk') && i != 2) {
+        if (err.message.includes('Loading chunk') && i != 5) {
           continue
         }
         Analytics.handleError(err)
+        location.reload()
       }
     }
   })
@@ -164,11 +205,45 @@ export async function configurePlatform() {
   configureI18n()
 
   const config: Config = await (await fetch(devConfig? '/config-dev.json' : '/config.json')).json()
+  const branding: BrandingMap = config.BRANDING_URL !== undefined ? await (await fetch(config.BRANDING_URL)).json() : {}
+  const myBranding = branding[window.location.host] ?? {}
+
   console.log('loading configuration', config)
+  console.log('loaded branding', myBranding)
+
+  const title = myBranding.title ?? 'Platform'
+
+  // apply branding
+  window.document.title = title
+
+  const links = myBranding.links ?? []
+  if (links.length > 0) {
+    // remove the default favicon
+    // it's only needed for Safari which cannot use dynamically added links for favicons
+    document.getElementById('default-favicon')?.remove()
+
+    for (const link of links) {
+      const htmlLink = document.createElement('link')
+      htmlLink.rel = link.rel
+      htmlLink.href = link.href
+
+      if (link.type !== undefined) {
+        htmlLink.type = link.type
+      }
+
+      if (link.sizes !== undefined) {
+        htmlLink.setAttribute('sizes', link.sizes)
+      }
+
+      document.head.appendChild(htmlLink)
+    }
+  }
+
   setMetadata(login.metadata.AccountsUrl, config.ACCOUNTS_URL)
   setMetadata(presentation.metadata.UploadURL, config.UPLOAD_URL)
   setMetadata(presentation.metadata.CollaboratorUrl, config.COLLABORATOR_URL)
   setMetadata(presentation.metadata.CollaboratorApiUrl, config.COLLABORATOR_API_URL)
+  setMetadata(presentation.metadata.PreviewConfig, parsePreviewConfig(config.PREVIEW_CONFIG))
 
   if (config.MODEL_VERSION != null) {
     console.log('Minimal Model version requirement', config.MODEL_VERSION)
@@ -182,13 +257,16 @@ export async function configurePlatform() {
   setMetadata(login.metadata.OverrideEndpoint, process.env.LOGIN_ENDPOINT)
 
   setMetadata(rekoni.metadata.RekoniUrl, config.REKONI_URL)
-
+  setMetadata(love.metadata.ServiceEnpdoint, config.LOVE_ENDPOINT)
+  setMetadata(love.metadata.WebSocketURL, config.LIVEKIT_WS)
+  setMetadata(print.metadata.PrintURL, config.PRINT_URL)
+  setMetadata(sign.metadata.SignURL, config.SIGN_URL)
   setMetadata(textEditor.metadata.CollaboratorUrl, config.COLLABORATOR_URL ?? 'ws://locahost:3078')
 
   setMetadata(uiPlugin.metadata.DefaultApplication, login.component.LoginApp)
 
-  setMetadata(contactPlugin.metadata.LastNameFirst, config.LAST_NAME_FIRST === 'true' ?? false)
-  const languages = config.LANGUAGES ? (config.LANGUAGES as string).split(',').map((l) => l.trim()) : ['en', 'ru', 'es', 'pt']
+  setMetadata(contactPlugin.metadata.LastNameFirst, myBranding.lastNameFirst === 'true' ?? false)
+  const languages = myBranding.languages ? (myBranding.languages as string).split(',').map((l) => l.trim()) : ['en', 'ru', 'es', 'pt', 'zh', 'fr']
 
   setMetadata(uiPlugin.metadata.Languages, languages)
   setMetadata(
@@ -236,6 +314,12 @@ export async function configurePlatform() {
   addLocation(guestId, () => import(/* webpackChunkName: "guest" */ '@hcengineering/guest-resources'))
   addLocation(timeId, () => import(/* webpackChunkName: "time" */ '@hcengineering/time-resources'))
   addLocation(driveId, () => import(/* webpackChunkName: "drive" */ '@hcengineering/drive-resources'))
+  addLocation(questionsId, () => import(/* webpackChunkName: "training" */ '@hcengineering/questions-resources'))
+  addLocation(trainingId, () => import(/* webpackChunkName: "training" */ '@hcengineering/training-resources'))
+  addLocation(productsId, () => import(/* webpackChunkName: "products" */ '@hcengineering/products-resources'))
+  addLocation(documentsId, () => import(/* webpackChunkName: "documents" */ '@hcengineering/controlled-documents-resources'))
+  addLocation(loveId, () => import(/* webpackChunkName: "love" */ '@hcengineering/love-resources'))
+  addLocation(printId, () => import(/* webpackChunkName: "print" */ '@hcengineering/print-resources'))
 
   setMetadata(client.metadata.FilterModel, true)
   setMetadata(client.metadata.ExtraPlugins, ['preference' as Plugin])
@@ -245,10 +329,10 @@ export async function configurePlatform() {
   // Disable for now, since it causes performance issues on linux/docker/kubernetes boxes for now.
   setMetadata(client.metadata.UseProtocolCompression, true)
 
-  setMetadata(uiPlugin.metadata.PlatformTitle, config.TITLE ?? 'Platform')
-  setMetadata(workbench.metadata.PlatformTitle, config.TITLE ?? 'Platform')
-  setDefaultLanguage(config.DEFAULT_LANGUAGE ?? 'en')
-  setMetadata(workbench.metadata.DefaultApplication, 'tracker')
-  setMetadata(workbench.metadata.DefaultSpace, tracker.project.DefaultProject)
-  setMetadata(workbench.metadata.DefaultSpecial, 'issues')
+  setMetadata(uiPlugin.metadata.PlatformTitle, title)
+  setMetadata(workbench.metadata.PlatformTitle, title)
+  setDefaultLanguage(myBranding.defaultLanguage ?? 'en')
+  setMetadata(workbench.metadata.DefaultApplication, myBranding.defaultApplication ?? 'tracker')
+  setMetadata(workbench.metadata.DefaultSpace, myBranding.defaultSpace ?? tracker.project.DefaultProject)
+  setMetadata(workbench.metadata.DefaultSpecial, myBranding.defaultSpecial ?? 'issues')
 }

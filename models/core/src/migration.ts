@@ -120,6 +120,29 @@ async function migrateSpacesOwner (client: MigrationClient): Promise<void> {
   }
 }
 
+async function migrateStatusTransactions (client: MigrationClient): Promise<void> {
+  await client.update(
+    DOMAIN_TX,
+    {
+      objectClass: core.class.Status,
+      'attributes.title': { $exists: true }
+    },
+    {
+      $rename: { 'attributes.title': 'attributes.name' }
+    }
+  )
+  await client.update(
+    DOMAIN_TX,
+    {
+      objectClass: core.class.Status,
+      'operations.title': { $exists: true }
+    },
+    {
+      $rename: { 'operations.title': 'operations.name' }
+    }
+  )
+}
+
 export const coreOperation: MigrateOperation = {
   async migrate (client: MigrationClient): Promise<void> {
     // We need to delete all documents in doc index state for missing classes
@@ -155,11 +178,15 @@ export const coreOperation: MigrateOperation = {
         func: async (client: MigrationClient) => {
           await migrateBlobData(exAdapter, client)
         }
+      },
+      {
+        state: 'old-statuses-transactions',
+        func: migrateStatusTransactions
       }
     ])
   },
-  async upgrade (client: MigrationUpgradeClient): Promise<void> {
-    await tryUpgrade(client, coreId, [
+  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>): Promise<void> {
+    await tryUpgrade(state, client, coreId, [
       {
         state: 'create-defaults-v2',
         func: async (client) => {
@@ -178,6 +205,9 @@ async function migrateBlobData (exAdapter: StorageAdapterEx, client: MigrationCl
   const ctx = new MeasureMetricsContext('storage_upgrade', {})
 
   for (const [provider, adapter] of exAdapter.adapters?.entries() ?? []) {
+    if (!(await adapter.exists(ctx, client.workspaceId))) {
+      continue
+    }
     const blobs = await adapter.listStream(ctx, client.workspaceId, '')
     const bulk = new Map<Ref<Blob>, Blob>()
     try {

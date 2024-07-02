@@ -17,8 +17,8 @@
   import attachment, { Attachment } from '@hcengineering/attachment'
   import { AttachmentPresenter, FileDownload } from '@hcengineering/attachment-resources'
   import { ChunterSpace } from '@hcengineering/chunter'
-  import { Doc, SortingOrder, getCurrentAccount } from '@hcengineering/core'
-  import { createQuery, getClient, getFileUrl } from '@hcengineering/presentation'
+  import core, { Doc, SortingOrder, getCurrentAccount, type WithLookup } from '@hcengineering/core'
+  import { createQuery, getBlobHref, getClient } from '@hcengineering/presentation'
   import { Icon, IconMoreV, Label, Menu, getCurrentResolvedLocation, navigate, showPopup } from '@hcengineering/ui'
 
   export let channel: ChunterSpace | undefined
@@ -26,7 +26,7 @@
   const client = getClient()
 
   const query = createQuery()
-  let visibleAttachments: Attachment[] | undefined
+  let visibleAttachments: WithLookup<Attachment>[] | undefined
   let totalAttachments = 0
   const ATTACHEMNTS_LIMIT = 5
   let selectedRowNumber: number | undefined
@@ -68,7 +68,10 @@
       {
         limit: ATTACHEMNTS_LIMIT,
         sort,
-        total: true
+        total: true,
+        lookup: {
+          file: core.class.Blob
+        }
       }
     )
 </script>
@@ -83,9 +86,11 @@
             <AttachmentPresenter value={attachment} />
           </div>
           <div class="eAttachmentRowActions" class:fixed={i === selectedRowNumber}>
-            <a href={getFileUrl(attachment.file, 'full', attachment.name)} download={attachment.name}>
-              <Icon icon={FileDownload} size={'small'} />
-            </a>
+            {#await getBlobHref(attachment.$lookup?.file, attachment.file, attachment.name) then blobRef}
+              <a href={blobRef} download={attachment.name}>
+                <Icon icon={FileDownload} size={'small'} />
+              </a>
+            {/await}
             <!-- svelte-ignore a11y-click-events-have-key-events -->
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div id="context-menu" class="eAttachmentRowMenu" on:click={(event) => showMenu(event, attachment, i)}>

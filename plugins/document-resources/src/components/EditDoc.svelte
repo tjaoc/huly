@@ -16,7 +16,7 @@
 -->
 <script lang="ts">
   import attachment, { Attachment } from '@hcengineering/attachment'
-  import core, { Doc, Ref, WithLookup, generateId } from '@hcengineering/core'
+  import core, { Doc, Ref, WithLookup, generateId, type Blob } from '@hcengineering/core'
   import { Document } from '@hcengineering/document'
   import notification from '@hcengineering/notification'
   import { Panel } from '@hcengineering/panel'
@@ -50,7 +50,7 @@
   } from '@hcengineering/view-resources'
   import { createEventDispatcher, onDestroy, onMount } from 'svelte'
 
-  import { starDocument, unstarDocument } from '..'
+  import { starDocument, unstarDocument, unlockContent } from '..'
   import document from '../plugin'
   import { getDocumentUrl } from '../utils'
   import DocumentEditor from './DocumentEditor.svelte'
@@ -64,7 +64,8 @@
   export let embedded: boolean = false
   export let kind: 'default' | 'modern' = 'default'
 
-  $: readonly = $restrictionStore.readonly
+  $: locked = doc?.lockedBy != null
+  $: readonly = $restrictionStore.readonly || locked
 
   export function canClose (): boolean {
     return false
@@ -102,7 +103,7 @@
     isStarred = res.length !== 0
   })
 
-  async function createEmbedding (file: File): Promise<{ file: string, type: string } | undefined> {
+  async function createEmbedding (file: File): Promise<{ file: Ref<Blob>, type: string } | undefined> {
     if (doc === undefined) {
       return undefined
     }
@@ -248,6 +249,23 @@
     <svelte:fragment slot="title">
       <ParentsNavigator element={doc} />
       <DocumentPresenter value={doc} breadcrumb noUnderline />
+      {#if locked}
+        <div class="ml-2">
+          <Button
+            icon={document.icon.Lock}
+            iconProps={{ size: 'x-small' }}
+            label={document.string.Locked}
+            kind={'link-bordered'}
+            size={'small'}
+            noFocus
+            on:click={async () => {
+              if (doc !== undefined) {
+                await unlockContent(doc)
+              }
+            }}
+          />
+        </div>
+      {/if}
     </svelte:fragment>
 
     <svelte:fragment slot="utils">

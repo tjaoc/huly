@@ -13,7 +13,7 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import { getCurrentAccount } from '@hcengineering/core'
+  import core, { getCurrentAccount } from '@hcengineering/core'
   import { getResource, translate } from '@hcengineering/platform'
   import { getClient } from '@hcengineering/presentation'
   import type { Integration, IntegrationType } from '@hcengineering/setting'
@@ -62,7 +62,7 @@
       return
     }
     if (integration === undefined) {
-      const id = await client.createDoc(setting.class.Integration, setting.space.Setting, {
+      const id = await client.createDoc(setting.class.Integration, core.space.Workspace, {
         type: integrationType._id,
         value: '',
         disabled: false
@@ -102,20 +102,22 @@
     {#if (integration?.value ?? '') === ''}
       {#if integrationType.createComponent}
         <Button
+          minWidth={'5rem'}
           label={setting.string.Add}
           kind={'primary'}
           on:click={(ev) => handleConfigure(integrationType.createComponent)}
         />
       {/if}
     {:else if (integration?.disabled ?? false) && integrationType.reconnectComponent}
-      <Button label={setting.string.Reconnect} kind={'primary'} on:click={handleReconnect} />
+      <Button label={setting.string.Reconnect} minWidth={'5rem'} kind={'primary'} on:click={handleReconnect} />
     {:else if integration?.value !== ''}
       {#if integrationType.onDisconnect}
-        <Button label={setting.string.Disconnect} on:click={disconnect} />
+        <Button label={setting.string.Disconnect} minWidth={'5rem'} on:click={disconnect} />
       {/if}
       {#if integrationType.configureComponent !== undefined}
         <Button
           label={setting.string.Configure}
+          minWidth={'5rem'}
           kind={'primary'}
           on:click={(ev) => handleConfigure(integrationType.configureComponent)}
         />

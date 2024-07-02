@@ -19,7 +19,7 @@
   import ui, { Action, AnySvelteComponent, IconSize, ModernButton, NavGroup } from '@hcengineering/ui'
   import { getDocTitle } from '@hcengineering/view-resources'
   import contact from '@hcengineering/contact'
-  import { getResource, translate } from '@hcengineering/platform'
+  import { getResource, IntlString, translate } from '@hcengineering/platform'
   import view from '@hcengineering/view'
   import { personAccountByIdStore, statusByUserStore } from '@hcengineering/contact-resources'
 
@@ -27,10 +27,9 @@
   import chunter from '../../../plugin'
   import { ChatNavItemModel, SortFnOptions } from '../types'
   import { getObjectIcon, getChannelName } from '../../../utils'
-  import { navigatorStateStore, toggleSections } from '../utils'
 
   export let id: string
-  export let header: string
+  export let header: IntlString
   export let objects: Doc[]
   export let contexts: DocNotifyContext[]
   export let actions: Action[] = []
@@ -45,11 +44,8 @@
   let items: ChatNavItemModel[] = []
   let visibleItems: ChatNavItemModel[] = []
 
-  let isCollapsed = false
   let canShowMore = false
   let isShownMore = false
-
-  $: isCollapsed = $navigatorStateStore.collapsedSections.includes(id)
 
   $: void getChatNavItems(objects).then((res) => {
     items = res
@@ -84,11 +80,14 @@
         icon = await getResource(iconMixin.component)
       }
 
+      const hasId = hierarchy.classHierarchyMixin(object._class, view.mixin.ObjectIdentifier) !== undefined
+      const showDescription = hasId && isDocChat && !isPerson
+
       items.push({
         id: object._id,
         object,
         title: (await getChannelName(object._id, object._class, object)) ?? (await translate(titleIntl, {})),
-        description: isDocChat && !isPerson ? await getDocTitle(client, object._id, object._class, object) : undefined,
+        description: showDescription ? await getDocTitle(client, object._id, object._class, object) : undefined,
         icon: icon ?? getObjectIcon(_class),
         iconProps: { showStatus: true },
         iconSize,
@@ -137,49 +136,48 @@
 
     return result
   }
+  $: visibleItem = visibleItems.find(({ id }) => id === objectId)
 </script>
 
 {#if visibleItems.length > 0 && contexts.length > 0}
   <NavGroup
-    title={header}
+    _id={id}
+    label={header}
     categoryName={id}
     {actions}
-    isOpen={!isCollapsed}
+    highlighted={items.some((it) => it.id === objectId)}
     isFold
-    second
-    on:toggle={() => {
-      toggleSections(id)
-    }}
+    empty={visibleItems.length === 0}
+    visible={visibleItem !== undefined}
+    noDivider
   >
-    {#if !isCollapsed}
-      {#each visibleItems as item (item.id)}
-        {@const context = contexts.find(({ attachedTo }) => attachedTo === item.id)}
-        <ChatNavItem {context} isSelected={objectId === item.id} {item} type={'type-object'} on:select />
-      {/each}
-      {#if canShowMore}
-        <div class="showMore">
-          <ModernButton
-            label={isShownMore ? ui.string.ShowLess : ui.string.ShowMore}
-            kind="tertiary"
-            inheritFont
-            size="extra-small"
-            on:click={onShowMore}
-          />
-        </div>
-      {/if}
-    {:else if objectId}
-      {@const item = visibleItems.find(({ id }) => id === objectId)}
-      {#if item}
-        {@const context = contexts.find(({ attachedTo }) => attachedTo === item.id)}
-        <ChatNavItem {context} isSelected {item} on:select />
-      {/if}
+    {#each visibleItems as item (item.id)}
+      {@const context = contexts.find(({ attachedTo }) => attachedTo === item.id)}
+      <ChatNavItem {context} isSelected={objectId === item.id} {item} type={'type-object'} on:select />
+    {/each}
+    {#if canShowMore}
+      <div class="showMore">
+        <ModernButton
+          label={isShownMore ? ui.string.ShowLess : ui.string.ShowMore}
+          kind="tertiary"
+          inheritFont
+          size="extra-small"
+          on:click={onShowMore}
+        />
+      </div>
     {/if}
+    <svelte:fragment slot="visible" let:isOpen>
+      {#if visibleItem !== undefined && !isOpen}
+        {@const context = contexts.find(({ attachedTo }) => attachedTo === visibleItem?.id)}
+        <ChatNavItem {context} isSelected item={visibleItem} type={'type-object'} on:select />
+      {/if}
+    </svelte:fragment>
   </NavGroup>
 {/if}
 
 <style lang="scss">
   .showMore {
-    margin-top: var(--spacing-1);
+    margin: var(--spacing-1);
     font-size: 0.75rem;
   }
 </style>

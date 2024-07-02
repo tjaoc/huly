@@ -21,15 +21,16 @@ import TaskItem from '@tiptap/extension-task-item'
 import TaskList from '@tiptap/extension-task-list'
 
 import { DefaultKit, type DefaultKitOptions } from './default-kit'
-
-import { getMetadata } from '@hcengineering/platform'
-import presentation from '@hcengineering/presentation'
-import { CodeBlockExtension, codeBlockOptions } from '@hcengineering/text'
-import { CodemarkExtension } from '../components/extension/codemark'
+import 'prosemirror-codemark/dist/codemark.css'
+import { getBlobRef } from '@hcengineering/presentation'
+import { CodeBlockExtension, codeBlockOptions, CodeExtension, codeOptions } from '@hcengineering/text'
+import { HardBreakExtension } from '../components/extension/hardBreak'
+import { FileExtension, type FileOptions } from '../components/extension/fileExt'
+import { ImageExtension, type ImageOptions } from '../components/extension/imageExt'
 import { NodeUuidExtension } from '../components/extension/nodeUuid'
 import { Table, TableCell, TableRow } from '../components/extension/table'
-import { type ImageOptions, ImageExtension } from '../components/extension/imageExt'
-import { type FileOptions, FileExtension } from '../components/extension/fileExt'
+import { SubmitExtension, type SubmitOptions } from '../components/extension/submit'
+import { ParagraphExtension } from '../components/extension/paragraph'
 
 const headingLevels: Level[] = [1, 2, 3]
 
@@ -59,22 +60,39 @@ export interface EditorKitOptions extends DefaultKitOptions {
   history?: false
   file?: Partial<FileOptions> | false
   image?: Partial<ImageOptions> | false
+  mode?: 'full' | 'compact'
+  submit?: SubmitOptions | false
 }
 
 export const EditorKit = Extension.create<EditorKitOptions>({
   name: 'defaultKit',
 
   addExtensions () {
+    const mode = this.options.mode ?? 'full'
     return [
+      // table extensions should go before list items
+      ...tableExtensions,
       DefaultKit.configure({
         ...this.options,
+        code: false,
         codeBlock: false,
+        hardBreak: false,
         heading: {
           levels: headingLevels
         }
       }),
       CodeBlockExtension.configure(codeBlockOptions),
-      CodemarkExtension,
+      CodeExtension.configure(codeOptions),
+      HardBreakExtension.configure({ shortcuts: mode }),
+      ...(this.options.submit !== false
+        ? [
+            SubmitExtension.configure({
+              useModKey: mode === 'full',
+              ...this.options.submit
+            })
+          ]
+        : []),
+      ...(mode === 'compact' ? [ParagraphExtension.configure()] : []),
       ListKeymap.configure({
         listTypes: [
           {
@@ -92,7 +110,6 @@ export const EditorKit = Extension.create<EditorKitOptions>({
         ]
       }),
       NodeUuidExtension,
-      ...tableExtensions,
       ...(this.options.file !== false
         ? [
             FileExtension.configure({
@@ -105,7 +122,9 @@ export const EditorKit = Extension.create<EditorKitOptions>({
         ? [
             ImageExtension.configure({
               inline: true,
-              uploadUrl: getMetadata(presentation.metadata.UploadURL) ?? '',
+              loadingImgSrc:
+                'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4NCjxzdmcgd2lkdGg9IjMycHgiIGhlaWdodD0iMzJweCIgdmlld0JveD0iMCAwIDE2IDE2IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPg0KICAgIDxwYXRoIGQ9Im0gNCAxIGMgLTEuNjQ0NTMxIDAgLTMgMS4zNTU0NjkgLTMgMyB2IDEgaCAxIHYgLTEgYyAwIC0xLjEwOTM3NSAwLjg5MDYyNSAtMiAyIC0yIGggMSB2IC0xIHogbSAyIDAgdiAxIGggNCB2IC0xIHogbSA1IDAgdiAxIGggMSBjIDEuMTA5Mzc1IDAgMiAwLjg5MDYyNSAyIDIgdiAxIGggMSB2IC0xIGMgMCAtMS42NDQ1MzEgLTEuMzU1NDY5IC0zIC0zIC0zIHogbSAtNSA0IGMgLTAuNTUwNzgxIDAgLTEgMC40NDkyMTkgLTEgMSBzIDAuNDQ5MjE5IDEgMSAxIHMgMSAtMC40NDkyMTkgMSAtMSBzIC0wLjQ0OTIxOSAtMSAtMSAtMSB6IG0gLTUgMSB2IDQgaCAxIHYgLTQgeiBtIDEzIDAgdiA0IGggMSB2IC00IHogbSAtNC41IDIgbCAtMiAyIGwgLTEuNSAtMSBsIC0yIDIgdiAwLjUgYyAwIDAuNSAwLjUgMC41IDAuNSAwLjUgaCA3IHMgMC40NzI2NTYgLTAuMDM1MTU2IDAuNSAtMC41IHYgLTEgeiBtIC04LjUgMyB2IDEgYyAwIDEuNjQ0NTMxIDEuMzU1NDY5IDMgMyAzIGggMSB2IC0xIGggLTEgYyAtMS4xMDkzNzUgMCAtMiAtMC44OTA2MjUgLTIgLTIgdiAtMSB6IG0gMTMgMCB2IDEgYyAwIDEuMTA5Mzc1IC0wLjg5MDYyNSAyIC0yIDIgaCAtMSB2IDEgaCAxIGMgMS42NDQ1MzEgMCAzIC0xLjM1NTQ2OSAzIC0zIHYgLTEgeiBtIC04IDMgdiAxIGggNCB2IC0xIHogbSAwIDAiIGZpbGw9IiMyZTM0MzQiIGZpbGwtb3BhY2l0eT0iMC4zNDkwMiIvPg0KPC9zdmc+DQo=',
+              getBlobRef: async (file, name, size) => await getBlobRef(undefined, file, name, size),
               ...this.options.image
             })
           ]

@@ -26,10 +26,10 @@ import {
   type SearchOptions,
   type SearchQuery,
   type SearchResult,
-  type ServerStorage,
   type StorageIterator,
   type Tx,
-  type TxResult
+  type TxResult,
+  type Branding
 } from '@hcengineering/core'
 import { type DbConfiguration } from './configuration'
 import { createServerStorage } from './server'
@@ -38,6 +38,7 @@ import {
   type Middleware,
   type MiddlewareCreator,
   type Pipeline,
+  type ServerStorage,
   type SessionContext
 } from './types'
 
@@ -49,18 +50,31 @@ export async function createPipeline (
   conf: DbConfiguration,
   constructors: MiddlewareCreator[],
   upgrade: boolean,
-  broadcast: BroadcastFunc
+  broadcast: BroadcastFunc,
+  branding: Branding | null
 ): Promise<Pipeline> {
+  const broadcastHandlers: BroadcastFunc[] = [broadcast]
+  const _broadcast: BroadcastFunc = (
+    tx: Tx[],
+    targets: string | string[] | undefined,
+    exclude: string[] | undefined
+  ) => {
+    for (const handler of broadcastHandlers) handler(tx, targets, exclude)
+  }
   const storage = await ctx.with(
     'create-server-storage',
     {},
     async (ctx) =>
       await createServerStorage(ctx, conf, {
         upgrade,
-        broadcast
+        broadcast: _broadcast,
+        branding
       })
   )
   const pipelineResult = await PipelineImpl.create(ctx.newChild('pipeline-operations', {}), storage, constructors)
+  broadcastHandlers.push((tx: Tx[], targets: string | string[] | undefined, exclude: string[] | undefined) => {
+    void pipelineResult.handleBroadcast(tx, targets, exclude)
+  })
   return pipelineResult
 }
 
@@ -112,6 +126,12 @@ class PipelineImpl implements Pipeline {
       return await this.storage.tx(ctx, tx)
     } else {
       return await this.head.tx(ctx, tx)
+    }
+  }
+
+  async handleBroadcast (tx: Tx[], targets?: string | string[], exclude?: string[]): Promise<void> {
+    if (this.head !== undefined) {
+      await this.head.handleBroadcast(tx, targets, exclude)
     }
   }
 

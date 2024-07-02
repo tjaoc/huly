@@ -18,8 +18,14 @@ import activity, {
   type DisplayDocUpdateMessage,
   type DocUpdateMessage
 } from '@hcengineering/activity'
-import { activityMessagesComparator, combineActivityMessages } from '@hcengineering/activity-resources'
 import {
+  activityMessagesComparator,
+  combineActivityMessages,
+  isActivityMessageClass,
+  isReactionMessage,
+  messageInFocus
+} from '@hcengineering/activity-resources'
+import core, {
   SortingOrder,
   getCurrentAccount,
   type Class,
@@ -31,8 +37,6 @@ import {
 } from '@hcengineering/core'
 import notification, {
   NotificationStatus,
-  decodeObjectURI,
-  encodeObjectURI,
   notificationId,
   type ActivityInboxNotification,
   type Collaborators,
@@ -49,13 +53,17 @@ import {
   parseLocation,
   showPopup,
   type Location,
-  type ResolvedLocation
+  type ResolvedLocation,
+  locationStorageKeyId
 } from '@hcengineering/ui'
 import { get, writable } from 'svelte/store'
 
 import { InboxNotificationsClientImpl } from './inboxNotificationsClient'
 import { type InboxData, type InboxNotificationsFilter } from './types'
 import { getMetadata } from '@hcengineering/platform'
+import { getObjectLinkId } from '@hcengineering/view-resources'
+import { decodeObjectURI, encodeObjectURI, type LinkIdProvider } from '@hcengineering/view'
+import chunter, { type ThreadMessage } from '@hcengineering/chunter'
 
 export async function hasDocNotifyContextPinAction (docNotifyContext: DocNotifyContext): Promise<boolean> {
   if (docNotifyContext.hidden) {
@@ -469,7 +477,7 @@ export async function resolveLocation (loc: Location): Promise<ResolvedLocation 
 
 async function generateLocation (
   loc: Location,
-  _id: Ref<Doc>,
+  _id: string,
   _class: Ref<Class<Doc>>
 ): Promise<ResolvedLocation | undefined> {
   const client = getClient()
@@ -510,12 +518,13 @@ async function generateLocation (
   }
 }
 
-export function openInboxDoc (
+async function navigateToInboxDoc (
+  providers: LinkIdProvider[],
   _id?: Ref<Doc>,
   _class?: Ref<Class<Doc>>,
   thread?: Ref<ActivityMessage>,
   message?: Ref<ActivityMessage>
-): void {
+): Promise<void> {
   const loc = getLocation()
 
   if (loc.path[2] !== notificationId) {
@@ -523,13 +532,13 @@ export function openInboxDoc (
   }
 
   if (_id === undefined || _class === undefined) {
-    loc.query = { message: null }
-    loc.path.length = 3
-    navigate(loc)
+    resetInboxContext()
     return
   }
 
-  loc.path[3] = encodeObjectURI(_id, _class)
+  const id = await getObjectLinkId(providers, _id, _class)
+
+  loc.path[3] = encodeObjectURI(id, _class)
 
   if (thread !== undefined) {
     loc.path[4] = thread
@@ -540,8 +549,98 @@ export function openInboxDoc (
   }
 
   loc.query = { ...loc.query, message: message ?? null }
+  messageInFocus.set(message)
+  navigate(loc)
+}
+
+export function resetInboxContext (): void {
+  const loc = getLocation()
+
+  if (loc.path[2] !== notificationId) {
+    return
+  }
+
+  loc.query = { message: null }
+  loc.path.length = 3
+
+  localStorage.setItem(`${locationStorageKeyId}_${notificationId}`, JSON.stringify(loc))
 
   navigate(loc)
+}
+
+export async function selectInboxContext (
+  linkProviders: LinkIdProvider[],
+  context: DocNotifyContext,
+  notification?: WithLookup<InboxNotification>
+): Promise<void> {
+  const client = getClient()
+  const hierarchy = client.getHierarchy()
+
+  if (isMentionNotification(notification) && isActivityMessageClass(notification.mentionedInClass)) {
+    const selectedMsg = notification.mentionedIn as Ref<ActivityMessage>
+
+    void navigateToInboxDoc(
+      linkProviders,
+      context.attachedTo,
+      context.attachedToClass,
+      isActivityMessageClass(context.attachedToClass) ? (context.attachedTo as Ref<ActivityMessage>) : undefined,
+      selectedMsg
+    )
+
+    return
+  }
+  if (hierarchy.isDerived(context.attachedToClass, activity.class.ActivityMessage)) {
+    const message = (notification as WithLookup<ActivityInboxNotification>)?.$lookup?.attachedTo
+
+    if (context.attachedToClass === chunter.class.ThreadMessage) {
+      const thread = await client.findOne(
+        chunter.class.ThreadMessage,
+        {
+          _id: context.attachedTo as Ref<ThreadMessage>
+        },
+        { projection: { _id: 1, attachedTo: 1 } }
+      )
+
+      void navigateToInboxDoc(
+        linkProviders,
+        context.attachedTo,
+        context.attachedToClass,
+        thread?.attachedTo,
+        thread?._id
+      )
+      return
+    }
+
+    if (isReactionMessage(message)) {
+      void navigateToInboxDoc(
+        linkProviders,
+        context.attachedTo,
+        context.attachedToClass,
+        undefined,
+        context.attachedTo as Ref<ActivityMessage>
+      )
+      return
+    }
+
+    const selectedMsg = (notification as ActivityInboxNotification)?.attachedTo
+
+    void navigateToInboxDoc(
+      linkProviders,
+      context.attachedTo,
+      context.attachedToClass,
+      selectedMsg !== undefined ? (context.attachedTo as Ref<ActivityMessage>) : undefined,
+      selectedMsg ?? (context.attachedTo as Ref<ActivityMessage>)
+    )
+    return
+  }
+
+  void navigateToInboxDoc(
+    linkProviders,
+    context.attachedTo,
+    context.attachedToClass,
+    undefined,
+    (notification as ActivityInboxNotification)?.attachedTo
+  )
 }
 
 export const pushAllowed = writable<boolean>(false)
@@ -614,7 +713,7 @@ export async function subscribePush (): Promise<boolean> {
           userVisibleOnly: true,
           applicationServerKey: publicKey
         })
-        await client.createDoc(notification.class.PushSubscription, notification.space.Notifications, {
+        await client.createDoc(notification.class.PushSubscription, core.space.Workspace, {
           user: getCurrentAccount()._id,
           endpoint: subscription.endpoint,
           keys: {
@@ -628,7 +727,7 @@ export async function subscribePush (): Promise<boolean> {
           endpoint: current.endpoint
         })
         if (exists === undefined) {
-          await client.createDoc(notification.class.PushSubscription, notification.space.Notifications, {
+          await client.createDoc(notification.class.PushSubscription, core.space.Workspace, {
             user: getCurrentAccount()._id,
             endpoint: current.endpoint,
             keys: {

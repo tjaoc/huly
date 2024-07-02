@@ -14,19 +14,25 @@
 -->
 <script lang="ts">
   import { type Blob, type Ref } from '@hcengineering/core'
-  import { type BlobMetadata, getFileUrl } from '@hcengineering/presentation'
+  import { getBlobSrcFor, type BlobMetadata } from '@hcengineering/presentation'
 
-  export let value: Ref<Blob>
+  export let value: Blob | Ref<Blob>
   export let name: string
-  export let contentType: string
   export let metadata: BlobMetadata | undefined
+  export let fit: boolean = false
 
-  $: src = value === undefined ? '' : getFileUrl(value, 'full', name)
+  $: maxWidth = metadata?.originalWidth ? `min(${metadata.originalWidth}px, 100%)` : undefined
+  $: maxHeight = metadata?.originalHeight ? `min(${metadata.originalHeight}px, 80vh)` : undefined
 </script>
 
-{#if src}
-  <video controls preload={'auto'}>
+{#await getBlobSrcFor(value, name) then src}
+  <video
+    style:max-width={fit ? '100%' : maxWidth}
+    style:max-height={fit ? '100%' : maxHeight}
+    controls
+    preload={'auto'}
+  >
     <source {src} />
     <track kind="captions" label={name} />
   </video>
-{/if}
+{/await}

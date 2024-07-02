@@ -282,6 +282,7 @@ export interface DateOrShift {
 }
 
 export interface LabelAndProps {
+  type?: 'tooltip'
   label?: IntlString
   element?: HTMLElement
   direction?: TooltipAlignment
@@ -364,6 +365,7 @@ export interface DeviceOptions {
   docHeight: number
   isPortrait: boolean
   isMobile: boolean
+  navigator: { visible: boolean, float: boolean, direction: 'vertical' | 'horizontal' }
   fontSize: number
   size: WidthType | null
   sizes: Record<WidthType, boolean>
@@ -511,4 +513,17 @@ export type MouseTargetEvent = MouseEvent & { currentTarget: EventTarget & HTMLE
 
 export interface ScrollParams {
   autoScrolling: boolean
+}
+
+export interface IWizardStep<T = string> {
+  id: T
+  title: IntlString
+}
+
+export enum StateType {
+  Ghost,
+  Negative,
+  Positive,
+  Primary,
+  Regular
 }

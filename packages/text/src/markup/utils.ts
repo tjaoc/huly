@@ -45,7 +45,14 @@ export function areEqualMarkups (markup1: Markup, markup2: Markup): boolean {
     return true
   }
 
-  return equalNodes(markupToJSON(markup1), markupToJSON(markup2))
+  const node1 = markupToJSON(markup1)
+  const node2 = markupToJSON(markup2)
+
+  if (isEmptyNode(node1) && isEmptyNode(node2)) {
+    return true
+  }
+
+  return equalNodes(node1, node2)
 }
 
 /** @public */
@@ -92,7 +99,7 @@ const nonEmptyNodes = [
   MarkupNodeType.horizontal_rule,
   MarkupNodeType.image,
   MarkupNodeType.reference,
-  MarkupNodeType.sub,
+  MarkupNodeType.subLink,
   MarkupNodeType.table
 ]
 

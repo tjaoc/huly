@@ -20,12 +20,8 @@
   import { getResource } from '@hcengineering/platform'
   import { AttributeEditor, MessageBox, getClient } from '@hcengineering/presentation'
   import { Breadcrumb, Button, EditBox, FocusHandler, Header, createFocusManager, showPopup } from '@hcengineering/ui'
-  import { createEventDispatcher, onDestroy } from 'svelte'
+  import { onDestroy } from 'svelte'
   import setting from '../plugin'
-
-  export let visibleNav: boolean = true
-
-  const dispatch = createEventDispatcher()
 
   const client = getClient()
 
@@ -53,9 +49,7 @@
       await avatarEditor.removeAvatar(employee.avatar)
     }
     const avatar = await avatarEditor.createAvatar()
-    await client.update(employee, {
-      avatar
-    })
+    await client.diffUpdate(employee, avatar)
   }
 
   const manager = createFocusManager()
@@ -89,7 +83,7 @@
 <FocusHandler {manager} />
 
 <div class="hulyComponent">
-  <Header minimize={!visibleNav} on:resize={(event) => dispatch('change', event.detail)}>
+  <Header>
     <Breadcrumb icon={setting.icon.AccountSettings} label={setting.string.AccountSettings} size={'large'} isCurrent />
   </Header>
   <div class="ac-body p-10">
@@ -97,7 +91,7 @@
       <div class="flex flex-grow w-full">
         <div class="mr-8">
           <EditableAvatar
-            avatar={employee.avatar}
+            person={employee}
             email={account.email}
             size={'x-large'}
             name={employee.name}
