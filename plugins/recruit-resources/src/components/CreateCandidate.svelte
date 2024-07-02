@@ -15,9 +15,16 @@
 <script lang="ts">
   import { Analytics } from '@hcengineering/analytics'
   import attachment from '@hcengineering/attachment'
-  import contact, { Channel, ChannelProvider, combineName, findContacts, Person } from '@hcengineering/contact'
+  import contact, {
+    AvatarType,
+    Channel,
+    ChannelProvider,
+    combineName,
+    findContacts,
+    Person
+  } from '@hcengineering/contact'
   import { ChannelsDropdown, EditableAvatar, PersonPresenter } from '@hcengineering/contact-resources'
-  import {
+  import core, {
     Account,
     AttachedData,
     Data,
@@ -182,11 +189,13 @@
     const candidate: Data<Person> = {
       name: combineName(object.firstName ?? '', object.lastName ?? ''),
       city: object.city,
-      channels: 0
+      channels: 0,
+      avatarType: AvatarType.COLOR
     }
-    if (avatar !== undefined) {
-      candidate.avatar = await avatarEditor.createAvatar()
-    }
+    const info = await avatarEditor.createAvatar()
+    candidate.avatar = info.avatar
+    candidate.avatarType = info.avatarType
+    candidate.avatarProps = info.avatarProps
     const candidateData: MixinData<Person, Candidate> = {
       title: object.title,
       onsite: object.onsite,
@@ -409,7 +418,7 @@
           const category = findTagCategory(s, categories)
           const cinstance = categoriesMap.get(category)
           e = TxProcessor.createDoc2Doc(
-            client.txFactory.createTxCreateDoc(tags.class.TagElement, tags.space.Tags, {
+            client.txFactory.createTxCreateDoc(tags.class.TagElement, core.space.Workspace, {
               title,
               description: `Imported skill ${s} of ${cinstance?.label ?? ''}`,
               color: getColorNumberByText(s),
@@ -424,7 +433,7 @@
         if (e !== undefined) {
           newSkills.push(
             TxProcessor.createDoc2Doc(
-              client.txFactory.createTxCreateDoc(tags.class.TagReference, tags.space.Tags, {
+              client.txFactory.createTxCreateDoc(tags.class.TagReference, core.space.Workspace, {
                 title: e.title,
                 color: e.color,
                 tag: e._id,
@@ -498,7 +507,7 @@
         attachedTo: '' as Ref<Doc>,
         attachedToClass: recruit.mixin.Candidate,
         collection: 'skills',
-        space: tags.space.Tags,
+        space: core.space.Workspace,
         modifiedOn: 0,
         modifiedBy: '' as Ref<Account>,
         title: tag.title,
@@ -619,7 +628,9 @@
         disabled={loading}
         bind:this={avatarEditor}
         bind:direct={object.avatar}
-        avatar={undefined}
+        person={{
+          avatarType: AvatarType.COLOR
+        }}
         size={'large'}
         name={combineName(object?.firstName?.trim() ?? '', object?.lastName?.trim() ?? '')}
       />
@@ -743,7 +754,6 @@
                 FilePreviewPopup,
                 {
                   file: object.resumeUuid,
-                  contentType: object.resumeType ?? 'application/pdf',
                   name: object.resumeName
                 },
                 object.resumeType?.startsWith('image/') ? 'centered' : 'float'

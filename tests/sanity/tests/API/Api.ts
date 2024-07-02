@@ -1,11 +1,13 @@
 import { APIRequestContext } from '@playwright/test'
-import { PlatformURI, AccountUrl } from '../utils'
+import { PlatformURI, LocalUrl, DevUrl } from '../utils'
 
 export class ApiEndpoint {
   private readonly request: APIRequestContext
+  private readonly baseUrl: string
 
   constructor (request: APIRequestContext) {
     this.request = request
+    this.baseUrl = typeof DevUrl === 'string' && DevUrl.trim() !== '' ? DevUrl : LocalUrl
   }
 
   private getDefaultHeaders (token: string = ''): Record<string, string> {
@@ -21,7 +23,7 @@ export class ApiEndpoint {
   }
 
   private async loginAndGetToken (username: string, password: string): Promise<string> {
-    const loginUrl = AccountUrl
+    const loginUrl = this.baseUrl
     const loginPayload = {
       method: 'login',
       params: [username, password]
@@ -32,13 +34,16 @@ export class ApiEndpoint {
       Referer: PlatformURI
     }
     const response = await this.request.post(loginUrl, { data: loginPayload, headers })
+    if (response.status() !== 200) {
+      throw new Error(`Login failed with status: ${response.status()}`)
+    }
     const token = (await response.json()).result.token
     return token
   }
 
   async createWorkspaceWithLogin (workspaceName: string, username: string, password: string): Promise<any> {
     const token = await this.loginAndGetToken(username, password)
-    const url = AccountUrl
+    const url = this.baseUrl
     const payload = {
       method: 'createWorkspace',
       params: [workspaceName]
@@ -49,12 +54,24 @@ export class ApiEndpoint {
   }
 
   async createAccount (username: string, password: string, firstName: string, lastName: string): Promise<any> {
-    const url = AccountUrl
+    const url = this.baseUrl
     const payload = {
       method: 'createAccount',
       params: [username, password, firstName, lastName]
     }
     const headers = this.getDefaultHeaders()
+    const response = await this.request.post(url, { data: payload, headers })
+    return await response.json()
+  }
+
+  async leaveWorkspace (email: string, username: string, password: string): Promise<any> {
+    const token = await this.loginAndGetToken(username, password)
+    const url = this.baseUrl
+    const payload = {
+      method: 'leaveWorkspace',
+      params: [email]
+    }
+    const headers = this.getDefaultHeaders(token)
     const response = await this.request.post(url, { data: payload, headers })
     return await response.json()
   }

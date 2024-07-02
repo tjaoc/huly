@@ -36,6 +36,7 @@ import {
   type FullTextPipelineStage
 } from './types'
 import { docKey, docUpdKey } from './utils'
+import { Analytics } from '@hcengineering/analytics'
 
 /**
  * @public
@@ -45,7 +46,6 @@ export class ContentRetrievalStage implements FullTextPipelineStage {
   stageId = contentStageId
 
   extra = ['content', 'base64']
-  digest = '^digest'
 
   enabled = true
 
@@ -98,7 +98,7 @@ export class ContentRetrievalStage implements FullTextPipelineStage {
 
     try {
       for (const [, val] of Object.entries(attributes)) {
-        if (val.type._class === core.class.TypeAttachment) {
+        if (val.type._class === core.class.TypeBlob) {
           // We need retrieve value of attached document content.
           const ref = doc.attributes[docKey(val.name, { _class: val.attributeOf })] as Ref<Doc>
           if (ref !== undefined && ref !== '') {
@@ -109,7 +109,7 @@ export class ContentRetrievalStage implements FullTextPipelineStage {
 
               if (!contentType.includes('image')) {
                 const digest = docInfo.etag
-                const digestKey = docKey(val.name + this.digest, { _class: val.attributeOf })
+                const digestKey = docKey(val.name, { _class: val.attributeOf, digest: true })
                 if (doc.attributes[digestKey] !== digest) {
                   ;(update as any)[docUpdKey(digestKey)] = digest
 
@@ -155,6 +155,7 @@ export class ContentRetrievalStage implements FullTextPipelineStage {
         }
       }
     } catch (err: any) {
+      Analytics.handleError(err)
       const wasError = (doc as any).error !== undefined
 
       await pipeline.update(doc._id, false, { [docKey('error')]: JSON.stringify({ message: err.message, err }) })

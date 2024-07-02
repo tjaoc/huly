@@ -40,8 +40,13 @@ import { calendarOperation } from '@hcengineering/model-calendar'
 import { timeOperation } from '@hcengineering/model-time'
 import { activityOperation } from '@hcengineering/model-activity'
 import { activityServerOperation } from '@hcengineering/model-server-activity'
+import { loveId, loveOperation } from '@hcengineering/model-love'
 import { documentOperation } from '@hcengineering/model-document'
 import { textEditorOperation } from '@hcengineering/model-text-editor'
+import { questionsOperation } from '@hcengineering/model-questions'
+import { trainingOperation } from '@hcengineering/model-training'
+import { documentsOperation } from '@hcengineering/model-controlled-documents'
+import { productsOperation } from '@hcengineering/model-products'
 
 export const migrateOperations: [string, MigrateOperation][] = [
   ['core', coreOperation],
@@ -62,12 +67,17 @@ export const migrateOperations: [string, MigrateOperation][] = [
   ['tags', tagsOperation],
   ['setting', settingOperation],
   ['tracker', trackerOperation],
+  ['documents', documentsOperation],
+  ['questions', questionsOperation],
+  ['training', trainingOperation],
+  ['products', productsOperation],
   ['board', boardOperation],
   ['hr', hrOperation],
   ['bitrix', bitrixOperation],
   ['inventiry', inventoryOperation],
   ['time', timeOperation],
   ['activityServer', activityServerOperation],
+  [loveId, loveOperation],
   ['document', documentOperation],
   ['textEditor', textEditorOperation],
   // We should call it after activityServer and chunter

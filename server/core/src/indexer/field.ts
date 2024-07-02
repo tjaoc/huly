@@ -14,26 +14,25 @@
 //
 
 import core, {
+  extractDocKey,
+  getFullTextContext,
+  getFullTextIndexableAttributes,
   type Class,
   type Doc,
   type DocIndexState,
   type DocumentQuery,
   type DocumentUpdate,
-  extractDocKey,
   type IndexStageState,
   type MeasureContext,
-  type Ref,
-  type ServerStorage,
-  getFullTextIndexableAttributes,
-  getFullTextContext
+  type Ref
 } from '@hcengineering/core'
 import { deepEqual } from 'fast-equals'
 import { type DbAdapter } from '../adapter'
-import { type IndexedDoc } from '../types'
+import { type IndexedDoc, type ServerStorage } from '../types'
 import {
   contentStageId,
-  type DocUpdateHandler,
   fieldStateId,
+  type DocUpdateHandler,
   type FullTextPipeline,
   type FullTextPipelineStage
 } from './types'
@@ -46,6 +45,7 @@ import {
   isFullTextAttribute,
   loadIndexStageStage
 } from './utils'
+import { Analytics } from '@hcengineering/analytics'
 
 /**
  * @public
@@ -236,7 +236,7 @@ export class IndexedFieldStage implements FullTextPipelineStage {
 
           await pipeline.update(docState._id, this.stageValue, docUpdate)
         } catch (err: any) {
-          console.error(err)
+          Analytics.handleError(err)
           continue
         }
       }

@@ -14,18 +14,15 @@
 //
 
 import { type Resources } from '@hcengineering/platform'
-import TxCreateRequest from './components/activity/TxCreateRequest.svelte'
-import RequestLabel from './components/activity/TxRequestLabel.svelte'
 import EditRequest from './components/EditRequest.svelte'
 import RequestPresenter from './components/RequestPresenter.svelte'
 import RequestView from './components/RequestView.svelte'
 import NotificationRequestView from './components/NotificationRequestView.svelte'
 
+export { default as RequestStatusPresenter } from './components/RequestStatusPresenter.svelte'
+export { default as RequestDetailPopup } from './components/RequestDetailPopup.svelte'
+
 export default async (): Promise<Resources> => ({
-  activity: {
-    RequestLabel,
-    TxCreateRequest
-  },
   component: {
     EditRequest,
     RequestPresenter,

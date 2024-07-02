@@ -18,12 +18,16 @@ import contact, { contactId } from '@hcengineering/contact'
 import { type Client, type Doc } from '@hcengineering/core'
 import { type IntlString, mergeIds, type Resource } from '@hcengineering/platform'
 import { type LabelAndProps, type Location } from '@hcengineering/ui'
-import { type FilterFunction, type SortFunc } from '@hcengineering/view'
+import {
+  type CreateAggregationManagerFunc,
+  type GrouppingManagerResource,
+  type FilterFunction,
+  type SortFunc
+} from '@hcengineering/view'
 
 export default mergeIds(contactId, contact, {
   string: {
     Apply: '' as IntlString,
-    Contacts: '' as IntlString,
     CreatePerson: '' as IntlString,
     OrganizationNamePlaceholder: '' as IntlString,
     OrganizationsNamePlaceholder: '' as IntlString,
@@ -87,5 +91,9 @@ export default mergeIds(contactId, contact, {
     FilterChannelHasMessagesResult: '' as FilterFunction,
     FilterChannelHasNewMessagesResult: '' as FilterFunction,
     PersonTooltipProvider: '' as Resource<(client: Client, doc?: Doc | null) => Promise<LabelAndProps | undefined>>
+  },
+  aggregation: {
+    CreatePersonAggregationManager: '' as CreateAggregationManagerFunc,
+    GrouppingPersonManager: '' as GrouppingManagerResource
   }
 })

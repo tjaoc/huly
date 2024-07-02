@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
   import core, { Data, Ref } from '@hcengineering/core'
   import { getEmbeddedLabel, getResource } from '@hcengineering/platform'
   import { createQuery, getClient, MessageViewer, SpaceSelector } from '@hcengineering/presentation'
@@ -25,10 +24,6 @@
   import templatesPlugin from '../plugin'
   import CreateTemplateCategory from './CreateTemplateCategory.svelte'
   import FieldPopup from './FieldPopup.svelte'
-
-  export let visibleNav: boolean = true
-
-  const dispatch = createEventDispatcher()
 
   const client = getClient()
   const query = createQuery()
@@ -156,7 +151,7 @@
 </script>
 
 <div class="hulyComponent">
-  <Header minimize={!visibleNav} on:resize={(event) => dispatch('change', event.detail)}>
+  <Header>
     <Breadcrumb
       icon={templatesPlugin.icon.Templates}
       label={templatesPlugin.string.Templates}
@@ -179,13 +174,18 @@
 
       <div class="flex-col overflow-y-auto">
         {#each spaces as space (space._id)}
-          <TreeNode label={getEmbeddedLabel(space.name)} actions={async () => await getSpaceActions(space)} parent>
-            {#each getTemplates(templates, space._id) as t (t._id)}
+          {@const getTemps = getTemplates(templates, space._id)}
+          <TreeNode
+            label={getEmbeddedLabel(space.name)}
+            actions={async () => await getSpaceActions(space)}
+            isFold
+            empty={getTemps.length === 0}
+          >
+            {#each getTemps as t (t._id)}
               <TreeItem
                 _id={space._id}
                 title={t.title}
                 actions={async () => await getActions(t)}
-                indent
                 on:click={() => {
                   selected = t._id
                   title = t.title

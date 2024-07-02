@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-import {
+import core, {
   Class,
   Doc,
   DocumentQuery,
@@ -34,7 +34,7 @@ import {
 } from '@hcengineering/core'
 import { createMongoAdapter } from '@hcengineering/mongo'
 import { PlatformError, unknownError } from '@hcengineering/platform'
-import { DbAdapter, StorageAdapter } from '@hcengineering/server-core'
+import { DbAdapter, StorageAdapter, type StorageAdapterEx } from '@hcengineering/server-core'
 
 class StorageBlobAdapter implements DbAdapter {
   constructor (
@@ -64,8 +64,11 @@ class StorageBlobAdapter implements DbAdapter {
     await this.blobAdapter.close()
   }
 
-  find (ctx: MeasureContext, domain: Domain): StorageIterator {
-    return this.blobAdapter.find(ctx, domain)
+  find (ctx: MeasureContext, domain: Domain, recheck?: boolean): StorageIterator {
+    if (recheck === true) {
+      return (this.client as StorageAdapterEx).find(ctx, this.workspaceId)
+    }
+    return this.blobAdapter.find(ctx, domain, recheck)
   }
 
   async load (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<Doc[]> {
@@ -73,6 +76,30 @@ class StorageBlobAdapter implements DbAdapter {
   }
 
   async upload (ctx: MeasureContext, domain: Domain, docs: Doc[]): Promise<void> {
+    // We need to update docs to have provider === defualt one.
+    if ('adapters' in this.client) {
+      const toUpload: Doc[] = []
+      const adapterEx = this.client as StorageAdapterEx
+      for (const d of docs) {
+        // We need sync stats to be sure all info are correct from storage.
+        if (d._class === core.class.Blob) {
+          const blob = d as Blob
+          const blobStat = await this.client.stat(ctx, this.workspaceId, blob.storageId)
+          if (blobStat !== undefined) {
+            blob.provider = adapterEx.defaultAdapter
+            blob.etag = blobStat.etag
+            blob.contentType = blobStat.contentType
+            blob.version = blobStat.version
+            blob.size = blobStat.size
+            delete (blob as any).downloadUrl
+            delete (blob as any).downloadUrlExpire
+
+            toUpload.push(blob)
+          }
+        }
+      }
+      docs = toUpload
+    }
     await this.blobAdapter.upload(ctx, domain, docs)
   }
 
@@ -94,18 +121,23 @@ export async function createStorageDataAdapter (
   url: string,
   workspaceId: WorkspaceId,
   modelDb: ModelDb,
-  storage?: StorageAdapter
+  storage: StorageAdapter
 ): Promise<DbAdapter> {
   if (storage === undefined) {
     throw new Error('minio storage adapter require minio')
   }
   // We need to create bucket if it doesn't exist
-  if (storage !== undefined) {
-    await storage.make(ctx, workspaceId)
-  }
+  await storage.make(ctx, workspaceId)
+
+  const storageEx = 'adapters' in storage ? (storage as StorageAdapterEx) : undefined
+
   const blobAdapter = await createMongoAdapter(ctx, hierarchy, url, workspaceId, modelDb, undefined, {
     calculateHash: (d) => {
-      return (d as Blob).etag
+      const blob = d as Blob
+      if (storageEx?.adapters !== undefined && storageEx.adapters.get(blob.provider) === undefined) {
+        return blob.etag + '_' + storageEx.defaultAdapter // Replace tag to be able to move to new provider
+      }
+      return blob.etag
     }
   })
   return new StorageBlobAdapter(workspaceId, storage, ctx, blobAdapter)

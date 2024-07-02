@@ -176,21 +176,29 @@ export function startHttpServer (
 
       const name = req.query.name as string
       const contentType = req.query.contentType as string
+      const size = parseInt((req.query.size as string) ?? '-1')
 
       void ctx
         .with(
           'storage upload',
           { workspace: payload.workspace.name },
-          async () => await externalStorage.put(ctx, payload.workspace, name, req, contentType),
+          async (ctx) =>
+            await externalStorage.put(ctx, payload.workspace, name, req, contentType, size !== -1 ? size : undefined),
           { file: name, contentType }
         )
         .then(() => {
           res.writeHead(200, { 'Cache-Control': 'no-cache' })
           res.end()
         })
+        .catch((err) => {
+          Analytics.handleError(err)
+          ctx.error('/api/v1/blob put error', { err })
+          res.writeHead(404, {})
+          res.end()
+        })
     } catch (err: any) {
       Analytics.handleError(err)
-      console.error(err)
+      ctx.error('/api/v1/blob put error', { err })
       res.writeHead(404, {})
       res.end()
     }
@@ -209,14 +217,27 @@ export function startHttpServer (
 
       const range = req.headers.range
       if (range !== undefined) {
-        void ctx.with('file-range', { workspace: payload.workspace.name }, async (ctx) => {
-          await getFileRange(ctx, range, externalStorage, payload.workspace, name, wrapRes(res))
-        })
+        void ctx
+          .with('file-range', { workspace: payload.workspace.name }, async (ctx) => {
+            await getFileRange(ctx, range, externalStorage, payload.workspace, name, wrapRes(res))
+          })
+          .catch((err) => {
+            Analytics.handleError(err)
+            ctx.error('/api/v1/blob get error', { err })
+            res.writeHead(404, {})
+            res.end()
+          })
       } else {
-        void getFile(ctx, externalStorage, payload.workspace, name, wrapRes(res))
+        void getFile(ctx, externalStorage, payload.workspace, name, wrapRes(res)).catch((err) => {
+          Analytics.handleError(err)
+          ctx.error('/api/v1/blob get error', { err })
+          res.writeHead(404, {})
+          res.end()
+        })
       }
     } catch (err: any) {
       Analytics.handleError(err)
+      ctx.error('/api/v1/blob get error', { err })
     }
   })
 
@@ -229,13 +250,13 @@ export function startHttpServer (
           zlibDeflateOptions: {
             // See zlib defaults.
             chunkSize: 32 * 1024,
-            memLevel: 9,
+            memLevel: 1,
             level: 1
           },
           zlibInflateOptions: {
             chunkSize: 32 * 1024,
             level: 1,
-            memLevel: 9
+            memLevel: 1
           },
           serverNoContextTakeover: true,
           clientNoContextTakeover: true,
@@ -276,10 +297,10 @@ export function startHttpServer (
 
     if (webSocketData.session instanceof Promise) {
       void webSocketData.session.then((s) => {
-        if ('upgrade' in s || 'error' in s) {
-          if ('error' in s) {
-            ctx.error('error', { error: s.error?.message, stack: s.error?.stack })
-          }
+        if ('error' in s) {
+          ctx.error('error', { error: s.error?.message, stack: s.error?.stack })
+        }
+        if ('upgrade' in s) {
           void cs
             .send(ctx, { id: -1, result: { state: 'upgrading', stats: (s as any).upgradeInfo } }, false, false)
             .then(() => {
@@ -306,7 +327,7 @@ export function startHttpServer (
       } catch (err: any) {
         Analytics.handleError(err)
         if (LOGGING_ENABLED) {
-          ctx.error('message error', err)
+          ctx.error('message error', { err })
         }
       }
     })
@@ -412,16 +433,22 @@ function createWebsocketClientSocket (
       ctx.measure('send-data', smsg.length)
       await new Promise<void>((resolve, reject) => {
         const doSend = (): void => {
-          if (ws.readyState !== ws.OPEN && !cs.isClosed) {
+          if (ws.readyState !== ws.OPEN || cs.isClosed) {
             return
           }
           if (ws.bufferedAmount > 16 * 1024) {
-            setImmediate(doSend)
+            setTimeout(doSend)
             return
           }
           ws.send(smsg, { binary: true, compress: compression }, (err) => {
             if (err != null) {
-              reject(err)
+              if (!`${err.message}`.includes('WebSocket is not open')) {
+                ctx.error('send error', { err })
+                Analytics.handleError(err)
+                reject(err)
+              }
+              // In case socket not open, just resolve
+              resolve()
             }
             resolve()
           })
@@ -435,6 +462,10 @@ function createWebsocketClientSocket (
 }
 function wrapRes (res: ExpressResponse): BlobResponse {
   return {
+    aborted: false,
+    cork: (cb) => {
+      cb()
+    },
     end: () => res.end(),
     pipeFrom: (readable) => readable.pipe(res),
     status: (code) => res.status(code),

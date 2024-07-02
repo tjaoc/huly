@@ -100,13 +100,13 @@ function getTxes (
   removed?: Ref<Department>[]
 ): Tx[] {
   const pushTxes = added.map((dep) =>
-    factory.createTxUpdateDoc(hr.class.Department, hr.space.HR, dep, {
+    factory.createTxUpdateDoc(hr.class.Department, core.space.Workspace, dep, {
       $push: { members: account }
     })
   )
   if (removed === undefined) return pushTxes
   const pullTxes = removed.map((dep) =>
-    factory.createTxUpdateDoc(hr.class.Department, hr.space.HR, dep, {
+    factory.createTxUpdateDoc(hr.class.Department, core.space.Workspace, dep, {
       $pull: { members: account }
     })
   )
@@ -164,6 +164,11 @@ export async function OnDepartmentRemove (tx: Tx, control: TriggerControl): Prom
 
   const department = control.removedMap.get(ctx.objectId) as Department
   if (department === undefined) return []
+  const res: Tx[] = []
+  const nested = await control.findAll(hr.class.Department, { parent: department._id })
+  for (const dep of nested) {
+    res.push(control.txFactory.createTxRemoveDoc(dep._class, dep.space, dep._id))
+  }
   const targetAccounts = await control.modelDb.findAll(contact.class.PersonAccount, {
     _id: { $in: department.members }
   })
@@ -173,7 +178,6 @@ export async function OnDepartmentRemove (tx: Tx, control: TriggerControl): Prom
     _id: { $in: employeeIds }
   })
   const removed = await buildHierarchy(department._id, control)
-  const res: Tx[] = []
   employee.forEach((em) => {
     res.push(control.txFactory.createTxMixin(em._id, em._class, em.space, hr.mixin.Staff, { department: undefined }))
   })
@@ -278,7 +282,7 @@ async function sendEmailNotifications (
 
   const senderPerson = (await control.findAll(contact.class.Person, { _id: sender.person }))[0]
 
-  const senderName = senderPerson !== undefined ? formatName(senderPerson.name) : ''
+  const senderName = senderPerson !== undefined ? formatName(senderPerson.name, control.branding?.lastNameFirst) : ''
   const content = await getContent(doc, senderName, type, control, '')
   if (content === undefined) return
 
@@ -340,7 +344,7 @@ export async function OnRequestRemove (tx: Tx, control: TriggerControl): Promise
 export async function RequestHTMLPresenter (doc: Doc, control: TriggerControl): Promise<string> {
   const request = doc as Request
   const employee = (await control.findAll(contact.mixin.Employee, { _id: request.attachedTo }))[0]
-  const who = getName(control.hierarchy, employee)
+  const who = getName(control.hierarchy, employee, control.branding?.lastNameFirst)
   const type = await translate(control.modelDb.getObject(request.type).label, {})
 
   const date = tzDateEqual(request.tzDate, request.tzDueDate)
@@ -358,7 +362,7 @@ export async function RequestHTMLPresenter (doc: Doc, control: TriggerControl): 
 export async function RequestTextPresenter (doc: Doc, control: TriggerControl): Promise<string> {
   const request = doc as Request
   const employee = (await control.findAll(contact.mixin.Employee, { _id: request.attachedTo }))[0]
-  const who = getName(control.hierarchy, employee)
+  const who = getName(control.hierarchy, employee, control.branding?.lastNameFirst)
   const type = await translate(control.modelDb.getObject(request.type).label, {})
 
   const date = tzDateEqual(request.tzDate, request.tzDueDate)
@@ -401,7 +405,7 @@ export async function PublicHolidayHTMLPresenter (doc: Doc, control: TriggerCont
   if (sender === undefined) return ''
   const employee = await getEmployee(sender.person as Ref<Employee>, control)
   if (employee === undefined) return ''
-  const who = formatName(employee.name)
+  const who = formatName(employee.name, control.branding?.lastNameFirst)
 
   const date = `on ${new Date(fromTzDate(holiday.date)).toLocaleDateString()}`
 
@@ -417,7 +421,7 @@ export async function PublicHolidayTextPresenter (doc: Doc, control: TriggerCont
   if (sender === undefined) return ''
   const employee = await getEmployee(sender.person as Ref<Employee>, control)
   if (employee === undefined) return ''
-  const who = formatName(employee.name)
+  const who = formatName(employee.name, control.branding?.lastNameFirst)
 
   const date = `on ${new Date(fromTzDate(holiday.date)).toLocaleDateString()}`
 

@@ -16,7 +16,7 @@
 import activity from '@hcengineering/activity'
 import type { PersonAccount } from '@hcengineering/contact'
 import contact from '@hcengineering/contact'
-import { type Domain, type Ref, type Tx } from '@hcengineering/core'
+import { type Timestamp, type Domain, type Ref, type Tx } from '@hcengineering/core'
 import {
   ArrOf,
   type Builder,
@@ -59,6 +59,8 @@ export class TRequest extends TAttachedDoc implements Request {
   @ReadOnly()
     approved!: Ref<PersonAccount>[]
 
+  approvedDates?: Timestamp[]
+
   requiredApprovesCount!: number
 
   @Prop(TypeString(), request.string.Status)
@@ -66,6 +68,7 @@ export class TRequest extends TAttachedDoc implements Request {
     status!: RequestStatus
 
   tx!: Tx
+  rejectedTx?: Tx
 
   @Prop(TypeRef(contact.class.PersonAccount), request.string.Rejected)
   @ReadOnly()
@@ -132,9 +135,14 @@ export function createModel (builder: Builder): void {
       label: request.string.Request,
       allowedForAuthor: true,
       providers: {
-        [notification.providers.BrowserNotification]: false,
+        [notification.providers.BrowserNotification]: true,
         [notification.providers.PlatformNotification]: true,
-        [notification.providers.EmailNotification]: false
+        [notification.providers.EmailNotification]: true
+      },
+      templates: {
+        textTemplate: '{sender} sent you a {doc}',
+        htmlTemplate: '<p><b>{sender}</b> sent you a {doc}</p>',
+        subjectTemplate: '{doc}'
       }
     },
     request.ids.CreateRequestNotification
@@ -148,20 +156,6 @@ export function createModel (builder: Builder): void {
     ['comments', 'approved', 'rejected', 'status']
   )
 
-  builder.createDoc(
-    activity.class.TxViewlet,
-    core.space.Model,
-    {
-      objectClass: request.class.Request,
-      icon: request.icon.Requests,
-      txClass: core.class.TxCreateDoc,
-      component: request.activity.TxCreateRequest,
-      label: request.string.CreatedRequest,
-      labelComponent: request.activity.RequestLabel,
-      display: 'emphasized'
-    },
-    request.ids.TxRequestCreate
-  )
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_REQUEST,
     disabled: [

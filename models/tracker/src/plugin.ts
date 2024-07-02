@@ -13,9 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import { type DocUpdateMessageViewlet, type TxViewlet } from '@hcengineering/activity'
+import { type DocUpdateMessageViewlet } from '@hcengineering/activity'
 import { type ChatMessageViewlet } from '@hcengineering/chunter'
-import { type StatusCategory, type Doc, type Ref } from '@hcengineering/core'
+import { type StatusCategory, type Doc, type Ref, type DocManager } from '@hcengineering/core'
 import { type ObjectSearchCategory, type ObjectSearchFactory } from '@hcengineering/model-presentation'
 import { type NotificationGroup, type NotificationType } from '@hcengineering/notification'
 import { mergeIds, type IntlString, type Resource } from '@hcengineering/platform'
@@ -28,7 +28,6 @@ import { type Application } from '@hcengineering/workbench'
 
 export default mergeIds(trackerId, tracker, {
   string: {
-    TrackerApplication: '' as IntlString,
     Projects: '' as IntlString,
     GotoIssues: '' as IntlString,
     GotoActive: '' as IntlString,
@@ -48,7 +47,6 @@ export default mergeIds(trackerId, tracker, {
     Extensions: '' as IntlString
   },
   activity: {
-    TxIssueCreated: '' as AnyComponent,
     StatusIcon: '' as AnyComponent,
     PriorityIcon: '' as AnyComponent
   },
@@ -77,7 +75,6 @@ export default mergeIds(trackerId, tracker, {
     ProjectList: '' as Ref<Viewlet>
   },
   ids: {
-    TxIssueCreated: '' as Ref<TxViewlet>,
     TrackerNotificationGroup: '' as Ref<NotificationGroup>,
     AssigneeNotification: '' as Ref<NotificationType>,
     BaseProjectType: '' as Ref<ProjectType>,
@@ -104,7 +101,8 @@ export default mergeIds(trackerId, tracker, {
     EditProject: '' as ViewAction,
     DeleteProject: '' as ViewAction,
     DeleteIssue: '' as ViewAction,
-    DeleteMilestone: '' as ViewAction
+    DeleteMilestone: '' as ViewAction,
+    ImportIssues: '' as ViewAction
   },
   action: {
     NewRelatedIssue: '' as Ref<Action<Doc, any>>,
@@ -121,5 +119,10 @@ export default mergeIds(trackerId, tracker, {
     Started: '' as Ref<StatusCategory>,
     Completed: '' as Ref<StatusCategory>,
     Canceled: '' as Ref<StatusCategory>
+  },
+
+  function: {
+    SetComponentStore: '' as Resource<(manager: DocManager<any>) => void>,
+    ComponentFilterFunction: '' as Resource<(doc: Doc, target: Doc) => boolean>
   }
 })

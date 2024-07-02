@@ -13,14 +13,20 @@ import core, {
   type Version
 } from '@hcengineering/core'
 import login, { loginId } from '@hcengineering/login'
-import { addEventListener, broadcastEvent, getMetadata, getResource, setMetadata } from '@hcengineering/platform'
-import presentation, { closeClient, purgeClient, refreshClient, setClient } from '@hcengineering/presentation'
+import { broadcastEvent, getMetadata, getResource, setMetadata } from '@hcengineering/platform'
+import presentation, {
+  closeClient,
+  getCurrentWorkspaceUrl,
+  purgeClient,
+  refreshClient,
+  setClient,
+  setPresentationCookie
+} from '@hcengineering/presentation'
 import {
   fetchMetadataLocalStorage,
   getCurrentLocation,
   locationStorageKeyId,
   navigate,
-  networkStatus,
   setMetadataLocalStorage
 } from '@hcengineering/ui'
 import { writable } from 'svelte/store'
@@ -28,14 +34,11 @@ import plugin from './plugin'
 import { workspaceCreating } from './utils'
 
 export const versionError = writable<string | undefined>(undefined)
+const versionStorageKey = 'last_server_version'
 
 let _token: string | undefined
 let _client: AccountClient | undefined
 let _clientSet: boolean = false
-
-addEventListener(client.event.NetworkRequests, async (event: string, val: number) => {
-  networkStatus.set(val)
-})
 
 export async function disconnect (): Promise<void> {
   if (_client !== undefined) {
@@ -83,11 +86,12 @@ export async function connect (title: string): Promise<Client | undefined> {
   setMetadata(presentation.metadata.Token, token)
 
   const fetchWorkspace = await getResource(login.function.FetchWorkspace)
-  let loginInfo = await ctx.with('select-workspace', {}, async () => (await fetchWorkspace(ws))[1])
+  let loginInfo = await ctx.with('fetch-workspace', {}, async () => (await fetchWorkspace(ws))[1])
   if (loginInfo?.creating === true) {
     while (true) {
+      if (ws !== getCurrentLocation().path[1]) return
       workspaceCreating.set(loginInfo?.createProgress ?? 0)
-      loginInfo = await ctx.with('select-workspace', {}, async () => (await fetchWorkspace(ws))[1])
+      loginInfo = await ctx.with('fetch-workspace', {}, async () => (await fetchWorkspace(ws))[1])
       workspaceCreating.set(loginInfo?.createProgress)
       if (loginInfo?.creating === false) {
         workspaceCreating.set(-1)
@@ -97,8 +101,7 @@ export async function connect (title: string): Promise<Client | undefined> {
     }
   }
 
-  document.cookie =
-    encodeURIComponent(presentation.metadata.Token.replaceAll(':', '-')) + '=' + encodeURIComponent(token) + '; path=/'
+  setPresentationCookie(token, getCurrentWorkspaceUrl())
 
   const endpoint = fetchMetadataLocalStorage(login.metadata.LoginEndpoint)
   const email = fetchMetadataLocalStorage(login.metadata.LoginEmail)
@@ -189,7 +192,7 @@ export async function connect (title: string): Promise<Client | undefined> {
 
                 if (currentVersionStr !== reconnectVersionStr) {
                   // It seems upgrade happened
-                  // location.reload()
+                  location.reload()
                   versionError.set(`${currentVersionStr} != ${reconnectVersionStr}`)
                 }
                 const serverVersion: { version: string } = await ctx.with(
@@ -204,6 +207,14 @@ export async function connect (title: string): Promise<Client | undefined> {
                   version !== undefined ? versionToString(version) : ''
                 )
                 if (serverVersion.version !== '' && serverVersion.version !== currentVersionStr) {
+                  if (typeof sessionStorage !== 'undefined') {
+                    if (sessionStorage.getItem(versionStorageKey) !== serverVersion.version) {
+                      sessionStorage.setItem(versionStorageKey, serverVersion.version)
+                      location.reload()
+                    }
+                  } else {
+                    location.reload()
+                  }
                   versionError.set(`${currentVersionStr} => ${serverVersion.version}`)
                 } else {
                   versionError.set(undefined)
@@ -344,8 +355,7 @@ function clearMetadata (ws: string): void {
   }
   setMetadata(presentation.metadata.Token, null)
   setMetadataLocalStorage(login.metadata.LastToken, null)
-  document.cookie =
-    encodeURIComponent(presentation.metadata.Token.replaceAll(':', '-')) + '=' + encodeURIComponent('') + '; path=/'
+  setPresentationCookie('', getCurrentWorkspaceUrl())
   setMetadataLocalStorage(login.metadata.LoginEndpoint, null)
   setMetadataLocalStorage(login.metadata.LoginEmail, null)
   void closeClient()

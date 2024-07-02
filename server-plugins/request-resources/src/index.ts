@@ -15,11 +15,12 @@
 
 import core, { Doc, Tx, TxCUD, TxCollectionCUD, TxCreateDoc, TxUpdateDoc, TxProcessor } from '@hcengineering/core'
 import request, { Request, RequestStatus } from '@hcengineering/request'
+import { getResource, translate } from '@hcengineering/platform'
 import type { TriggerControl } from '@hcengineering/server-core'
 import { pushDocUpdateMessages } from '@hcengineering/server-activity-resources'
 import { DocUpdateMessage } from '@hcengineering/activity'
 import notification from '@hcengineering/notification'
-import { getNotificationTxes, getCollaborators } from '@hcengineering/server-notification-resources'
+import { getNotificationTxes, getCollaborators, getTextPresenter } from '@hcengineering/server-notification-resources'
 
 /**
  * @public
@@ -49,24 +50,52 @@ export async function OnRequest (tx: Tx, control: TriggerControl): Promise<Tx[]>
 
 async function OnRequestUpdate (tx: TxCollectionCUD<Doc, Request>, control: TriggerControl): Promise<Tx[]> {
   const ctx = tx.tx as TxUpdateDoc<Request>
-  if (ctx.operations.$push?.approved === undefined) return []
-  const request = (await control.findAll(ctx.objectClass, { _id: ctx.objectId }))[0]
-  if (request.approved.length === request.requiredApprovesCount) {
-    const collectionTx = control.txFactory.createTxUpdateDoc(ctx.objectClass, ctx.objectSpace, ctx.objectId, {
-      status: RequestStatus.Completed
-    })
-    collectionTx.space = core.space.Tx
-    const resTx = control.txFactory.createTxCollectionCUD(
+  const applyTxes: Tx[] = []
+
+  if (ctx.operations.$push?.approved !== undefined) {
+    const request = (await control.findAll(ctx.objectClass, { _id: ctx.objectId }))[0]
+
+    if (request.approved.length === request.requiredApprovesCount) {
+      const collectionTx = control.txFactory.createTxUpdateDoc(ctx.objectClass, ctx.objectSpace, ctx.objectId, {
+        status: RequestStatus.Completed
+      })
+      collectionTx.space = core.space.Tx
+      const resTx = control.txFactory.createTxCollectionCUD(
+        tx.objectClass,
+        tx.objectId,
+        tx.objectSpace,
+        'requests',
+        collectionTx
+      )
+      resTx.space = core.space.Tx
+
+      applyTxes.push(resTx)
+      applyTxes.push(request.tx)
+    }
+
+    const approvedDateTx = control.txFactory.createTxCollectionCUD(
       tx.objectClass,
       tx.objectId,
       tx.objectSpace,
       'requests',
-      collectionTx
+      control.txFactory.createTxUpdateDoc(ctx.objectClass, ctx.objectSpace, ctx.objectId, {
+        $push: { approvedDates: Date.now() }
+      })
     )
-    resTx.space = core.space.Tx
-
-    await control.apply([resTx, request.tx], true)
+    applyTxes.push(approvedDateTx)
   }
+
+  if (ctx.operations.status === RequestStatus.Rejected) {
+    const request = (await control.findAll(ctx.objectClass, { _id: ctx.objectId }))[0]
+    if (request.rejectedTx != null) {
+      applyTxes.push(request.rejectedTx)
+    }
+  }
+
+  if (applyTxes.length > 0) {
+    await control.apply(applyTxes, true)
+  }
+
   return []
 }
 
@@ -130,8 +159,31 @@ async function getRequestNotificationTx (tx: TxCollectionCUD<Doc, Request>, cont
   return res
 }
 
+/**
+ * @public
+ */
+export async function requestTextPresenter (doc: Doc, control: TriggerControl): Promise<string> {
+  const request = doc as Request
+  let title = await translate(control.hierarchy.getClass(request._class).label, {})
+
+  const attachedDocTextPresenter = getTextPresenter(request.attachedToClass, control.hierarchy)
+  if (attachedDocTextPresenter !== undefined) {
+    const getTitle = await getResource(attachedDocTextPresenter.presenter)
+    const attachedDoc = (await control.findAll(request.attachedToClass, { _id: request.attachedTo }, { limit: 1 }))[0]
+
+    if (attachedDoc !== undefined) {
+      title = `${title} — ${await getTitle(attachedDoc, control)}`
+    }
+  }
+
+  return title
+}
+
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export default async () => ({
+  function: {
+    RequestTextPresenter: requestTextPresenter
+  },
   trigger: {
     OnRequest
   }

@@ -13,29 +13,33 @@
 // limitations under the License.
 -->
 <script lang="ts">
+  import core, { type Blob, type Ref } from '@hcengineering/core'
+  import { getEmbeddedLabel } from '@hcengineering/platform'
+  import { Button, Dialog, tooltip } from '@hcengineering/ui'
   import { createEventDispatcher, onMount } from 'svelte'
-  import { type Blob, type Ref } from '@hcengineering/core'
-  import { Label, Dialog, Button, Component } from '@hcengineering/ui'
 
   import presentation from '../plugin'
 
-  import { getPreviewType, previewTypes } from '../file'
-  import { BlobMetadata, FilePreviewExtension } from '../types'
-  import { getFileUrl } from '../utils'
+  import { BlobMetadata } from '../types'
+  import { getClient } from '../utils'
+  import { getBlobSrcFor } from '../preview'
 
   import ActionContext from './ActionContext.svelte'
+  import FilePreview from './FilePreview.svelte'
   import Download from './icons/Download.svelte'
 
-  export let file: Ref<Blob> | undefined
+  export let file: Blob | Ref<Blob> | undefined
   export let name: string
-  export let contentType: string
   export let metadata: BlobMetadata | undefined
   export let props: Record<string, any> = {}
 
   export let fullSize = false
   export let showIcon = true
 
+  const client = getClient()
   const dispatch = createEventDispatcher()
+
+  let download: HTMLAnchorElement
 
   onMount(() => {
     if (fullSize) {
@@ -49,17 +53,14 @@
     return ext.substring(0, 4).toUpperCase()
   }
 
-  let previewType: FilePreviewExtension | undefined = undefined
-  $: if (file !== undefined) {
-    void getPreviewType(contentType, $previewTypes).then((res) => {
-      previewType = res
-    })
-  } else {
-    previewType = undefined
+  let blob: Blob | undefined = undefined
+  $: void fetchBlob(file)
+
+  async function fetchBlob (file: Blob | Ref<Blob> | undefined): Promise<void> {
+    blob = typeof file === 'string' ? await client.findOne(core.class.Blob, { _id: file }) : file
   }
 
-  let download: HTMLAnchorElement
-  $: src = file === undefined ? '' : getFileUrl(file, 'full', name)
+  $: srcRef = getBlobSrcFor(blob, name)
 </script>
 
 <ActionContext context={{ mode: 'browser' }} />
@@ -79,45 +80,29 @@
           </div>
         </div>
       {/if}
-      <span class="wrapped-title">{name}</span>
+      <span class="wrapped-title" use:tooltip={{ label: getEmbeddedLabel(name) }}>{name}</span>
     </div>
   </svelte:fragment>
 
   <svelte:fragment slot="utils">
-    {#if src !== ''}
-      <a class="no-line" href={src} download={name} bind:this={download}>
-        <Button
-          icon={Download}
-          kind={'ghost'}
-          on:click={() => {
-            download.click()
-          }}
-          showTooltip={{ label: presentation.string.Download }}
-        />
-      </a>
-    {/if}
+    {#await srcRef then src}
+      {#if src !== ''}
+        <a class="no-line" href={src} download={name} bind:this={download}>
+          <Button
+            icon={Download}
+            kind={'ghost'}
+            on:click={() => {
+              download.click()
+            }}
+            showTooltip={{ label: presentation.string.Download }}
+          />
+        </a>
+      {/if}
+    {/await}
   </svelte:fragment>
 
-  {#if src === ''}
-    <div class="centered">
-      <Label label={presentation.string.FailedToPreview} />
-    </div>
-  {:else if previewType !== undefined}
-    <div class="content flex-col flex-grow">
-      <Component is={previewType.component} props={{ value: file, name, contentType, metadata, ...props }} />
-    </div>
-  {:else}
-    <div class="centered flex-col flex-gap-3">
-      <Label label={presentation.string.ContentTypeNotSupported} />
-      <Button
-        label={presentation.string.Download}
-        kind={'primary'}
-        on:click={() => {
-          download.click()
-        }}
-        showTooltip={{ label: presentation.string.Download }}
-      />
-    </div>
+  {#if blob !== undefined}
+    <FilePreview file={blob} {name} {metadata} {props} fit />
   {/if}
 </Dialog>
 
@@ -134,18 +119,5 @@
     border: 1px solid rgba(0, 0, 0, 0.1);
     border-radius: 0.5rem;
     cursor: pointer;
-  }
-  .content {
-    flex-grow: 1;
-    overflow: auto;
-    border: none;
-  }
-  .centered {
-    flex-grow: 1;
-    width: 100;
-    height: 100;
-    display: flex;
-    justify-content: center;
-    align-items: center;
   }
 </style>

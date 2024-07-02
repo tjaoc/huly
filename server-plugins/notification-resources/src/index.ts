@@ -22,7 +22,8 @@ import contact, {
   getAvatarProviderId,
   getGravatarUrl,
   Person,
-  PersonAccount
+  PersonAccount,
+  type AvatarInfo
 } from '@hcengineering/contact'
 import core, {
   Account,
@@ -57,7 +58,6 @@ import notification, {
   Collaborators,
   CommonInboxNotification,
   DocNotifyContext,
-  encodeObjectURI,
   InboxNotification,
   MentionInboxNotification,
   notificationId,
@@ -79,6 +79,9 @@ import serverNotification, {
 import { stripTags } from '@hcengineering/text'
 import { workbenchId } from '@hcengineering/workbench'
 import webpush, { WebPushError } from 'web-push'
+import { encodeObjectURI } from '@hcengineering/view'
+import serverView from '@hcengineering/server-view'
+
 import { Content, NotifyResult, NotifyParams } from './types'
 import {
   getHTMLPresenter,
@@ -226,7 +229,7 @@ async function notifyByEmail (
 
   if (sender !== undefined) {
     const senderPerson = (await control.findAll(contact.class.Person, { _id: sender.person }))[0]
-    senderName = senderPerson !== undefined ? formatName(senderPerson.name) : ''
+    senderName = senderPerson !== undefined ? formatName(senderPerson.name, control.branding?.lastNameFirst) : ''
   }
 
   const content = await getContent(doc, senderName, type, control, data)
@@ -553,14 +556,26 @@ export async function createPushFromInbox (
     cache.set(senderPerson._id, senderPerson)
   }
 
-  const path = [
-    workbenchId,
-    control.workspace.workspaceUrl,
-    notificationId,
-    encodeObjectURI(attachedTo, attachedToClass)
-  ]
-  await createPushNotification(control, targetUser, title, body, _id, senderPerson?.avatar, path)
-  return control.txFactory.createTxCreateDoc(notification.class.BrowserNotification, notification.space.Notifications, {
+  const linkProviders = control.modelDb.findAllSync(serverView.mixin.ServerLinkIdProvider, {})
+  const provider = linkProviders.find(({ _id }) => _id === attachedToClass)
+
+  let id: string = attachedTo
+
+  if (provider !== undefined) {
+    const encodeFn = await getResource(provider.encode)
+    const doc = cache.get(attachedTo) ?? (await control.findAll(attachedToClass, { _id: attachedTo }))[0]
+
+    if (doc === undefined) {
+      return
+    }
+
+    cache.set(doc._id, doc)
+    id = await encodeFn(doc, control)
+  }
+
+  const path = [workbenchId, control.workspace.workspaceUrl, notificationId, encodeObjectURI(id, attachedToClass)]
+  await createPushNotification(control, targetUser, title, body, _id, senderPerson, path)
+  return control.txFactory.createTxCreateDoc(notification.class.BrowserNotification, core.space.Workspace, {
     user: targetUser,
     status: NotificationStatus.New,
     title,
@@ -579,7 +594,7 @@ export async function createPushNotification (
   title: string,
   body: string,
   _id: string,
-  senderAvatar?: string | null,
+  senderAvatar?: Data<AvatarInfo>,
   path?: string[]
 ): Promise<void> {
   const publicKey = getMetadata(notification.metadata.PushPublicKey)
@@ -596,7 +611,7 @@ export async function createPushNotification (
   if (_id !== undefined) {
     data.tag = _id
   }
-  const front = getMetadata(serverCore.metadata.FrontUrl) ?? ''
+  const front = control.branding?.front ?? getMetadata(serverCore.metadata.FrontUrl) ?? ''
   const uploadUrl = getMetadata(serverCore.metadata.UploadURL) ?? ''
   const domainPath = `${workbenchId}/${control.workspace.workspaceUrl}`
   const domain = concatLink(front, domainPath)
@@ -606,15 +621,11 @@ export async function createPushNotification (
     data.url = url
   }
   if (senderAvatar != null) {
-    const provider = getAvatarProviderId(senderAvatar)
+    const provider = getAvatarProviderId(senderAvatar.avatarType)
     if (provider === contact.avatarProvider.Image) {
-      if (senderAvatar.includes('://')) {
-        data.icon = senderAvatar
-      } else {
-        data.icon = concatLink(uploadUrl, `?file=${senderAvatar}`)
-      }
-    } else if (provider === contact.avatarProvider.Gravatar) {
-      data.icon = getGravatarUrl(senderAvatar.split('://')[1], 'medium')
+      data.icon = concatLink(uploadUrl, `?file=${senderAvatar.avatar}`)
+    } else if (provider === contact.avatarProvider.Gravatar && senderAvatar.avatarProps?.url !== undefined) {
+      data.icon = getGravatarUrl(senderAvatar.avatarProps?.url, 512)
     }
   }
 

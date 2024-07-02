@@ -60,12 +60,13 @@ import {
   TRefTo,
   TType,
   TTypeAny,
-  TTypeAttachment,
+  TTypeBlob,
   TTypeBoolean,
   TTypeCollaborativeDoc,
   TTypeCollaborativeDocVersion,
   TTypeCollaborativeMarkup,
   TTypeDate,
+  TTypeFileSize,
   TTypeHyperlink,
   TTypeIntlString,
   TTypeMarkup,
@@ -86,10 +87,11 @@ import {
   TSpace,
   TSpaceType,
   TSpaceTypeDescriptor,
-  TTypedSpace,
-  TSystemSpace
+  TSystemSpace,
+  TTypedSpace
 } from './security'
-import { TStatus, TStatusCategory, TDomainStatusPlaceholder } from './status'
+import { defineSpaceType } from './spaceType'
+import { TDomainStatusPlaceholder, TStatus, TStatusCategory } from './status'
 import { TUserStatus } from './transient'
 import {
   TTx,
@@ -102,7 +104,6 @@ import {
   TTxUpdateDoc,
   TTxWorkspaceEvent
 } from './tx'
-import { defineSpaceType } from './spaceType'
 
 export { coreId } from '@hcengineering/core'
 export * from './core'
@@ -147,13 +148,14 @@ export function createModel (builder: Builder): void {
     TArrOf,
     TRefTo,
     TTypeDate,
+    TTypeFileSize,
     TTypeTimestamp,
     TTypeNumber,
     TTypeBoolean,
     TTypeString,
     TTypeRank,
     TTypeRecord,
-    TTypeAttachment,
+    TTypeBlob,
     TTypeHyperlink,
     TCollection,
     TVersion,

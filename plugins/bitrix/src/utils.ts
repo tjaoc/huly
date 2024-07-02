@@ -14,7 +14,8 @@ import core, {
   Space,
   TxOperations,
   WithLookup,
-  generateId
+  generateId,
+  type Blob as PlatformBlob
 } from '@hcengineering/core'
 import { Message } from '@hcengineering/gmail'
 import recruit, { Applicant, Candidate, Vacancy } from '@hcengineering/recruit'
@@ -360,7 +361,7 @@ export async function convert (
             description: '',
             title: vv,
             targetClass: attr.attributeOf,
-            space: tags.space.Tags,
+            space: core.space.Workspace,
             modifiedBy: document.modifiedBy,
             modifiedOn: document.modifiedOn
           }
@@ -378,7 +379,7 @@ export async function convert (
           weight: o.weight,
           modifiedBy: document.modifiedBy,
           modifiedOn: document.modifiedOn,
-          space: tags.space.Tags,
+          space: core.space.Workspace,
           bitrixId: vv
         }
         newExtraSyncDocs.push(ref)
@@ -561,7 +562,7 @@ export async function convert (
           const attachDoc: Attachment & BitrixSyncDoc = {
             _id: generateId(),
             bitrixId: `${blobRef.id}`,
-            file: '', // Empty since not uploaded yet.
+            file: '' as Ref<PlatformBlob>, // Empty since not uploaded yet.
             name: blobRef.id,
             size: -1,
             type: 'application/octet-stream',

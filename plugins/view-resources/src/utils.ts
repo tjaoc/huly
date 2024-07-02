@@ -49,7 +49,12 @@ import core, {
   type TxOperations,
   type TxUpdateDoc,
   type TypeAny,
-  type TypedSpace
+  type TypedSpace,
+  type WithLookup,
+  type AnyAttribute,
+  DocManager,
+  SortingOrder,
+  type Tx
 } from '@hcengineering/core'
 import { type Restrictions } from '@hcengineering/guest'
 import type { Asset, IntlString } from '@hcengineering/platform'
@@ -63,6 +68,7 @@ import {
   isAdminUser,
   type KeyedAttribute
 } from '@hcengineering/presentation'
+import { LiveQuery } from '@hcengineering/query'
 import { type CollaborationUser } from '@hcengineering/text-editor'
 import {
   ErrorPresenter,
@@ -79,6 +85,7 @@ import {
   type Location
 } from '@hcengineering/ui'
 import view, {
+  type IAggregationManager,
   AttributeCategoryOrder,
   type AttributeCategory,
   type AttributeModel,
@@ -87,7 +94,8 @@ import view, {
   type BuildModelOptions,
   type CollectionPresenter,
   type Viewlet,
-  type ViewletDescriptor
+  type ViewletDescriptor,
+  type LinkIdProvider
 } from '@hcengineering/view'
 
 import contact, { getName, type Contact, type PersonAccount } from '@hcengineering/contact'
@@ -102,6 +110,102 @@ export { getFiltredKeys, isCollectionAttr } from '@hcengineering/presentation'
  */
 export interface LoadingProps {
   length: number
+}
+
+/**
+ * @public
+ */
+export class AggregationManager<T extends Doc> implements IAggregationManager<T> {
+  docs: T[] | undefined
+  mgr: DocManager<T> | Promise<DocManager<T>> | undefined
+  query: (() => void) | undefined
+  lq: LiveQuery
+  lqCallback: () => void
+  private readonly setStore: (manager: DocManager<T>) => void
+  private readonly filter: (doc: T, target: T) => boolean
+  private readonly _class: Ref<Class<T>>
+
+  private constructor (
+    client: Client,
+    lqCallback: () => void,
+    setStore: (manager: DocManager<T>) => void,
+    categorizingFunc: (doc: T, target: T) => boolean,
+    _class: Ref<Class<T>>
+  ) {
+    this.lq = new LiveQuery(client)
+    this.lqCallback = lqCallback ?? (() => {})
+    this.setStore = setStore
+    this.filter = categorizingFunc
+    this._class = _class
+    void this.getManager()
+  }
+
+  static create<T extends Doc>(
+    client: Client,
+    lqCallback: () => void,
+    setStore: (manager: DocManager<T>) => void,
+    categorizingFunc: (doc: T, target: T) => boolean,
+    _class: Ref<Class<T>>
+  ): AggregationManager<T> {
+    return new AggregationManager<T>(client, lqCallback, setStore, categorizingFunc, _class)
+  }
+
+  private async getManager (): Promise<DocManager<T>> {
+    if (this.mgr !== undefined) {
+      if (this.mgr instanceof Promise) {
+        this.mgr = await this.mgr
+      }
+      return this.mgr
+    }
+    this.mgr = new Promise<DocManager<T>>((resolve) => {
+      this.query = this.lq.query(
+        this._class,
+        {},
+        (res) => {
+          const first = this.docs === undefined
+          this.docs = res
+          this.mgr = new DocManager<T>(res as T[])
+          this.setStore(this.mgr)
+          if (!first) {
+            this.lqCallback()
+          }
+          resolve(this.mgr)
+        },
+        {
+          sort: {
+            label: SortingOrder.Ascending
+          }
+        }
+      )
+    })
+
+    return await this.mgr
+  }
+
+  close (): void {
+    this.query?.()
+  }
+
+  async notifyTx (...tx: Tx[]): Promise<void> {
+    await this.lq.tx(...tx)
+  }
+
+  getAttrClass (): Ref<Class<T>> {
+    return this._class
+  }
+
+  async categorize (target: Array<Ref<T>>, attr: AnyAttribute): Promise<Array<Ref<T>>> {
+    const mgr = await this.getManager()
+    for (const sid of [...target]) {
+      const c = mgr.getIdMap().get(sid) as WithLookup<T>
+      if (c !== undefined) {
+        let docs = mgr.getDocs()
+        docs = docs.filter((it: T) => this.filter(it, c))
+        target.push(...docs.map((it) => it._id))
+      }
+    }
+    return target.filter((it, idx, arr) => arr.indexOf(it) === idx)
+  }
 }
 
 /**
@@ -1023,8 +1127,16 @@ export async function getObjectLinkFragment (
     }
   }
   const loc = getCurrentResolvedLocation()
+  const idProvider = hierarchy.classHierarchyMixin(Hierarchy.mixinOrClass(object), view.mixin.LinkIdProvider)
+
+  let id: string = object._id
+  if (idProvider !== undefined) {
+    const encodeFn = await getResource(idProvider.encode)
+    id = await encodeFn(object)
+  }
+
   if (hasResource(component) === true) {
-    loc.fragment = getPanelURI(component, object._id, Hierarchy.mixinOrClass(object), 'content')
+    loc.fragment = getPanelURI(component, id, Hierarchy.mixinOrClass(object), 'content')
   }
   return loc
 }
@@ -1375,6 +1487,8 @@ export function checkMyPermission (_id: Ref<Permission>, space: Ref<TypedSpace>,
   return (store.whitelist.has(space) || store.ps[space]?.has(_id)) ?? false
 }
 
+export const accessDeniedStore = writable<boolean>(false)
+
 export const permissionsStore = writable<PermissionsStore>({
   ps: {},
   ap: {},
@@ -1445,4 +1559,46 @@ export function getCollaborationUser (): CollaborationUser {
     email: me.email,
     color
   }
+}
+
+export async function getObjectLinkId (
+  providers: LinkIdProvider[],
+  _id: Ref<Doc>,
+  _class: Ref<Class<Doc>>,
+  doc?: Doc
+): Promise<string> {
+  const provider = providers.find(({ _id }) => _id === _class)
+
+  if (provider === undefined) {
+    return _id
+  }
+
+  const client = getClient()
+  const object = doc ?? (await client.findOne(_class, { _id }))
+
+  if (object === undefined) {
+    return _id
+  }
+
+  const encodeFn = await getResource(provider.encode)
+  return await encodeFn(object)
+}
+
+export async function parseLinkId<T extends Doc> (
+  providers: LinkIdProvider[],
+  id: string,
+  _class: Ref<Class<T>>
+): Promise<Ref<T>> {
+  const hierarchy = getClient().getHierarchy()
+  const provider =
+    providers.find(({ _id }) => id === _class) ?? providers.find(({ _id }) => hierarchy.isDerived(_class, _id))
+
+  if (provider === undefined) {
+    return id as Ref<T>
+  }
+
+  const decodeFn = await getResource(provider.decode)
+  const _id = await decodeFn(id)
+
+  return (_id ?? id) as Ref<T>
 }

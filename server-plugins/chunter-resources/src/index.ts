@@ -54,7 +54,7 @@ import { NOTIFICATION_BODY_SIZE } from '@hcengineering/server-notification'
  */
 export async function channelHTMLPresenter (doc: Doc, control: TriggerControl): Promise<string> {
   const channel = doc as ChunterSpace
-  const front = getMetadata(serverCore.metadata.FrontUrl) ?? ''
+  const front = control.branding?.front ?? getMetadata(serverCore.metadata.FrontUrl) ?? ''
   const path = `${workbenchId}/${control.workspace.workspaceUrl}/${chunterId}/${channel._id}`
   const link = concatLink(front, path)
   return `<a href='${link}'>${channel.name}</a>`
@@ -154,6 +154,9 @@ async function OnChatMessageCreated (tx: TxCUD<Doc>, control: TriggerControl): P
   }
 
   const targetDoc = (await control.findAll(message.attachedToClass, { _id: message.attachedTo }, { limit: 1 }))[0]
+  if (targetDoc === undefined) {
+    return []
+  }
   const isChannel = hierarchy.isDerived(targetDoc._class, chunter.class.Channel)
   const res: Tx[] = []
 

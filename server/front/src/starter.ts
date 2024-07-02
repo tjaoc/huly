@@ -22,15 +22,7 @@ import serverToken from '@hcengineering/server-token'
 import { start } from '.'
 
 export function startFront (ctx: MeasureContext, extraConfig?: Record<string, string | undefined>): void {
-  const defaultLanguage = process.env.DEFAULT_LANGUAGE ?? 'en'
-  const languages = process.env.LANGUAGES ?? 'en,ru'
   const SERVER_PORT = parseInt(process.env.SERVER_PORT ?? '8080')
-
-  const transactorEndpoint = process.env.TRANSACTOR_URL
-  if (transactorEndpoint === undefined) {
-    console.error('please provide transactor url')
-    process.exit(1)
-  }
 
   const url = process.env.MONGO_URL
   if (url === undefined) {
@@ -107,29 +99,31 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
     process.exit(1)
   }
 
-  const lastNameFirst = process.env.LAST_NAME_FIRST
+  let previewConfig = process.env.PREVIEW_CONFIG
 
-  const title = process.env.TITLE
+  if (previewConfig === undefined) {
+    // Use universal preview config
+    previewConfig = `*|${uploadUrl}/:workspace?file=:blobId.:format&size=:size`
+  }
+
+  const brandingUrl = process.env.BRANDING_URL
 
   setMetadata(serverToken.metadata.Secret, serverSecret)
 
   const config = {
-    transactorEndpoint,
     elasticUrl,
     storageAdapter,
     accountsUrl,
     uploadUrl,
     modelVersion,
     gmailUrl,
-    lastNameFirst,
     telegramUrl,
     rekoniUrl,
     calendarUrl,
     collaboratorUrl,
     collaboratorApiUrl,
-    title,
-    languages,
-    defaultLanguage
+    brandingUrl,
+    previewConfig
   }
   console.log('Starting Front service with', config)
   const shutdown = start(ctx, config, SERVER_PORT, extraConfig)

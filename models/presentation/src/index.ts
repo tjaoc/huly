@@ -13,9 +13,9 @@
 // limitations under the License.
 //
 
-import { type Blob, type Class, type Doc, type Ref, DOMAIN_MODEL } from '@hcengineering/core'
-import { type Builder, Model, Prop, TypeRef, TypeString } from '@hcengineering/model'
-import core, { TDoc } from '@hcengineering/model-core'
+import { DOMAIN_MODEL, type Tx, type Blob, type Class, type Doc, type Ref } from '@hcengineering/core'
+import { Mixin, Model, Prop, TypeRef, TypeString, type Builder } from '@hcengineering/model'
+import core, { TClass, TDoc } from '@hcengineering/model-core'
 import { type Asset, type IntlString, type Resource } from '@hcengineering/platform'
 // Import types to prevent .svelte components to being exposed to type typescript.
 import {
@@ -27,13 +27,14 @@ import {
   type ComponentPointExtension,
   type CreateExtensionKind,
   type DocAttributeRule,
-  type DocRules,
   type DocCreateExtension,
   type DocCreateFunction,
+  type DocRules,
   type FilePreviewExtension,
-  type ObjectSearchContext,
   type ObjectSearchCategory,
-  type ObjectSearchFactory
+  type ObjectSearchContext,
+  type ObjectSearchFactory,
+  type InstantTransactions
 } from '@hcengineering/presentation/src/types'
 import { type AnyComponent, type ComponentExtensionId } from '@hcengineering/ui/src/types'
 import presentation from './plugin'
@@ -94,6 +95,11 @@ export class TFilePreviewExtension extends TComponentPointExtension implements F
   availabilityChecker?: Resource<() => Promise<boolean>>
 }
 
+@Mixin(presentation.mixin.InstantTransactions, core.class.Class)
+export class TInstantTransactions extends TClass implements InstantTransactions {
+  txClasses!: Array<Ref<Class<Tx>>>
+}
+
 export function createModel (builder: Builder): void {
   builder.createModel(
     TObjectSearchCategory,
@@ -101,6 +107,7 @@ export function createModel (builder: Builder): void {
     TComponentPointExtension,
     TDocCreateExtension,
     TDocRules,
-    TFilePreviewExtension
+    TFilePreviewExtension,
+    TInstantTransactions
   )
 }

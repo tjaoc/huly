@@ -1,8 +1,9 @@
 import {
+  docKey,
+  type Branding,
   type Class,
   type Doc,
   type DocIndexState,
-  docKey,
   type Hierarchy,
   type Ref,
   type RefTo,
@@ -36,7 +37,7 @@ function createIndexedReader (
     get: (attr: string) => {
       const realAttr = hierarchy.findAttribute(_class, attr)
       if (realAttr !== undefined) {
-        return doc.attributes[docKey(attr, { _class: realAttr.attributeOf })]
+        return doc.attributes[docKey(attr, { _class: realAttr.attributeOf })] ?? (doc as any)[attr]
       }
       return undefined
     },
@@ -110,7 +111,8 @@ export async function updateDocWithPresenter (
   refDocs: {
     parentDoc: DocIndexState | undefined
     spaceDoc: DocIndexState | undefined
-  }
+  },
+  branding: Branding | null
 ): Promise<void> {
   const searchPresenter = findSearchPresenter(hierarchy, doc.objectClass)
   if (searchPresenter === undefined) {
@@ -134,7 +136,8 @@ export async function updateDocWithPresenter (
     props.push({
       name: 'searchShortTitle',
       config: searchPresenter.searchConfig.shortTitle,
-      provider: searchPresenter.getSearchShortTitle
+      provider: searchPresenter.getSearchShortTitle,
+      lastNameFirst: branding?.lastNameFirst
     })
   }
 

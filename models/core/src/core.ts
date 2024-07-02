@@ -63,8 +63,8 @@ import {
   Prop,
   ReadOnly,
   TypeBoolean,
+  TypeFileSize,
   TypeIntlString,
-  TypeNumber,
   TypeRecord,
   TypeRef,
   TypeString,
@@ -136,11 +136,11 @@ export class TAttachedDoc extends TDoc implements AttachedDoc {
 export class TBlob extends TDoc implements Blob {
   @Prop(TypeString(), core.string.Blob)
   @ReadOnly()
+  @Index(IndexKind.Indexed)
     provider!: string
 
   @Prop(TypeString(), core.string.BlobContentType)
   @ReadOnly()
-  @Index(IndexKind.Indexed)
     contentType!: string
 
   @Prop(TypeString(), core.string.BlobStorageId)
@@ -155,7 +155,7 @@ export class TBlob extends TDoc implements Blob {
   @ReadOnly()
     version!: string
 
-  @Prop(TypeNumber(), core.string.BlobSize)
+  @Prop(TypeFileSize(), core.string.BlobSize)
   @ReadOnly()
     size!: number
 }
@@ -213,8 +213,8 @@ export class TTypeString extends TType {}
 export class TTypeRecord extends TType {}
 
 @UX(core.string.String)
-@Model(core.class.TypeAttachment, core.class.Type)
-export class TTypeAttachment extends TType {}
+@Model(core.class.TypeBlob, core.class.Type)
+export class TTypeBlob extends TType {}
 
 @UX(core.string.Hyperlink)
 @Model(core.class.TypeHyperlink, core.class.Type)
@@ -227,6 +227,10 @@ export class TTypeIntlString extends TType {}
 @UX(core.string.Number)
 @Model(core.class.TypeNumber, core.class.Type)
 export class TTypeNumber extends TType {}
+
+@UX(core.string.BlobSize)
+@Model(core.class.TypeFileSize, core.class.Type)
+export class TTypeFileSize extends TType {}
 
 @UX(core.string.Markup)
 @Model(core.class.TypeMarkup, core.class.Type)

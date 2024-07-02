@@ -13,21 +13,21 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, tick } from 'svelte'
   import { Attachment } from '@hcengineering/attachment'
-  import { Account, Class, Doc, generateId, IdMap, Markup, Ref, Space, toIdMap } from '@hcengineering/core'
-  import { IntlString, setPlatformStatus, unknownError, Asset } from '@hcengineering/platform'
+  import core, { Account, Class, Doc, IdMap, Markup, Ref, Space, generateId, toIdMap } from '@hcengineering/core'
+  import { Asset, IntlString, setPlatformStatus, unknownError } from '@hcengineering/platform'
   import {
-    createQuery,
     DraftController,
+    createQuery,
     deleteFile,
     draftsStore,
     getClient,
     getFileMetadata,
     uploadFile
   } from '@hcengineering/presentation'
-  import textEditor, { AttachIcon, EmptyMarkup, type RefAction, ReferenceInput } from '@hcengineering/text-editor'
+  import textEditor, { AttachIcon, EmptyMarkup, ReferenceInput, type RefAction } from '@hcengineering/text-editor'
   import { Loading, type AnySvelteComponent } from '@hcengineering/ui'
+  import { createEventDispatcher, onDestroy, tick } from 'svelte'
   import attachment from '../plugin'
   import AttachmentPresenter from './AttachmentPresenter.svelte'
 
@@ -96,6 +96,11 @@
         (res) => {
           originalAttachments = new Set(res.map((p) => p._id))
           attachments = toIdMap(res)
+        },
+        {
+          lookup: {
+            file: core.class.Blob
+          }
         }
       )
     }
@@ -138,8 +143,25 @@
     }
   }
 
+  const existingAttachmentsQuery = createQuery()
+  let existingAttachments: Ref<Attachment>[] = []
+  $: existingAttachmentsQuery.query(
+    attachment.class.Attachment,
+    {
+      space,
+      attachedTo: objectId,
+      attachedToClass: _class,
+      _id: { $in: Array.from(attachments.keys()) }
+    },
+    (res) => {
+      existingAttachments = res.map((p) => p._id)
+    }
+  )
+
   async function saveAttachment (doc: Attachment): Promise<void> {
-    await client.addCollection(attachment.class.Attachment, space, objectId, _class, 'attachments', doc, doc._id)
+    if (!existingAttachments.includes(doc._id)) {
+      await client.addCollection(attachment.class.Attachment, space, objectId, _class, 'attachments', doc, doc._id)
+    }
   }
 
   async function fileSelected (): Promise<void> {
@@ -203,6 +225,9 @@
           void deleteAttachment(attachment)
         }
       })
+    }
+    if (!saved && shouldSaveDraft) {
+      void createAttachments()
     }
   })
 
@@ -283,6 +308,7 @@
 <div class="no-print" bind:this={refContainer}>
   <input
     bind:this={inputFile}
+    disabled={inputFile == null}
     multiple
     type="file"
     name="file"

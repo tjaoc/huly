@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 
+import { Analytics } from '@hcengineering/analytics'
 import core, {
   ClassifierKind,
   DOMAIN_MODEL,
@@ -23,6 +24,7 @@ import core, {
   TxProcessor,
   cutObjectArray,
   toFindResult,
+  type Branding,
   type Account,
   type AttachedDoc,
   type Class,
@@ -43,7 +45,6 @@ import core, {
   type SearchOptions,
   type SearchQuery,
   type SearchResult,
-  type ServerStorage,
   type SessionOperationContext,
   type StorageIterator,
   type Timestamp,
@@ -69,6 +70,7 @@ import { type Triggers } from '../triggers'
 import type {
   FullTextAdapter,
   ObjectDDParticipant,
+  ServerStorage,
   ServerStorageOptions,
   SessionContext,
   TriggerControl
@@ -86,6 +88,7 @@ export class TServerStorage implements ServerStorage {
   triggerData = new Map<Metadata<any>, any>()
 
   liveQuery: LQ
+  branding: Branding | null
 
   domainInfo = new Map<
   Domain,
@@ -108,7 +111,7 @@ export class TServerStorage implements ServerStorage {
     readonly storageAdapter: StorageAdapter,
     private readonly serviceAdaptersManager: ServiceAdaptersManager,
     readonly modelDb: ModelDb,
-    private readonly workspace: WorkspaceIdWithUrl,
+    readonly workspaceId: WorkspaceIdWithUrl,
     readonly indexFactory: (storage: ServerStorage) => FullTextIndex,
     readonly options: ServerStorageOptions,
     readonly metrics: MeasureContext,
@@ -118,6 +121,7 @@ export class TServerStorage implements ServerStorage {
     this.liveQuery = new LQ(this.newCastClient(hierarchy, modelDb, metrics))
     this.hierarchy = hierarchy
     this.fulltext = indexFactory(this)
+    this.branding = options.branding
 
     this.setModel(model)
   }
@@ -145,7 +149,13 @@ export class TServerStorage implements ServerStorage {
       findOne: async (_class, query, options) => {
         return (
           await metrics.with('query', {}, async (ctx) => {
-            return await this.findAll(ctx, _class, query, { ...options, limit: 1 })
+            const results = await this.findAll(ctx, _class, query, { ...options, limit: 1 })
+            return toFindResult(
+              results.map((v) => {
+                return this.hierarchy.updateLookupMixin(_class, v, options)
+              }),
+              results.total
+            )
           })
         )[0]
       },
@@ -231,9 +241,7 @@ export class TServerStorage implements ServerStorage {
         const r = await ctx.with('adapter-tx', { domain: lastDomain }, async (ctx) => await adapter.tx(ctx, ...part))
 
         // Update server live queries.
-        for (const t of part) {
-          await this.liveQuery.tx(t)
-        }
+        await this.liveQuery.tx(...part)
         if (Array.isArray(r)) {
           result.push(...r)
         } else {
@@ -701,8 +709,10 @@ export class TServerStorage implements ServerStorage {
     const moves = await ctx.with('process-move', {}, (ctx) => this.processMove(ctx.ctx, txes, findAll))
 
     const triggerControl: Omit<TriggerControl, 'txFactory' | 'ctx' | 'result'> = {
+      operationContext: ctx,
       removedMap,
-      workspace: this.workspace,
+      workspace: this.workspaceId,
+      branding: this.options.branding,
       storageAdapter: this.storageAdapter,
       serviceAdaptersManager: this.serviceAdaptersManager,
       findAll: fAll(ctx.ctx),
@@ -739,14 +749,16 @@ export class TServerStorage implements ServerStorage {
               sctx.userEmail,
               sctx.sessionId,
               sctx.admin,
-              []
+              [],
+              this.workspaceId,
+              this.options.branding
             )
             const result = await performAsync(applyCtx)
             // We need to broadcast changes
             await this.broadcastCtx([{ derived: result }, ...applyCtx.derived])
           })
         }
-        setImmediate(() => {
+        setTimeout(() => {
           void asyncTriggerProcessor()
         })
       }
@@ -914,6 +926,7 @@ export class TServerStorage implements ServerStorage {
       })
     } catch (err: any) {
       ctx.ctx.error('error process tx', { error: err })
+      Analytics.handleError(err)
       throw err
     } finally {
       onEnds.forEach((p) => {
@@ -932,8 +945,8 @@ export class TServerStorage implements ServerStorage {
     })
   }
 
-  find (ctx: MeasureContext, domain: Domain): StorageIterator {
-    return this.getAdapter(domain, false).find(ctx, domain)
+  find (ctx: MeasureContext, domain: Domain, recheck?: boolean): StorageIterator {
+    return this.getAdapter(domain, false).find(ctx, domain, recheck)
   }
 
   async load (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<Doc[]> {

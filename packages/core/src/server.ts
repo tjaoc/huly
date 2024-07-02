@@ -13,20 +13,8 @@
 // limitations under the License.
 //
 
-import { LoadModelResponse } from '.'
-import type { Class, Doc, Domain, Ref, Timestamp } from './classes'
-import { Hierarchy } from './hierarchy'
+import type { Doc, Domain, Ref } from './classes'
 import { MeasureContext, type FullParamsType, type ParamsType } from './measurements'
-import { ModelDb } from './memdb'
-import type {
-  DocumentQuery,
-  FindOptions,
-  FindResult,
-  SearchOptions,
-  SearchQuery,
-  SearchResult,
-  TxResult
-} from './storage'
 import type { Tx } from './tx'
 
 /**
@@ -66,7 +54,8 @@ export interface SessionOperationContext {
  */
 export interface LowLevelStorage {
   // Low level streaming API to retrieve information
-  find: (ctx: MeasureContext, domain: Domain) => StorageIterator
+  // If recheck is passed, all %hash% for documents, will be re-calculated.
+  find: (ctx: MeasureContext, domain: Domain, recheck?: boolean) => StorageIterator
 
   // Load passed documents from domain
   load: (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]) => Promise<Doc[]>
@@ -78,24 +67,15 @@ export interface LowLevelStorage {
   // Remove a list of documents.
   clean: (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]) => Promise<void>
 }
-/**
- * @public
- */
-export interface ServerStorage extends LowLevelStorage {
-  hierarchy: Hierarchy
-  modelDb: ModelDb
-  findAll: <T extends Doc>(
-    ctx: MeasureContext,
-    _class: Ref<Class<T>>,
-    query: DocumentQuery<T>,
-    options?: FindOptions<T> & {
-      domain?: Domain // Allow to find for Doc's in specified domain only.
-      prefix?: string
-    }
-  ) => Promise<FindResult<T>>
-  searchFulltext: (ctx: MeasureContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
-  tx: (ctx: SessionOperationContext, tx: Tx) => Promise<TxResult>
-  apply: (ctx: SessionOperationContext, tx: Tx[], broadcast: boolean) => Promise<TxResult>
-  close: () => Promise<void>
-  loadModel: (last: Timestamp, hash?: string) => Promise<Tx[] | LoadModelResponse>
+
+export interface Branding {
+  key?: string
+  front?: string
+  title?: string
+  language?: string
+  initWorkspace?: string
+  lastNameFirst?: string
+  protocol?: string
 }
+
+export type BrandingMap = Record<string, Branding>

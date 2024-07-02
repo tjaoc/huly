@@ -14,7 +14,7 @@
 -->
 <script lang="ts">
   import { PersonAccount } from '@hcengineering/contact'
-  import { AccountRole, getCurrentAccount, hasAccountRole } from '@hcengineering/core'
+  import { getCurrentAccount, hasAccountRole } from '@hcengineering/core'
   import { createQuery, isAdminUser } from '@hcengineering/presentation'
   import setting, { SettingsCategory } from '@hcengineering/setting'
   import {
@@ -30,7 +30,6 @@
 
   export let kind: 'navigation' | 'content' | undefined
   export let categoryName: string
-  export let visibleNav: boolean = true
 
   let category: SettingsCategory | undefined
   let categoryId: string = ''
@@ -98,5 +97,5 @@
 {:else if kind === 'content' && !category}
   <div class="hulyComponent" />
 {:else if category}
-  <Component is={category.component} props={{ kind: 'content', visibleNav }} on:change />
+  <Component is={category.component} props={{ kind: 'content' }} on:change />
 {/if}

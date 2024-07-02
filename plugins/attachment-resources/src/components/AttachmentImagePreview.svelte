@@ -13,13 +13,14 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import { getIconSize2x, IconSize } from '@hcengineering/ui'
-  import { getFileUrl } from '@hcengineering/presentation'
   import type { Attachment } from '@hcengineering/attachment'
+  import { getBlobRef, sizeToWidth } from '@hcengineering/presentation'
+  import { IconSize } from '@hcengineering/ui'
 
+  import type { WithLookup } from '@hcengineering/core'
   import { AttachmentImageSize } from '../types'
 
-  export let value: Attachment
+  export let value: WithLookup<Attachment>
   export let size: AttachmentImageSize = 'auto'
 
   interface Dimensions {
@@ -99,22 +100,24 @@
 
     return 'x-large'
   }
+
+  function toStyle (size: 'auto' | number): string {
+    return size === 'auto' ? 'auto' : `${size}px`
+  }
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<img
-  src={getFileUrl(value.file, urlSize)}
-  style:object-fit={getObjectFit(dimensions)}
-  width={dimensions.width}
-  height={dimensions.height}
-  srcset={`${getFileUrl(value.file, urlSize, value.name)} 1x, ${getFileUrl(
-    value.file,
-    getIconSize2x(urlSize),
-    value.name
-  )} 2x`}
-  alt={value.name}
-/>
+<div class="container" style="width:{toStyle(dimensions.width)}; height:{toStyle(dimensions.height)}">
+  {#await getBlobRef(value.$lookup?.file, value.file, value.name, sizeToWidth(urlSize)) then blobSrc}
+    <img
+      src={blobSrc.src}
+      style:object-fit={getObjectFit(dimensions)}
+      width={dimensions.width}
+      height={dimensions.height}
+      srcset={blobSrc.srcset}
+      alt={value.name}
+    />
+  {/await}
+</div>
 
 <style lang="scss">
   img {
@@ -124,5 +127,9 @@
     object-fit: contain;
     min-height: 4rem;
     min-width: 4rem;
+  }
+
+  .container {
+    display: inline-flex;
   }
 </style>

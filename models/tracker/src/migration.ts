@@ -39,17 +39,11 @@ import { DOMAIN_ACTIVITY } from '@hcengineering/model-activity'
 import { DOMAIN_TASK, migrateDefaultStatusesBase } from '@hcengineering/model-task'
 import tags from '@hcengineering/tags'
 import task from '@hcengineering/task'
-import {
-  type IssueStatus,
-  TimeReportDayType,
-  trackerId,
-  type Issue,
-  type Project,
-  classicIssueTaskStatuses
-} from '@hcengineering/tracker'
+import { type IssueStatus, TimeReportDayType, trackerId, type Issue, type Project } from '@hcengineering/tracker'
 
 import tracker from './plugin'
 import contact from '@hcengineering/model-contact'
+import { classicIssueTaskStatuses } from '.'
 
 async function createDefaultProject (tx: TxOperations): Promise<void> {
   const current = await tx.findOne(tracker.class.Project, {
@@ -132,7 +126,7 @@ async function createDefaults (tx: TxOperations): Promise<void> {
   await createOrUpdate(
     tx,
     tags.class.TagCategory,
-    tags.space.Tags,
+    core.space.Workspace,
     {
       icon: tags.icon.Tags,
       label: 'Other',
@@ -432,12 +426,12 @@ export const trackerOperation: MigrateOperation = {
       }
     ])
   },
-  async upgrade (client: MigrationUpgradeClient): Promise<void> {
-    const tx = new TxOperations(client, core.account.System)
-    await tryUpgrade(client, trackerId, [
+  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>): Promise<void> {
+    await tryUpgrade(state, client, trackerId, [
       {
         state: 'create-defaults',
-        func: async () => {
+        func: async (client) => {
+          const tx = new TxOperations(client, core.account.System)
           await createDefaults(tx)
         }
       }

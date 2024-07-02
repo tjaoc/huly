@@ -25,14 +25,14 @@ import core, {
   isFullTextAttribute,
   type MeasureContext,
   type Ref,
-  type ServerStorage,
   type WorkspaceId,
-  getFullTextContext
+  getFullTextContext,
+  type Branding
 } from '@hcengineering/core'
 import { jsonToText, markupToJSON } from '@hcengineering/text'
 import { type DbAdapter } from '../adapter'
 import { updateDocWithPresenter } from '../mapper'
-import { type FullTextAdapter, type IndexedDoc } from '../types'
+import { type FullTextAdapter, type IndexedDoc, type ServerStorage } from '../types'
 import { summaryStageId } from './summary'
 import {
   contentStageId,
@@ -43,6 +43,7 @@ import {
   fullTextPushStageId
 } from './types'
 import { collectPropagate, collectPropagateClasses, docKey, isCustomAttr } from './utils'
+import { Analytics } from '@hcengineering/analytics'
 
 /**
  * @public
@@ -66,7 +67,8 @@ export class FullTextPushStage implements FullTextPipelineStage {
   constructor (
     private readonly dbStorage: ServerStorage,
     readonly fulltextAdapter: FullTextAdapter,
-    readonly workspace: WorkspaceId
+    readonly workspace: WorkspaceId,
+    readonly branding: Branding | null
   ) {}
 
   async initialize (ctx: MeasureContext, storage: DbAdapter, pipeline: FullTextPipeline): Promise<void> {
@@ -77,7 +79,7 @@ export class FullTextPushStage implements FullTextPipelineStage {
         this.dimmVectors[k] = Array.from(Array(v).keys()).map((it) => 0)
       }
     } catch (err: any) {
-      console.error(err)
+      Analytics.handleError(err)
     }
   }
 
@@ -190,11 +192,12 @@ export class FullTextPushStage implements FullTextPipelineStage {
               })
           )
 
-          await updateDocWithPresenter(pipeline.hierarchy, doc, elasticDoc, { parentDoc, spaceDoc })
+          await updateDocWithPresenter(pipeline.hierarchy, doc, elasticDoc, { parentDoc, spaceDoc }, this.branding)
 
           this.checkIntegrity(elasticDoc)
           bulk.push(elasticDoc)
         } catch (err: any) {
+          Analytics.handleError(err)
           const wasError = (doc as any).error !== undefined
 
           await pipeline.update(doc._id, false, { [docKey('error')]: JSON.stringify({ message: err.message, err }) })
@@ -213,7 +216,7 @@ export class FullTextPushStage implements FullTextPipelineStage {
           await pipeline.update(doc._id, true, {})
         }
       } catch (err: any) {
-        console.error(err)
+        Analytics.handleError(err)
       }
     }
   }
@@ -236,7 +239,7 @@ export function createElasticDoc (upd: DocIndexState): IndexedDoc {
     _class: [upd.objectClass, ...(upd.mixins ?? [])],
     modifiedBy: upd.modifiedBy,
     modifiedOn: upd.modifiedOn,
-    space: upd.space,
+    space: [upd.space],
     attachedTo: upd.attachedTo,
     attachedToClass: upd.attachedToClass
   }
@@ -254,7 +257,7 @@ function updateDoc2Elastic (
     if (v == null) {
       continue
     }
-    let { _class, attr, docId, extra } = extractDocKey(k)
+    let { _class, attr, docId, extra, digest } = extractDocKey(k)
     if (attr.length === 0) {
       continue
     }
@@ -288,7 +291,9 @@ function updateDoc2Elastic (
           }
         }
       }
-    } catch (e) {}
+    } catch (err: any) {
+      Analytics.handleError(err)
+    }
 
     docId = docIdOverride ?? docId
     if (docId === undefined) {
@@ -297,7 +302,7 @@ function updateDoc2Elastic (
       }
       continue
     }
-    const docIdAttr = docKey(attr, { _class, extra: extra.filter((it) => it !== 'base64') })
+    const docIdAttr = docKey(attr, { _class, extra: extra.filter((it) => it !== 'base64'), digest })
     if (vv !== null) {
       // Since we replace array of values, we could ignore null
       doc[docIdAttr] =
@@ -316,6 +321,8 @@ function updateDoc2Elastic (
 
   const spaceKey = docKey('space', { _class: core.class.Doc })
   if (doc[spaceKey] !== undefined) {
-    doc.space = doc[spaceKey]
+    const existsingSpace = Array.isArray(doc.space) ? doc.space : [doc.space]
+    const newSpaces = Array.isArray(doc[spaceKey]) ? doc[spaceKey] : [doc[spaceKey]]
+    doc.space = [...existsingSpace, ...newSpaces].filter((it, idx, arr) => arr.indexOf(it) === idx)
   }
 }

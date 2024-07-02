@@ -9,9 +9,13 @@ import core, {
   type MeasureContext,
   type ParamsType,
   type Ref,
-  type TxWorkspaceEvent
+  type TxWorkspaceEvent,
+  type WorkspaceIdWithUrl,
+  type Branding,
+  type BrandingMap
 } from '@hcengineering/core'
 import { type Hash } from 'crypto'
+import fs from 'fs'
 import type { SessionContext } from './types'
 
 /**
@@ -136,7 +140,9 @@ export class SessionContextImpl implements SessionContext {
     readonly userEmail: string,
     readonly sessionId: string,
     readonly admin: boolean | undefined,
-    readonly derived: SessionContext['derived']
+    readonly derived: SessionContext['derived'],
+    readonly workspace: WorkspaceIdWithUrl,
+    readonly branding: Branding | null
   ) {}
 
   with<T>(
@@ -148,7 +154,18 @@ export class SessionContextImpl implements SessionContext {
     return this.ctx.with(
       name,
       params,
-      async (ctx) => await op(new SessionContextImpl(ctx, this.userEmail, this.sessionId, this.admin, this.derived)),
+      async (ctx) =>
+        await op(
+          new SessionContextImpl(
+            ctx,
+            this.userEmail,
+            this.sessionId,
+            this.admin,
+            this.derived,
+            this.workspace,
+            this.branding
+          )
+        ),
       fullParams
     )
   }
@@ -167,4 +184,18 @@ export function createBroadcastEvent (classes: Ref<Class<Doc>>[]): TxWorkspaceEv
     objectSpace: core.space.DerivedTx,
     space: core.space.DerivedTx
   }
+}
+
+export function loadBrandingMap (brandingPath?: string): BrandingMap {
+  let brandings: BrandingMap = {}
+  if (brandingPath !== undefined && brandingPath !== '') {
+    brandings = JSON.parse(fs.readFileSync(brandingPath, 'utf8'))
+
+    for (const [host, value] of Object.entries(brandings)) {
+      const protocol = value.protocol ?? 'https'
+      value.front = `${protocol}://${host}/`
+    }
+  }
+
+  return brandings
 }

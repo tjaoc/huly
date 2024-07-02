@@ -22,7 +22,6 @@ import core, {
   Ref,
   Role,
   RolesAssignment,
-  ServerStorage,
   Space,
   SpaceType,
   Tx,
@@ -37,7 +36,7 @@ import core, {
   TypedSpace
 } from '@hcengineering/core'
 import platform, { PlatformError, Severity, Status } from '@hcengineering/platform'
-import { Middleware, SessionContext, TxMiddlewareResult } from '@hcengineering/server-core'
+import { Middleware, SessionContext, TxMiddlewareResult, type ServerStorage } from '@hcengineering/server-core'
 
 import { BaseMiddleware } from './base'
 import { getUser } from './utils'
@@ -110,7 +109,17 @@ export class SpacePermissionsMiddleware extends BaseMiddleware implements Middle
       space,
       spaceType.targetClass
     ) as unknown as RolesAssignment
-    this.assignmentBySpace[space._id] = asMixin
+
+    const allPossibleRoles = this.storage.modelDb.findAllSync(core.class.Role, {})
+    const requiredValues: Record<string, any> = {}
+    for (const role of allPossibleRoles) {
+      const v = asMixin[role._id]
+      if (v !== undefined) {
+        requiredValues[role._id] = asMixin[role._id]
+      }
+    }
+
+    this.assignmentBySpace[space._id] = requiredValues
 
     await this.setPermissions(space._id, await this.getRoles(spaceType._id), asMixin)
   }
@@ -194,7 +203,17 @@ export class SpacePermissionsMiddleware extends BaseMiddleware implements Middle
     // Note: currently the whole assignment is always included into the mixin update
     // so we can just rebuild the permissions
     const assignment: RolesAssignment = mixinDoc.attributes as RolesAssignment
-    this.assignmentBySpace[spaceId] = assignment
+
+    const allPossibleRoles = this.storage.modelDb.findAllSync(core.class.Role, {})
+    const requiredValues: Record<string, any> = {}
+    for (const role of allPossibleRoles) {
+      const v = assignment[role._id]
+      if (v !== undefined) {
+        requiredValues[role._id] = assignment[role._id]
+      }
+    }
+
+    this.assignmentBySpace[spaceId] = requiredValues
 
     this.permissionsBySpace[tx.objectId] = {}
     await this.setPermissions(spaceId, await this.getRoles(spaceType._id), assignment)

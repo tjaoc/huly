@@ -560,6 +560,17 @@ export interface Blob extends Doc {
 }
 
 /**
+ * For every blob will automatically add a lookup.
+ *
+ * It extends Blob to allow for $lookup operations work as expected.
+ */
+export interface BlobLookup extends Blob {
+  // An URL document could be downloaded from, with ${id} to put blobId into
+  downloadUrl: string
+  downloadUrlExpire?: number
+}
+
+/**
  * @public
  *
  * If defined for class, this class will be enabled for embedding search like openai.
@@ -650,6 +661,7 @@ export interface BaseWorkspaceInfo {
   productId: string
   disabled?: boolean
   version?: Data<Version>
+  branding?: string
 
   workspaceUrl?: string | null // An optional url to the workspace, if not set workspace will be used
   workspaceName?: string // An displayed workspace name

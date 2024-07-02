@@ -387,8 +387,8 @@ export function TypeString (): Type<string> {
 /**
  * @public
  */
-export function TypeAttachment (): Type<string> {
-  return { _class: core.class.TypeAttachment, label: core.string.String }
+export function TypeBlob (): Type<string> {
+  return { _class: core.class.TypeBlob, label: core.string.String }
 }
 
 /**
@@ -466,6 +466,13 @@ export function TypeRef (_class: Ref<Class<Doc>>): RefTo<Doc> {
  */
 export function TypeEnum (of: Ref<Enum>): EnumOf {
   return { _class: core.class.EnumOf, label: core.string.Enum, of }
+}
+
+/**
+ * @public
+ */
+export function TypeFileSize (): Type<number> {
+  return { _class: core.class.TypeFileSize, label: core.string.Size }
 }
 
 /**

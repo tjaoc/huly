@@ -13,13 +13,13 @@
 // limitations under the License.
 -->
 <script lang="ts" context="module">
-  import contact, { AvatarProvider } from '@hcengineering/contact'
-  import { Client, Ref } from '@hcengineering/core'
-  import { getClient } from '@hcengineering/presentation'
+  import contact, { AvatarProvider, getAvatarColorForId, type AvatarInfo } from '@hcengineering/contact'
+  import { Ref, type Data, type WithLookup } from '@hcengineering/core'
+  import { getClient, sizeToWidth } from '@hcengineering/presentation'
 
   const providers = new Map<string, AvatarProvider | null>()
 
-  async function getProvider (client: Client, providerId: Ref<AvatarProvider>): Promise<AvatarProvider | undefined> {
+  async function getProvider (providerId: Ref<AvatarProvider>): Promise<AvatarProvider | undefined> {
     const p = providers.get(providerId)
     if (p !== undefined) {
       return p ?? undefined
@@ -31,7 +31,8 @@
 </script>
 
 <script lang="ts">
-  import { AvatarType, getAvatarProviderId, getFirstName, getLastName } from '@hcengineering/contact'
+  import { getAvatarProviderId, getFirstName, getLastName } from '@hcengineering/contact'
+  import { Account } from '@hcengineering/core'
   import { Asset, getMetadata, getResource } from '@hcengineering/platform'
   import { getBlobURL, reduceCalls } from '@hcengineering/presentation'
   import {
@@ -44,18 +45,16 @@
     themeStore
   } from '@hcengineering/ui'
   import { onMount } from 'svelte'
-  import { Account } from '@hcengineering/core'
-  import AvatarInstance from './AvatarInstance.svelte'
   import { loadUsersStatus, statusByUserStore } from '../utils'
+  import AvatarInstance from './AvatarInstance.svelte'
 
-  export let avatar: string | null | undefined = undefined
+  export let person: Data<WithLookup<AvatarInfo>> | undefined = undefined
   export let name: string | null | undefined = undefined
   export let direct: Blob | undefined = undefined
   export let size: IconSize
   export let icon: Asset | AnySvelteComponent | undefined = undefined
   export let variant: 'circle' | 'roundedRect' | 'none' = 'roundedRect'
   export let borderColor: number | undefined = undefined
-  export let standby: boolean = false
   export let showStatus: boolean = true
   export let account: Ref<Account> | undefined = undefined
 
@@ -63,7 +62,9 @@
     avatarInst.pulse()
   }
 
-  let url: string[] | undefined
+  let url: string | undefined
+  let srcSet: string | undefined
+
   let avatarProvider: AvatarProvider | undefined
   let color: ColorDefinition | undefined = undefined
   let element: HTMLElement
@@ -86,26 +87,28 @@
 
   const update = reduceCalls(async function (
     size: IconSize,
-    avatar?: string | null,
+    avatar?: Data<WithLookup<AvatarInfo>>,
     direct?: Blob,
     name?: string | null
   ) {
+    const width = sizeToWidth(size)
     if (direct !== undefined) {
       const blobURL = await getBlobURL(direct)
-      url = [blobURL]
+      url = blobURL
       avatarProvider = undefined
-    } else if (avatar) {
-      const avatarProviderId = getAvatarProviderId(avatar)
-      avatarProvider = avatarProviderId && (await getProvider(getClient(), avatarProviderId))
+    } else if (avatar != null) {
+      const avatarProviderId = getAvatarProviderId(avatar.avatarType)
+      avatarProvider = avatarProviderId !== undefined ? await getProvider(avatarProviderId) : undefined
 
-      if (!avatarProvider || avatarProvider.type === AvatarType.COLOR) {
+      if (avatarProvider === undefined) {
         url = undefined
-        color = getPlatformAvatarColorByName(avatar.split('://')[1], $themeStore.dark)
-      } else if (avatarProvider?.type === AvatarType.IMAGE) {
-        url = (await getResource(avatarProvider.getUrl))(avatar, size)
+        color = getPlatformAvatarColorByName(
+          avatar.avatarProps?.color ?? getAvatarColorForId(displayName),
+          $themeStore.dark
+        )
       } else {
-        const uri = avatar.split('://')[1]
-        url = (await getResource(avatarProvider.getUrl))(uri, size)
+        const getUrlHandler = await getResource(avatarProvider.getUrl)
+        ;({ url, srcSet, color } = await getUrlHandler(avatar, displayName, width))
       }
     } else if (name != null) {
       color = getPlatformAvatarColorForTextDef(name, $themeStore.dark)
@@ -116,15 +119,13 @@
       avatarProvider = undefined
     }
   })
-  $: void update(size, avatar, direct, name)
-
-  $: srcset = url?.slice(1)?.join(', ')
+  $: void update(size, person, direct, name)
 
   onMount(() => {
     loadUsersStatus()
   })
 
-  $: userStatus = account ? $statusByUserStore.get(account) : undefined
+  $: userStatus = account !== undefined ? $statusByUserStore.get(account) : undefined
 </script>
 
 {#if showStatus && account}
@@ -132,37 +133,29 @@
     <AvatarInstance
       bind:this={avatarInst}
       {url}
-      {srcset}
+      srcset={srcSet}
       {displayName}
       {size}
       {icon}
       {variant}
       {color}
       {bColor}
-      {standby}
       bind:element
       withStatus
     />
-    {#if showStatus && account}
-      <div
-        class="hulyAvatar-statusMarker {size}"
-        class:online={userStatus?.online}
-        class:offline={!userStatus?.online}
-      />
-    {/if}
+    <div class="hulyAvatar-statusMarker {size}" class:online={userStatus?.online} class:offline={!userStatus?.online} />
   </div>
 {:else}
   <AvatarInstance
     bind:this={avatarInst}
     {url}
-    {srcset}
+    srcset={srcSet}
     {displayName}
     {size}
     {icon}
     {variant}
     {color}
     {bColor}
-    {standby}
     bind:element
   />
 {/if}

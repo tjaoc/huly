@@ -49,6 +49,8 @@
   export let hideFooter = false
   export let skipLabel = false
   export let hoverable = true
+  export let pending = false
+  export let stale = false
   export let hoverStyles: 'borderedHover' | 'filledHover' = 'borderedHover'
   export let showDatePreposition = false
   export let type: ActivityMessageViewType = 'default'
@@ -104,6 +106,42 @@
   }
 
   $: isShort = canDisplayShort(type, isSaved)
+
+  function isInside (x: number, y: number, rect: DOMRect): boolean {
+    return x >= rect.left && y >= rect.top && x <= rect.right && y <= rect.bottom
+  }
+
+  function isTextClicked (element: HTMLElement | null, x: number, y: number): boolean {
+    if (element == null) {
+      return false
+    }
+
+    const nodes = element.childNodes
+    const range = document.createRange()
+
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+
+      if (node.nodeType !== Node.TEXT_NODE) continue
+
+      range.selectNodeContents(node)
+
+      if (isInside(x, y, range.getBoundingClientRect())) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function handleContextMenu (event: MouseEvent): void {
+    const showCustomPopup = !isTextClicked(event.target as HTMLElement, event.clientX, event.clientY)
+    if (showCustomPopup) {
+      showMenu(event, { object: message, baseMenuClass: activity.class.ActivityMessage }, () => {
+        isActionsOpened = false
+      })
+      isActionsOpened = true
+    }
+  }
 </script>
 
 {#if !isHidden}
@@ -122,13 +160,9 @@
       class:actionsOpened={isActionsOpened}
       class:borderedHover={hoverStyles === 'borderedHover'}
       class:filledHover={hoverStyles === 'filledHover'}
+      class:stale
       on:click={onClick}
-      on:contextmenu={(evt) => {
-        showMenu(evt, { object: message, baseMenuClass: activity.class.ActivityMessage }, () => {
-          isActionsOpened = false
-        })
-        isActionsOpened = true
-      }}
+      on:contextmenu={handleContextMenu}
     >
       {#if showNotify && !embedded && !isShort}
         <div class="notify" />
@@ -144,7 +178,7 @@
           {#if $$slots.icon}
             <slot name="icon" />
           {:else if person}
-            <Avatar size="medium" avatar={person.avatar} name={person.name} />
+            <Avatar size="medium" {person} name={person.name} />
           {:else}
             <SystemAvatar size="medium" />
           {/if}
@@ -195,7 +229,7 @@
       </div>
 
       {#if withActions && !readonly}
-        <div class="actions" class:opened={isActionsOpened}>
+        <div class="actions" class:pending class:opened={isActionsOpened}>
           <ActivityMessageActions
             message={isReactionMessage(message) ? parentMessage : message}
             {actions}
@@ -212,7 +246,7 @@
 <style lang="scss">
   @keyframes highlight {
     50% {
-      background-color: var(--global-ui-highlight-BackgroundColor);
+      background-color: var(--global-ui-hover-highlight-BackgroundColor);
     }
   }
 
@@ -251,13 +285,15 @@
       top: -0.75rem;
       right: 0.75rem;
 
-      &.opened {
+      &.opened:not(.pending) {
         visibility: visible;
       }
     }
 
     &:hover > .actions {
-      visibility: visible;
+      &:not(.pending) {
+        visibility: visible;
+      }
     }
 
     &:hover > .time {
@@ -292,6 +328,10 @@
           background-color: var(--global-ui-BackgroundColor);
         }
       }
+    }
+
+    &.stale {
+      opacity: 0.5;
     }
   }
 

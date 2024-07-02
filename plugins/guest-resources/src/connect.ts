@@ -10,11 +10,13 @@ import core, {
 } from '@hcengineering/core'
 import login, { loginId } from '@hcengineering/login'
 import { getMetadata, getResource, setMetadata } from '@hcengineering/platform'
-import presentation, { closeClient, refreshClient, setClient } from '@hcengineering/presentation'
+import presentation, { closeClient, refreshClient, setClient, setPresentationCookie } from '@hcengineering/presentation'
+import { getCurrentWorkspaceUrl } from '@hcengineering/presentation/src/utils'
 import { fetchMetadataLocalStorage, getCurrentLocation, navigate, setMetadataLocalStorage } from '@hcengineering/ui'
 import { writable } from 'svelte/store'
 
 export const versionError = writable<string | undefined>(undefined)
+const versionStorageKey = 'last_server_version'
 
 let _token: string | undefined
 let _client: AccountClient | undefined
@@ -31,8 +33,8 @@ export async function connect (title: string): Promise<Client | undefined> {
     return
   }
   setMetadata(presentation.metadata.Token, token)
-  document.cookie =
-    encodeURIComponent(presentation.metadata.Token.replaceAll(':', '-')) + '=' + encodeURIComponent(token) + '; path=/'
+
+  setPresentationCookie(token, getCurrentWorkspaceUrl())
 
   const getEndpoint = await getResource(login.function.GetEndpoint)
   const endpoint = await getEndpoint()
@@ -93,7 +95,7 @@ export async function connect (title: string): Promise<Client | undefined> {
 
             if (currentVersionStr !== reconnectVersionStr) {
               // It seems upgrade happened
-              // location.reload()
+              location.reload()
               versionError.set(`${currentVersionStr} != ${reconnectVersionStr}`)
             }
             const serverVersion: { version: string } = await (
@@ -102,6 +104,14 @@ export async function connect (title: string): Promise<Client | undefined> {
 
             console.log('Server version', serverVersion.version)
             if (serverVersion.version !== '' && serverVersion.version !== currentVersionStr) {
+              if (typeof sessionStorage !== 'undefined') {
+                if (sessionStorage.getItem(versionStorageKey) !== serverVersion.version) {
+                  sessionStorage.setItem(versionStorageKey, serverVersion.version)
+                  location.reload()
+                }
+              } else {
+                location.reload()
+              }
               versionError.set(`${currentVersionStr} => ${serverVersion.version}`)
             }
           }
@@ -183,8 +193,7 @@ function clearMetadata (ws: string): void {
   }
   setMetadata(presentation.metadata.Token, null)
   setMetadataLocalStorage(login.metadata.LastToken, null)
-  document.cookie =
-    encodeURIComponent(presentation.metadata.Token.replaceAll(':', '-')) + '=' + encodeURIComponent('') + '; path=/'
+  setPresentationCookie('', getCurrentWorkspaceUrl())
   setMetadataLocalStorage(login.metadata.LoginEndpoint, null)
   setMetadataLocalStorage(login.metadata.LoginEmail, null)
   void closeClient()

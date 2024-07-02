@@ -26,13 +26,12 @@ import core, {
   isFullTextAttribute,
   type MeasureContext,
   type Ref,
-  type ServerStorage,
   getFullTextContext
 } from '@hcengineering/core'
 import { translate } from '@hcengineering/platform'
 import { jsonToText, markupToJSON } from '@hcengineering/text'
 import { type DbAdapter } from '../adapter'
-import { type IndexedDoc } from '../types'
+import { type IndexedDoc, type ServerStorage } from '../types'
 import {
   contentStageId,
   type DocUpdateHandler,
@@ -41,6 +40,7 @@ import {
   type FullTextPipelineStage
 } from './types'
 import { collectPropagate, collectPropagateClasses, isCustomAttr, loadIndexStageStage } from './utils'
+import { Analytics } from '@hcengineering/analytics'
 
 /**
  * @public
@@ -291,7 +291,7 @@ export async function extractIndexedValues (
       if (!isFullTextAttribute(keyAttr)) {
         continue
       }
-      if (keyAttr.type._class === core.class.TypeAttachment && extra.length === 0) {
+      if (keyAttr.type._class === core.class.TypeBlob && extra.length === 0) {
         // Skip attachment id values.
         continue
       }
@@ -310,7 +310,7 @@ export async function extractIndexedValues (
         currentReplacement[attr] = repl
       }
     } catch (err: any) {
-      console.log(err)
+      Analytics.handleError(err)
     }
   }
   let embeddingText = ''
