@@ -24,6 +24,7 @@
   import { getClient } from '@hcengineering/presentation'
   import { Action, Icon, Label } from '@hcengineering/ui'
   import { getActions, restrictionStore, showMenu } from '@hcengineering/view-resources'
+  import { Asset } from '@hcengineering/platform'
 
   import ReactionsPresenter from '../reactions/ReactionsPresenter.svelte'
   import ActivityMessagePresenter from './ActivityMessagePresenter.svelte'
@@ -55,6 +56,8 @@
   export let showDatePreposition = false
   export let type: ActivityMessageViewType = 'default'
   export let onClick: (() => void) | undefined = undefined
+
+  export let socialIcon: Asset | undefined = undefined
 
   const client = getClient()
 
@@ -174,7 +177,7 @@
           <MessageTimestamp date={message.createdOn ?? message.modifiedOn} shortTime />
         </span>
       {:else}
-        <div class="min-w-6 mt-1 relative">
+        <div class="avatar mt-1 relative flex-no-shrink">
           {#if $$slots.icon}
             <slot name="icon" />
           {:else if person}
@@ -185,6 +188,11 @@
           {#if isSaved}
             <div class="saveMarker">
               <Icon icon={activity.icon.BookmarkFilled} size="xx-small" />
+            </div>
+          {/if}
+          {#if socialIcon}
+            <div class="socialIcon">
+              <Icon icon={socialIcon} size="x-small" />
             </div>
           {/if}
         </div>
@@ -304,6 +312,7 @@
       display: flex;
       justify-content: end;
       width: 2.5rem;
+      min-width: 2.5rem;
       visibility: hidden;
       margin-top: 0.125rem;
     }
@@ -333,6 +342,11 @@
     &.stale {
       opacity: 0.5;
     }
+  }
+
+  .avatar {
+    width: 2.5rem;
+    height: 2.5rem;
   }
 
   .header {
@@ -389,5 +403,21 @@
     height: max-content;
     flex-shrink: 1;
     padding: 0;
+  }
+
+  .socialIcon {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: var(--spacing-1);
+    border-radius: 50%;
+    background: var(--theme-bg-color);
+    border: 1px solid var(--global-ui-BorderColor);
+    bottom: -0.375rem;
+    right: -0.375rem;
+    color: var(--content-color);
   }
 </style>

@@ -1,14 +1,15 @@
 import { type Account, changeEmail, getAccount, listWorkspacesPure, type Workspace } from '@hcengineering/account'
-import core, { type MeasureContext, TxOperations } from '@hcengineering/core'
+import core, { getWorkspaceId, type MeasureContext, systemAccountEmail, TxOperations } from '@hcengineering/core'
 import contact from '@hcengineering/model-contact'
+import { getTransactorEndpoint } from '@hcengineering/server-client'
+import { generateToken } from '@hcengineering/server-token'
 import { connect } from '@hcengineering/server-tool'
 import { type Db } from 'mongodb'
 
 export async function renameAccount (
   ctx: MeasureContext,
   db: Db,
-  productId: string,
-  transactorUrl: string,
+  accountsUrl: string,
   oldEmail: string,
   newEmail: string
 ): Promise<void> {
@@ -24,13 +25,12 @@ export async function renameAccount (
 
   await changeEmail(ctx, db, account, newEmail)
 
-  await fixWorkspaceEmails(account, db, productId, transactorUrl, oldEmail, newEmail)
+  await fixWorkspaceEmails(account, db, accountsUrl, oldEmail, newEmail)
 }
 
 export async function fixAccountEmails (
   ctx: MeasureContext,
   db: Db,
-  productId: string,
   transactorUrl: string,
   oldEmail: string,
   newEmail: string
@@ -40,27 +40,29 @@ export async function fixAccountEmails (
     throw new Error("Account does'n exists")
   }
 
-  await fixWorkspaceEmails(account, db, productId, transactorUrl, oldEmail, newEmail)
+  await fixWorkspaceEmails(account, db, transactorUrl, oldEmail, newEmail)
 }
 async function fixWorkspaceEmails (
   account: Account,
   db: Db,
-  productId: string,
-  transactorUrl: string,
+  accountsUrl: string,
   oldEmail: string,
   newEmail: string
 ): Promise<void> {
   const accountWorkspaces = account.workspaces.map((it) => it.toString())
   // We need to update all workspaces
-  const workspaces = await listWorkspacesPure(db, productId)
+  const workspaces = await listWorkspacesPure(db)
   for (const ws of workspaces) {
     if (!accountWorkspaces.includes(ws._id.toString())) {
       continue
     }
     console.log('checking workspace', ws.workspaceName, ws.workspace)
 
+    const wsid = getWorkspaceId(ws.workspace)
+    const endpoint = await getTransactorEndpoint(generateToken(systemAccountEmail, wsid))
+
     // Let's connect and update account information.
-    await fixEmailInWorkspace(transactorUrl, ws, oldEmail, newEmail)
+    await fixEmailInWorkspace(endpoint, ws, oldEmail, newEmail)
   }
 }
 
@@ -70,7 +72,7 @@ async function fixEmailInWorkspace (
   oldEmail: string,
   newEmail: string
 ): Promise<void> {
-  const connection = await connect(transactorUrl, { name: ws.workspace, productId: ws.productId }, undefined, {
+  const connection = await connect(transactorUrl, { name: ws.workspace }, undefined, {
     mode: 'backup',
     model: 'upgrade', // Required for force all clients reload after operation will be complete.
     admin: 'true'

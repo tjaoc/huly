@@ -13,30 +13,29 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import core, { type Blob, type Ref } from '@hcengineering/core'
+  import { type Blob, type Ref } from '@hcengineering/core'
   import { getEmbeddedLabel } from '@hcengineering/platform'
   import { Button, Dialog, tooltip } from '@hcengineering/ui'
   import { createEventDispatcher, onMount } from 'svelte'
 
   import presentation from '../plugin'
 
+  import { getFileUrl } from '../file'
   import { BlobMetadata } from '../types'
-  import { getClient } from '../utils'
-  import { getBlobSrcFor } from '../preview'
 
   import ActionContext from './ActionContext.svelte'
   import FilePreview from './FilePreview.svelte'
   import Download from './icons/Download.svelte'
 
-  export let file: Blob | Ref<Blob> | undefined
+  export let file: Ref<Blob> | undefined
   export let name: string
+  export let contentType: string
   export let metadata: BlobMetadata | undefined
   export let props: Record<string, any> = {}
 
   export let fullSize = false
   export let showIcon = true
 
-  const client = getClient()
   const dispatch = createEventDispatcher()
 
   let download: HTMLAnchorElement
@@ -53,14 +52,7 @@
     return ext.substring(0, 4).toUpperCase()
   }
 
-  let blob: Blob | undefined = undefined
-  $: void fetchBlob(file)
-
-  async function fetchBlob (file: Blob | Ref<Blob> | undefined): Promise<void> {
-    blob = typeof file === 'string' ? await client.findOne(core.class.Blob, { _id: file }) : file
-  }
-
-  $: srcRef = getBlobSrcFor(blob, name)
+  $: srcRef = file !== undefined ? getFileUrl(file, name) : undefined
 </script>
 
 <ActionContext context={{ mode: 'browser' }} />
@@ -101,8 +93,8 @@
     {/await}
   </svelte:fragment>
 
-  {#if blob !== undefined}
-    <FilePreview file={blob} {name} {metadata} {props} fit />
+  {#if file}
+    <FilePreview {file} {contentType} {name} {metadata} {props} fit />
   {/if}
 </Dialog>
 

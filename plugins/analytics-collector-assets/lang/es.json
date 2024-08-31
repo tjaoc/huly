@@ -1,0 +1,20 @@
+{
+  "string": {
+    "OnboardingChannelDescription": "User: {user}; Workspace: {workspace}",
+    "Error": "Error: ",
+    "InProject": " in project ",
+    "NavigateToSpecial": "{app}: open {special}",
+    "OpenSpecial": "open {special} ",
+    "Set": "Set ",
+    "To": " to ",
+    "Open": "open ",
+    "Workbench": "Workbench: ",
+    "OnboardingChannel": "Canal de incorporación",
+    "OnboardingChannels": "Canales de incorporación",
+    "WorkspaceId": "Workspace id",
+    "WorkspaceName": "Workspace name",
+    "WorkspaceUrl": "Workspace url",
+    "Email": "Email",
+    "UserName": "User name"
+  }
+}

@@ -109,7 +109,7 @@
         doneOn: null,
         workslots: { $gt: 0 }
       }
-    } else if (mode === 'all') {
+    } else if (mode === 'all' || mode === 'date') {
       inboxQ = {
         doneOn: null,
         workslots: 0,
@@ -281,10 +281,16 @@
   const getDateStr = (date: Date): string => {
     return date.toLocaleDateString('default', { month: 'long', day: 'numeric', year: 'numeric' })
   }
+  $: filteredGroups = groups.filter(
+    (gr) =>
+      (mode === 'unplanned' && gr[0] === time.string.Unplanned) ||
+      (mode === 'planned' && (gr[0] === time.string.ToDos || gr[0] === time.string.Scheduled)) ||
+      (mode !== 'unplanned' && mode !== 'planned')
+  )
 </script>
 
 <div class="toDos-container">
-  <Header type={'type-panel'} hideSeparator>
+  <Header type={'type-panel'} hideSeparator adaptive={'disabled'}>
     <ButtonIcon
       icon={$deviceInfo.navigator.visible ? MenuClose : MenuOpen}
       kind={'tertiary'}
@@ -293,7 +299,6 @@
       on:click={togglePlannerNav}
     />
     <div class="heading-bold-20 ml-4">
-      <Label label={time.string.ToDoColon} />
       {#if mode === 'date'}
         {getDateStr(currentDate)}
       {:else}
@@ -311,12 +316,12 @@
   </Header>
   <CreateToDo fullSize />
 
-  <Scroller fade={groups.length > 1 ? todosSP : defaultSP} noStretch>
-    {#each groups as group}
+  <Scroller fade={filteredGroups.length > 1 ? todosSP : defaultSP} noStretch>
+    {#each filteredGroups as group}
       <ToDoGroup
         todos={group[1]}
         title={group[0]}
-        showTitle={groups.length > 1}
+        showTitle
         showDuration={group[0] !== time.string.Unplanned}
         {mode}
         {projects}

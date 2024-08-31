@@ -250,9 +250,8 @@ export class SpacePermissionsMiddleware extends BaseMiddleware implements Middle
       return
     }
 
-    const h = this.storage.hierarchy
     const actualTx = TxProcessor.extractTx(tx)
-    if (!h.isDerived(actualTx._class, core.class.TxCUD)) {
+    if (!TxProcessor.isExtendsCUD(actualTx._class)) {
       return
     }
 
@@ -322,8 +321,7 @@ export class SpacePermissionsMiddleware extends BaseMiddleware implements Middle
   }
 
   private async processPermissionsUpdatesFromTx (ctx: SessionContext, tx: Tx): Promise<void> {
-    const h = this.storage.hierarchy
-    if (!h.isDerived(tx._class, core.class.TxCUD)) {
+    if (!TxProcessor.isExtendsCUD(tx._class)) {
       return
     }
 
@@ -335,10 +333,8 @@ export class SpacePermissionsMiddleware extends BaseMiddleware implements Middle
     await this.processPermissionsUpdatesFromTx(ctx, tx)
     await this.checkPermissions(ctx, tx)
     const res = await this.provideTx(ctx, tx)
-    for (const txd of ctx.derived) {
-      for (const tx of txd.derived) {
-        await this.processPermissionsUpdatesFromTx(ctx, tx)
-      }
+    for (const txd of ctx.derived.txes) {
+      await this.processPermissionsUpdatesFromTx(ctx, txd)
     }
     return res
   }
@@ -347,7 +343,9 @@ export class SpacePermissionsMiddleware extends BaseMiddleware implements Middle
     if (tx._class === core.class.TxApplyIf) {
       const applyTx = tx as TxApplyIf
 
-      await Promise.all(applyTx.txes.map((t) => this.checkPermissions(ctx, t)))
+      for (const t of applyTx.txes) {
+        await this.checkPermissions(ctx, t)
+      }
       return
     }
 

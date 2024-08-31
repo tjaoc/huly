@@ -13,23 +13,19 @@
 // limitations under the License.
 //
 
-import { CopyObjectCommand, GetObjectCommand, PutObjectCommand, S3 } from '@aws-sdk/client-s3'
+import { CopyObjectCommand, PutObjectCommand, S3 } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import core, {
   toWorkspaceString,
   withContext,
   type Blob,
-  type BlobLookup,
-  type Branding,
   type MeasureContext,
   type Ref,
-  type WorkspaceId,
-  type WorkspaceIdWithUrl
+  type WorkspaceId
 } from '@hcengineering/core'
-
-import {
+import { getMetadata } from '@hcengineering/platform'
+import serverCore, {
   type BlobStorageIterator,
   type ListBlobResult,
   type StorageAdapter,
@@ -39,7 +35,7 @@ import {
 } from '@hcengineering/server-core'
 import { Readable } from 'stream'
 
-import { removeAllObjects, type BlobLookupResult, type BucketInfo } from '@hcengineering/storage'
+import { removeAllObjects, type BucketInfo } from '@hcengineering/storage'
 import type { ReadableStream } from 'stream/web'
 
 export interface S3Config extends StorageConfig {
@@ -67,7 +63,6 @@ export class S3Service implements StorageAdapter {
   static config = 's3'
   expireTime: number
   client: S3
-  contentTypes?: string[]
   constructor (readonly opt: S3Config) {
     this.client = new S3({
       endpoint: opt.endpoint,
@@ -79,59 +74,19 @@ export class S3Service implements StorageAdapter {
     })
 
     this.expireTime = parseInt(this.opt.expireTime ?? '168') * 3600 // use 7 * 24 - hours as default value for expireF
-    this.contentTypes = opt.contentTypes
   }
 
   async initialize (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {}
-
-  async lookup (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceIdWithUrl,
-    branding: Branding | null,
-    docs: Blob[]
-  ): Promise<BlobLookupResult> {
-    const result: BlobLookupResult = {
-      lookups: [],
-      updates: new Map()
-    }
-    const now = Date.now()
-    for (const d of docs) {
-      // Let's add current from URI for previews.
-      const bl = d as BlobLookup
-      const command = new GetObjectCommand({
-        Bucket: this.getBucketId(workspaceId),
-        Key: this.getDocumentKey(workspaceId, d.storageId),
-        ResponseCacheControl: 'max-age=9d'
-      })
-      if (
-        (bl.downloadUrl === undefined || (bl.downloadUrlExpire ?? 0) < now) &&
-        (this.opt.allowPresign ?? 'true') === 'true'
-      ) {
-        bl.downloadUrl = await getSignedUrl(this.client, command, {
-          expiresIn: this.expireTime
-        })
-        bl.downloadUrlExpire = now + this.expireTime * 1000
-        result.updates?.set(bl._id, {
-          downloadUrl: bl.downloadUrl,
-          downloadUrlExpire: bl.downloadUrlExpire
-        })
-      }
-
-      result.lookups.push(bl)
-    }
-    // this.client.presignedUrl(httpMethod, bucketName, objectName, callback)
-    return result
-  }
 
   /**
    * @public
    */
   getBucketId (workspaceId: WorkspaceId): string {
-    return this.opt.rootBucket ?? (this.opt.bucketPrefix ?? '') + toWorkspaceString(workspaceId, '.')
+    return this.opt.rootBucket ?? (this.opt.bucketPrefix ?? '') + toWorkspaceString(workspaceId)
   }
 
   getBucketFolder (workspaceId: WorkspaceId): string {
-    return toWorkspaceString(workspaceId, '.')
+    return toWorkspaceString(workspaceId)
   }
 
   async close (): Promise<void> {}
@@ -166,7 +121,7 @@ export class S3Service implements StorageAdapter {
     }
   }
 
-  async listBuckets (ctx: MeasureContext, productId: string): Promise<BucketInfo[]> {
+  async listBuckets (ctx: MeasureContext): Promise<BucketInfo[]> {
     try {
       if (this.opt.rootBucket !== undefined) {
         const info = new Map<string, BucketInfo>()
@@ -185,9 +140,9 @@ export class S3Service implements StorageAdapter {
               info.set(wsName, {
                 name: wsName,
                 delete: async () => {
-                  await this.delete(ctx, { name: wsName, productId })
+                  await this.delete(ctx, { name: wsName })
                 },
-                list: async () => await this.listStream(ctx, { name: wsName, productId })
+                list: async () => await this.listStream(ctx, { name: wsName })
               })
             }
           }
@@ -200,8 +155,7 @@ export class S3Service implements StorageAdapter {
         return Array.from(info.values())
       } else {
         const productPostfix = this.getBucketFolder({
-          name: '',
-          productId
+          name: ''
         })
         const buckets = await this.client.listBuckets()
         return (buckets.Buckets ?? [])
@@ -212,9 +166,9 @@ export class S3Service implements StorageAdapter {
             return {
               name,
               delete: async () => {
-                await this.delete(ctx, { name, productId })
+                await this.delete(ctx, { name })
               },
-              list: async () => await this.listStream(ctx, { name, productId })
+              list: async () => await this.listStream(ctx, { name })
             }
           })
       }
@@ -478,6 +432,12 @@ export class S3Service implements StorageAdapter {
     const range = length !== undefined ? `bytes=${offset}-${offset + length}` : `bytes=${offset}-`
     return await this.doGet(ctx, workspaceId, objectName, range)
   }
+
+  @withContext('getUrl')
+  async getUrl (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<string> {
+    const filesUrl = getMetadata(serverCore.metadata.FilesUrl) ?? ''
+    return filesUrl.replaceAll(':workspace', workspaceId.name).replaceAll(':blobId', objectName)
+  }
 }
 
 export function processConfigFromEnv (storageConfig: StorageConfiguration): string | undefined {
@@ -495,7 +455,7 @@ export function processConfigFromEnv (storageConfig: StorageConfiguration): stri
     return 'S3_SECRET_KEY'
   }
 
-  const minioConfig: S3Config = {
+  const config: S3Config = {
     kind: 's3',
     name: 's3',
     region: 'auto',
@@ -503,6 +463,6 @@ export function processConfigFromEnv (storageConfig: StorageConfiguration): stri
     accessKey,
     secretKey
   }
-  storageConfig.storages.push(minioConfig)
+  storageConfig.storages.push(config)
   storageConfig.default = 's3'
 }

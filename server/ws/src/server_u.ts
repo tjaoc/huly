@@ -20,21 +20,18 @@ import { generateId, toWorkspaceString, type MeasureContext } from '@hcengineeri
 import { decodeToken } from '@hcengineering/server-token'
 
 import { Analytics } from '@hcengineering/analytics'
-import { serialize } from '@hcengineering/rpc'
+import { RPCHandler } from '@hcengineering/rpc'
 import { getStatistics, wipeStatistics } from './stats'
-import {
-  LOGGING_ENABLED,
-  type ConnectionSocket,
-  type HandleRequestFunction,
-  type PipelineFactory,
-  type SessionManager
-} from './types'
+import { LOGGING_ENABLED, type ConnectionSocket, type HandleRequestFunction, type SessionManager } from './types'
 
-import type { StorageAdapter } from '@hcengineering/server-core'
+import { type PipelineFactory, type StorageAdapter } from '@hcengineering/server-core'
 import uWebSockets, { DISABLED, SHARED_COMPRESSOR, type HttpResponse, type WebSocket } from '@hcengineering/uws'
 import { Readable } from 'stream'
 import { getFile, getFileRange, type BlobResponse } from './blobs'
 import { doSessionOp, processRequest, type WebsocketData } from './utils'
+import { unknownStatus } from '@hcengineering/platform'
+
+const rpcHandler = new RPCHandler()
 
 interface WebsocketUserData extends WebsocketData {
   backPressure?: Promise<void>
@@ -52,7 +49,6 @@ export function startUWebsocketServer (
   ctx: MeasureContext,
   pipelineFactory: PipelineFactory,
   port: number,
-  productId: string,
   enableCompression: boolean,
   accountsUrl: string,
   externalStorage: StorageAdapter
@@ -84,10 +80,6 @@ export function startUWebsocketServer (
 
       try {
         const payload = decodeToken(token ?? '')
-
-        if (payload.workspace.productId !== productId) {
-          throw new Error('Invalid workspace product')
-        }
 
         /* You MUST copy data out of req here, as req is only valid within this immediate callback */
         const url = req.getUrl()
@@ -135,7 +127,6 @@ export function startUWebsocketServer (
         ws.getUserData().payload,
         ws.getUserData().token,
         pipelineFactory,
-        productId,
         undefined,
         accountsUrl
       )
@@ -143,13 +134,22 @@ export function startUWebsocketServer (
       if (data.session instanceof Promise) {
         void data.session.then((s) => {
           if ('error' in s) {
-            ctx.error('error', { error: s.error?.message, stack: s.error?.stack })
+            void cs
+              .send(ctx, { id: -1, error: unknownStatus(s.error.message ?? 'Unknown error') }, false, false)
+              .then(() => {
+                // No connection to account service, retry from client.
+                setTimeout(() => {
+                  cs.close()
+                }, 1000)
+              })
           }
           if ('upgrade' in s) {
             void cs
               .send(ctx, { id: -1, result: { state: 'upgrading', stats: (s as any).upgradeInfo } }, false, false)
               .then(() => {
-                cs.close()
+                setTimeout(() => {
+                  cs.close()
+                }, 5000)
               })
           }
         })
@@ -157,23 +157,28 @@ export function startUWebsocketServer (
     },
     message: (ws, message, isBinary) => {
       const data = ws.getUserData()
-      const msg = Buffer.copyBytesFrom(Buffer.from(message))
+      const msg = Buffer.from(message)
 
-      doSessionOp(data, (s) => {
-        processRequest(
-          s.session,
-          data.connectionSocket as ConnectionSocket,
-          s.context,
-          s.workspaceId,
-          msg,
-          handleRequest
-        )
-      })
+      doSessionOp(
+        data,
+        (s, msg) => {
+          processRequest(
+            s.session,
+            data.connectionSocket as ConnectionSocket,
+            s.context,
+            s.workspaceId,
+            msg,
+            handleRequest
+          )
+        },
+        msg
+      )
     },
     drain: (ws) => {
       const data = ws.getUserData()
       while (data.unsendMsg.length > 0) {
-        if (ws.send(data.unsendMsg[0].data, data.unsendMsg[0].binary, data.unsendMsg[0].compression) !== 1) {
+        const sendResult = ws.send(data.unsendMsg[0].data, data.unsendMsg[0].binary, data.unsendMsg[0].compression)
+        if (sendResult !== 2) {
           ctx.measure('send-data', data.unsendMsg[0].data.length)
           data.unsendMsg.shift()
 
@@ -185,19 +190,25 @@ export function startUWebsocketServer (
           return
         }
       }
+      data.backPressureResolve?.()
+      data.backPressure = undefined
     },
     close: (ws, code, message) => {
       const data = ws.getUserData()
-      doSessionOp(data, (s) => {
-        if (!(s.session.workspaceClosed ?? false)) {
-          // remove session after 1seconds, give a time to reconnect.
-          void sessions.close(
-            ctx,
-            data.connectionSocket as ConnectionSocket,
-            toWorkspaceString(data.payload.workspace)
-          )
-        }
-      })
+      doSessionOp(
+        data,
+        (s) => {
+          if (!(s.session.workspaceClosed ?? false)) {
+            // remove session after 1seconds, give a time to reconnect.
+            void sessions.close(
+              ctx,
+              data.connectionSocket as ConnectionSocket,
+              toWorkspaceString(data.payload.workspace)
+            )
+          }
+        },
+        Buffer.from('')
+      )
     }
   })
     .any('/api/v1/statistics', (response, request) => {
@@ -359,7 +370,14 @@ export function startUWebsocketServer (
   }
 }
 function createWebSocketClientSocket (
-  wrData: { remoteAddress: ArrayBuffer, userAgent: string, language: string, email: string, mode: any, model: any },
+  wrData: {
+    remoteAddress: ArrayBuffer
+    userAgent: string
+    language: string
+    email: string
+    mode: any
+    model: any
+  },
   ws: uWebSockets.WebSocket<WebsocketUserData>,
   data: WebsocketUserData
 ): ConnectionSocket {
@@ -375,9 +393,14 @@ function createWebSocketClientSocket (
         // Ignore closed
       }
     },
+    readRequest: (buffer: Buffer, binary: boolean) => {
+      return rpcHandler.readRequest(buffer, binary)
+    },
     send: async (ctx, msg, binary, compression): Promise<number> => {
-      await data.backPressure
-      const serialized = serialize(msg, binary)
+      if (data.backPressure !== undefined) {
+        await data.backPressure
+      }
+      const serialized = rpcHandler.serialize(msg, binary)
       try {
         const sendR = ws.send(serialized, binary, compression)
         if (sendR === 2) {

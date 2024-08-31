@@ -12,32 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import notification, { type DocNotifyContext } from '@hcengineering/notification'
-import {
+import attachment, { type SavedAttachments } from '@hcengineering/attachment'
+import { type DirectMessage } from '@hcengineering/chunter'
+import contact, { type PersonAccount } from '@hcengineering/contact'
+import core, {
+  type Account,
+  AccountRole,
   generateId,
+  getCurrentAccount,
+  hasAccountRole,
+  type IdMap,
   type Ref,
   SortingOrder,
-  type WithLookup,
-  hasAccountRole,
-  getCurrentAccount,
-  AccountRole,
-  type IdMap,
-  type Account,
-  type UserStatus
+  type UserStatus,
+  type WithLookup
 } from '@hcengineering/core'
+import notification, { type DocNotifyContext } from '@hcengineering/notification'
+import { InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
 import { createQuery, getClient, MessageBox } from '@hcengineering/presentation'
-import { get, writable } from 'svelte/store'
+import { type Action, showPopup } from '@hcengineering/ui'
 import view from '@hcengineering/view'
 import workbench, { type SpecialNavModel } from '@hcengineering/workbench'
-import attachment, { type SavedAttachments } from '@hcengineering/attachment'
-import activity from '@hcengineering/activity'
-import { InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
-import { type Action, showPopup } from '@hcengineering/ui'
-import contact, { type PersonAccount } from '@hcengineering/contact'
-import { type DirectMessage } from '@hcengineering/chunter'
+import { get, writable } from 'svelte/store'
 
-import { type ChatNavGroupModel, type ChatNavItemModel, type SortFnOptions } from './types'
 import chunter from '../../plugin'
+import { type ChatNavGroupModel, type ChatNavItemModel, type SortFnOptions } from './types'
 
 const navigatorStateStorageKey = 'chunter.navigatorState'
 
@@ -84,24 +83,25 @@ export const chatSpecials: SpecialNavModel[] = [
   {
     id: 'saved',
     label: chunter.string.Saved,
-    icon: activity.icon.Bookmark,
+    icon: chunter.icon.Bookmarks,
     position: 'top',
     component: chunter.component.SavedMessages
   },
   {
     id: 'chunterBrowser',
     label: chunter.string.ChunterBrowser,
-    icon: view.icon.Database,
+    icon: chunter.icon.ChunterBrowser,
     component: chunter.component.ChunterBrowser,
     position: 'top'
   },
   {
     id: 'channels',
     label: chunter.string.Channels,
-    icon: view.icon.List,
+    icon: chunter.icon.ChannelBrowser,
     component: workbench.component.SpecialView,
     componentProps: {
       _class: chunter.class.Channel,
+      icon: chunter.icon.ChannelBrowser,
       label: chunter.string.Channels,
       createLabel: chunter.string.CreateChannel,
       createComponent: chunter.component.CreateChannel
@@ -139,29 +139,23 @@ export const chatNavGroupModels: ChatNavGroupModel[] = [
     sortFn: sortAlphabetically,
     wrap: false,
     getActionsFn: getPinnedActions,
-    query: {
-      isPinned: true
-    }
+    isPinned: true
   },
   {
     id: 'channels',
     sortFn: sortAlphabetically,
     wrap: true,
     getActionsFn: getChannelsActions,
-    query: {
-      isPinned: { $ne: true },
-      attachedToClass: { $in: [chunter.class.Channel] }
-    }
+    isPinned: false,
+    _class: chunter.class.Channel
   },
   {
     id: 'direct',
     sortFn: sortDirects,
     wrap: true,
     getActionsFn: getDirectActions,
-    query: {
-      isPinned: { $ne: true },
-      attachedToClass: { $in: [chunter.class.DirectMessage] }
-    }
+    isPinned: false,
+    _class: chunter.class.DirectMessage
   },
   {
     id: 'activity',
@@ -169,13 +163,8 @@ export const chatNavGroupModels: ChatNavGroupModel[] = [
     wrap: true,
     getActionsFn: getActivityActions,
     maxSectionItems: 5,
-    query: {
-      isPinned: { $ne: true },
-      attachedToClass: {
-        // Ignore external channels until support is provided for them
-        $nin: [chunter.class.DirectMessage, chunter.class.Channel, contact.class.Channel]
-      }
-    }
+    isPinned: false,
+    skipClasses: [chunter.class.DirectMessage, chunter.class.Channel, contact.class.Channel]
   }
 ]
 
@@ -262,7 +251,7 @@ function sortDirects (items: ChatNavItemModel[], option: SortFnOptions): ChatNav
 
 function sortActivityChannels (items: ChatNavItemModel[], option: SortFnOptions): ChatNavItemModel[] {
   const { contexts } = option
-  const contextByDoc = new Map(contexts.map((context) => [context.attachedTo, context]))
+  const contextByDoc = new Map(contexts.map((context) => [context.objectId, context]))
 
   return items.sort((i1, i2) => {
     const context1 = contextByDoc.get(i1.id)
@@ -304,8 +293,7 @@ function getPinnedActions (contexts: DocNotifyContext[]): Action[] {
 }
 
 async function unpinAllChannels (contexts: DocNotifyContext[]): Promise<void> {
-  const doneOp = await getClient().measure('unpinAllChannels')
-  const ops = getClient().apply(generateId())
+  const ops = getClient().apply(generateId(), 'unpinAllChannels')
 
   try {
     for (const context of contexts) {
@@ -313,7 +301,6 @@ async function unpinAllChannels (contexts: DocNotifyContext[]): Promise<void> {
     }
   } finally {
     await ops.commit()
-    await doneOp()
   }
 }
 
@@ -355,8 +342,8 @@ function getActivityActions (contexts: DocNotifyContext[]): Action[] {
       }
     },
     {
-      icon: view.icon.CheckCircle,
-      label: notification.string.ArchiveAll,
+      icon: view.icon.EyeCrossed,
+      label: view.string.Hide,
       action: async () => {
         archiveActivityChannels(contexts)
       }
@@ -369,14 +356,12 @@ function archiveActivityChannels (contexts: DocNotifyContext[]): void {
     MessageBox,
     {
       label: chunter.string.ArchiveActivityConfirmationTitle,
-      message: chunter.string.ArchiveActivityConfirmationMessage
-    },
-    'top',
-    (result?: boolean) => {
-      if (result === true) {
-        void removeActivityChannels(contexts)
+      message: chunter.string.ArchiveActivityConfirmationMessage,
+      action: async () => {
+        await removeActivityChannels(contexts)
       }
-    }
+    },
+    'top'
   )
 }
 
@@ -388,7 +373,7 @@ export function loadSavedAttachments (): void {
 
     savedAttachmentsQuery.query(
       attachment.class.SavedAttachments,
-      {},
+      { space: core.space.Workspace },
       (res) => {
         savedAttachmentsStore.set(res.filter(({ $lookup }) => $lookup?.attachedTo !== undefined))
       },
@@ -402,31 +387,28 @@ export function loadSavedAttachments (): void {
 }
 
 export async function removeActivityChannels (contexts: DocNotifyContext[]): Promise<void> {
-  const client = InboxNotificationsClientImpl.getClient()
-  const notificationsByContext = get(client.inboxNotificationsByContext)
-  const doneOp = await getClient().measure('removeActivityChannels')
-  const ops = getClient().apply(generateId())
+  const ops = getClient().apply(generateId(), 'removeActivityChannels')
 
   try {
     for (const context of contexts) {
-      const notifications = notificationsByContext.get(context._id) ?? []
-      await client.archiveNotifications(
-        ops,
-        notifications.map(({ _id }) => _id)
-      )
-      await ops.remove(context)
+      await ops.createMixin(context._id, context._class, context.space, chunter.mixin.ChannelInfo, { hidden: true })
+    }
+    const hidden = contexts.map(({ _id }) => _id)
+    const account = getCurrentAccount() as PersonAccount
+    const chatInfo = await ops.findOne(chunter.class.ChatInfo, { user: account.person })
+
+    if (chatInfo !== undefined) {
+      await ops.update(chatInfo, { hidden: chatInfo.hidden.concat(hidden) })
     }
   } finally {
     await ops.commit()
-    await doneOp()
   }
 }
 
 export async function readActivityChannels (contexts: DocNotifyContext[]): Promise<void> {
   const client = InboxNotificationsClientImpl.getClient()
   const notificationsByContext = get(client.inboxNotificationsByContext)
-  const doneOp = await getClient().measure('readActivityChannels')
-  const ops = getClient().apply(generateId())
+  const ops = getClient().apply(generateId(), 'readActivityChannels')
 
   try {
     for (const context of contexts) {
@@ -441,6 +423,5 @@ export async function readActivityChannels (contexts: DocNotifyContext[]): Promi
     }
   } finally {
     await ops.commit()
-    await doneOp()
   }
 }

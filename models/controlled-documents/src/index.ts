@@ -34,6 +34,7 @@ import notification from '@hcengineering/notification'
 import setting from '@hcengineering/setting'
 import tags from '@hcengineering/tags'
 import print from '@hcengineering/model-print'
+import textEditor from '@hcengineering/text-editor'
 
 import documents from './plugin'
 import { definePermissions } from './permissions'
@@ -56,17 +57,10 @@ import {
   TDocumentCategory,
   TControlledDocument,
   TChangeControl,
-  TDocumentSection,
-  TCollaborativeDocumentSection,
-  TAttachmentsDocumentSection,
   TSequence,
   TDocumentRequest,
   TDocumentReviewRequest,
   TDocumentApprovalRequest,
-  TDocumentSectionEditor,
-  TDocumentSectionPresenter,
-  TDocumentSectionCreator,
-  TDocumentTemplateSection,
   TTypeDocumentState,
   TTypeControlledDocumentState,
   TDocumentComment
@@ -96,20 +90,11 @@ export function createModel (builder: Builder): void {
     TDocumentCategory,
     TControlledDocument,
     TChangeControl,
-
-    TDocumentSection,
-    TCollaborativeDocumentSection,
-    TAttachmentsDocumentSection,
-
     TSequence,
 
     TDocumentRequest,
     TDocumentReviewRequest,
     TDocumentApprovalRequest,
-    TDocumentSectionEditor,
-    TDocumentSectionPresenter,
-    TDocumentSectionCreator,
-    TDocumentTemplateSection,
 
     TTypeDocumentState,
     TTypeControlledDocumentState,
@@ -163,8 +148,8 @@ export function createModel (builder: Builder): void {
                 [documents.mixin.DocumentTemplate]: { $exists: false }
               },
               config: [
-                ['effective', documents.string.Effective, {}],
                 ['inProgress', documents.string.InProgress, {}],
+                ['effective', documents.string.Effective, {}],
                 ['archived', documents.string.Archived, {}],
                 ['all', documents.string.All, {}]
               ]
@@ -180,6 +165,7 @@ export function createModel (builder: Builder): void {
               query: {
                 [documents.mixin.DocumentTemplate]: { $exists: false }
               },
+              icon: documents.icon.Library,
               title: documents.string.Documents,
               config: [
                 ['effective', documents.string.Effective, {}],
@@ -409,39 +395,6 @@ export function createModel (builder: Builder): void {
 
   builder.mixin(documents.class.DocumentMeta, core.class.Class, view.mixin.LinkProvider, {
     encode: documents.function.GetDocumentMetaLinkFragment
-  })
-
-  builder.mixin(documents.class.CollaborativeDocumentSection, core.class.Class, view.mixin.ObjectPresenter, {
-    presenter: documents.component.CollaborativeSectionPresenter
-  })
-
-  builder.mixin(documents.class.CollaborativeDocumentSection, core.class.Class, documents.mixin.DocumentSectionEditor, {
-    editor: documents.component.CollaborativeSectionEditor
-  })
-
-  builder.mixin(
-    documents.class.CollaborativeDocumentSection,
-    core.class.Class,
-    documents.mixin.DocumentSectionCreator,
-    {
-      creator: documents.function.CollaborativeSectionCreator
-    }
-  )
-
-  builder.mixin(documents.class.AttachmentsDocumentSection, core.class.Class, view.mixin.ObjectPresenter, {
-    presenter: documents.component.AttachmentsSectionPresenter
-  })
-
-  builder.mixin(documents.class.AttachmentsDocumentSection, core.class.Class, documents.mixin.DocumentSectionEditor, {
-    editor: documents.component.AttachmentsSectionEditor
-  })
-
-  builder.mixin(documents.class.AttachmentsDocumentSection, core.class.Class, documents.mixin.DocumentSectionCreator, {
-    creator: documents.function.AttachmentsSectionCreator
-  })
-
-  builder.mixin(documents.class.DocumentSection, core.class.Class, view.mixin.IgnoreActions, {
-    actions: [view.action.Open, print.action.Print, tracker.action.NewRelatedIssue]
   })
 
   builder.mixin(documents.class.Document, core.class.Class, view.mixin.ObjectPresenter, {
@@ -690,87 +643,6 @@ export function createModel (builder: Builder): void {
     }
   )
 
-  createAction(builder, {
-    action: documents.actionImpl.AddCollaborativeSectionAbove,
-    label: documents.string.AddSectionAbove,
-    icon: documents.icon.ArrowUp,
-    input: 'any',
-    category: view.category.General,
-    target: documents.class.CollaborativeDocumentSection,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'create'
-    }
-  })
-
-  createAction(builder, {
-    action: documents.actionImpl.AddCollaborativeSectionBelow,
-    label: documents.string.AddSectionBelow,
-    icon: documents.icon.ArrowDown,
-    input: 'any',
-    category: view.category.General,
-    target: documents.class.CollaborativeDocumentSection,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'create'
-    }
-  })
-
-  createAction(builder, {
-    action: documents.actionImpl.Duplicate,
-    label: documents.string.Duplicate,
-    icon: documents.icon.Duplicate,
-    input: 'any',
-    category: view.category.General,
-    target: documents.class.DocumentSection,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'edit'
-    }
-  })
-
-  createAction(builder, {
-    action: documents.actionImpl.DeleteCollaborativeSection,
-    label: view.string.Delete,
-    icon: view.icon.Delete,
-    keyBinding: ['Meta + Backspace'],
-    category: view.category.General,
-    input: 'any',
-    target: documents.class.DocumentSection,
-    context: { mode: ['context', 'browser'], group: 'edit' },
-    override: [view.action.Delete]
-  })
-
-  createAction(builder, {
-    action: documents.actionImpl.EditDescription,
-    label: documents.string.EditDescription,
-    icon: documents.icon.EditDescription,
-    input: 'any',
-    category: view.category.General,
-    target: documents.mixin.DocumentTemplateSection,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'tools'
-    }
-  })
-
-  createAction(builder, {
-    action: documents.actionImpl.EditGuidance,
-    label: documents.string.EditGuidance,
-    icon: documents.icon.EditGuidance,
-    input: 'any',
-    category: view.category.General,
-    target: documents.mixin.DocumentTemplateSection,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'tools'
-    }
-  })
-
-  builder.mixin(documents.class.CollaborativeDocumentSection, core.class.Class, view.mixin.IgnoreActions, {
-    actions: [view.action.Delete]
-  })
-
   builder.mixin(documents.class.DocumentSpace, core.class.Class, view.mixin.IgnoreActions, {
     actions: [tracker.action.EditRelatedTargets]
   })
@@ -866,6 +738,7 @@ export function createModel (builder: Builder): void {
   definePermissions(builder)
   defineNotifications(builder)
   defineSearch(builder)
+  defineTextActions(builder)
 }
 
 export function defineNotifications (builder: Builder): void {
@@ -902,9 +775,11 @@ export function defineNotifications (builder: Builder): void {
       field: 'content',
       txClasses: [core.class.TxUpdateDoc],
       objectClass: documents.class.ControlledDocument,
-      providers: {
-        [notification.providers.PlatformNotification]: true,
-        [notification.providers.BrowserNotification]: false
+      defaultEnabled: false,
+      templates: {
+        textTemplate: '{body}',
+        htmlTemplate: '<p>{body}</p>',
+        subjectTemplate: '{title}'
       }
     },
     documents.notification.ContentNotification
@@ -922,11 +797,7 @@ export function defineNotifications (builder: Builder): void {
       field: 'state',
       txClasses: [core.class.TxUpdateDoc],
       objectClass: documents.class.ControlledDocument,
-      providers: {
-        [notification.providers.PlatformNotification]: true,
-        [notification.providers.BrowserNotification]: false,
-        [notification.providers.EmailNotification]: false
-      },
+      defaultEnabled: false,
       templates: {
         textTemplate: '{sender} changed {doc} status',
         htmlTemplate: '<p>{sender} changed {doc} status</p>',
@@ -948,11 +819,7 @@ export function defineNotifications (builder: Builder): void {
       field: 'coAuthors',
       txClasses: [core.class.TxCreateDoc, core.class.TxUpdateDoc],
       objectClass: documents.class.ControlledDocument,
-      providers: {
-        [notification.providers.PlatformNotification]: true,
-        [notification.providers.BrowserNotification]: true,
-        [notification.providers.EmailNotification]: true
-      },
+      defaultEnabled: true,
       templates: {
         textTemplate: '{sender} assigned you as a co-author of {doc}',
         htmlTemplate: '<p>{sender} assigned you as a co-author of {doc}</p>',
@@ -961,6 +828,12 @@ export function defineNotifications (builder: Builder): void {
     },
     documents.notification.CoAuthorsNotification
   )
+
+  builder.createDoc(notification.class.NotificationProviderDefaults, core.space.Model, {
+    provider: notification.providers.InboxNotificationProvider,
+    ignoredTypes: [],
+    enabledTypes: [documents.notification.StateNotification, documents.notification.ContentNotification]
+  })
 
   generateClassNotificationTypes(
     builder,
@@ -977,7 +850,6 @@ export function defineNotifications (builder: Builder): void {
       'author',
       'content',
       'labels',
-      'sections',
       'abstract',
       'snapshots',
       'requests',
@@ -1016,6 +888,18 @@ export function defineSearch (builder: Builder): void {
     },
     documents.completion.DocumentMetaCategory
   )
+}
+
+export function defineTextActions (builder: Builder): void {
+  // Comment category
+  builder.createDoc(textEditor.class.TextEditorAction, core.space.Model, {
+    action: documents.function.Comment,
+    icon: chunter.icon.Chunter,
+    visibilityTester: documents.function.IsCommentVisible,
+    label: chunter.string.Message,
+    category: 100,
+    index: 5
+  })
 }
 
 export { documentsOperation } from './migration'

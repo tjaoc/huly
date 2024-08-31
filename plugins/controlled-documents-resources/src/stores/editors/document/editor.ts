@@ -17,7 +17,6 @@ import {
   type ControlledDocument,
   ControlledDocumentState,
   type DocumentReviewRequest,
-  type DocumentSection,
   DocumentState,
   type DocumentTemplate,
   type EditorMode,
@@ -40,13 +39,7 @@ import {
   approvalRequestUpdated,
   controlledDocumentClosed,
   controlledDocumentOpened,
-  controlledDocumentSectionsUpdated,
   controlledDocumentUpdated,
-  documentSectionCollapsed,
-  documentSectionDescriptionEditingCompleted,
-  documentSectionDescriptionEditingRequested,
-  documentSectionExpanded,
-  documentSectionToggled,
   documentAllVersionsUpdated,
   editorModeUpdated,
   reviewRequestUpdated,
@@ -66,21 +59,15 @@ export const $controlledDocumentTemplate = createStore<DocumentTemplate | null>(
   .on(controlledDocumentUpdated, (_, payload) => payload?.$lookup?.template ?? null)
   .reset(controlledDocumentClosed)
 
-export const $controlledDocumentSections = createStore<DocumentSection[]>([])
-  .on(controlledDocumentSectionsUpdated, (_, payload) => payload)
-  .reset(controlledDocumentClosed)
-
-export const $controlledDocumentSectionIds = $controlledDocumentSections.map(
-  (sections) => sections?.map((section) => section._id) ?? []
-)
-
 const $documentAllVersions = createStore<ControlledDocument[]>([])
   .on(documentAllVersionsUpdated, (_, payload) => payload)
   .reset(controlledDocumentClosed)
 
-export const $documentAllVersionsDescSorted = $documentAllVersions.map((docs) =>
-  docs.toSorted((a, b) => documentCompareFn(a, b) * -1)
-)
+export const $documentAllVersionsDescSorted = $documentAllVersions.map((docs) => {
+  const result = [...docs]
+  result.sort((a, b) => documentCompareFn(a, b) * -1)
+  return result
+})
 
 export const $documentSnapshots = createStore<ControlledDocumentSnapshot[]>([])
   .on(documentSnapshotsUpdated, (_, payload) => payload)
@@ -143,10 +130,6 @@ export const $editorMode = createStore<EditorMode>('viewing')
   .on(editorModeUpdated, (_, payload) => payload)
   .reset(controlledDocumentClosed)
 
-export const $documentSectionEditingDescription = createStore<Ref<DocumentSection> | null>(null)
-  .on(documentSectionDescriptionEditingRequested, (_, payload) => payload)
-  .reset([controlledDocumentClosed, documentSectionDescriptionEditingCompleted])
-
 export const $activeRightPanelTab = createStore<RightPanelTab | null>(RightPanelTab.INFO)
   .on(rightPanelTabChanged, (_, payload) => payload)
   .reset(controlledDocumentClosed)
@@ -202,8 +185,8 @@ export const $documentStateForCurrentUser = combine($controlledDocument, $review
       return ControlledDocumentState.InReview
     }
 
-    const currentAccount = getCurrentAccount()._id as Ref<PersonAccount>
-    if (reviewRequest.approved?.includes(currentAccount)) {
+    const currentPerson = (getCurrentAccount() as PersonAccount).person
+    if (reviewRequest.approved?.includes(currentPerson)) {
       return ControlledDocumentState.Reviewed
     }
   }
@@ -228,7 +211,7 @@ export const $documentState = $controlledDocument.map((doc) => {
 })
 
 export const $documentReviewIsActive = combine($reviewRequest, $documentStateForCurrentUser, (reviewReq, state) => {
-  const me = getCurrentAccount()._id as Ref<PersonAccount>
+  const me = (getCurrentAccount() as PersonAccount).person
 
   if (reviewReq == null) {
     return false
@@ -244,7 +227,7 @@ export const $documentApprovalIsActive = combine(
   $approvalRequest,
   $documentStateForCurrentUser,
   (doc, approvalReq, state) => {
-    const me = getCurrentAccount()._id as Ref<PersonAccount>
+    const me = (getCurrentAccount() as PersonAccount).person
 
     if (approvalReq == null) {
       return false
@@ -306,36 +289,6 @@ export const $isEditable = combine(
   $isDocumentCoAuthor,
   (state, mode, isOwner, isCoAuthor) => (isOwner || isCoAuthor) && mode === 'editing' && state === DocumentState.Draft
 )
-
-export const $collapsedDocumentSectionIds = createStore<Set<Ref<DocumentSection>>>(new Set())
-  .on(documentSectionToggled, (collapsed, sectionId) => {
-    if (collapsed.has(sectionId)) {
-      collapsed.delete(sectionId)
-    } else {
-      collapsed.add(sectionId)
-    }
-
-    return new Set(collapsed)
-  })
-  .on(documentSectionCollapsed, (collapsed, sectionId) => {
-    if (collapsed.has(sectionId)) {
-      return
-    }
-
-    collapsed.add(sectionId)
-
-    return new Set(collapsed)
-  })
-  .on(documentSectionExpanded, (collapsed, sectionId) => {
-    if (!collapsed.has(sectionId)) {
-      return
-    }
-
-    collapsed.delete(sectionId)
-
-    return new Set(collapsed)
-  })
-  .reset(controlledDocumentClosed)
 
 export const $canViewDocumentComments = combine(
   $editorMode,

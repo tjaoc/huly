@@ -15,7 +15,7 @@
 //
 
 import { Analytics } from '@hcengineering/analytics'
-import { MeasureContext, Blob as PlatformBlob, WorkspaceId, metricsAggregate } from '@hcengineering/core'
+import { MeasureContext, Blob as PlatformBlob, WorkspaceId, metricsAggregate, type Ref } from '@hcengineering/core'
 import { Token, decodeToken } from '@hcengineering/server-token'
 import { StorageAdapter, removeAllObjects } from '@hcengineering/storage'
 import bp from 'body-parser'
@@ -31,13 +31,12 @@ import sharp from 'sharp'
 import { v4 as uuid } from 'uuid'
 import { preConditions } from './utils'
 
-import fs from 'fs'
+import fs, { createReadStream, mkdtempSync } from 'fs'
+import { rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
 
 const cacheControlValue = 'public, max-age=365d'
 const cacheControlNoCache = 'public, no-store, no-cache, must-revalidate, max-age=0'
-
-type SupportedFormat = 'jpeg' | 'avif' | 'heif' | 'webp' | 'png'
-const supportedFormats: SupportedFormat[] = ['avif', 'webp', 'heif', 'jpeg', 'png']
 
 async function storageUpload (
   ctx: MeasureContext,
@@ -45,18 +44,17 @@ async function storageUpload (
   workspace: WorkspaceId,
   file: UploadedFile
 ): Promise<string> {
-  const id = uuid()
-
+  const uuid = file.name
   const data = file.tempFilePath !== undefined ? fs.createReadStream(file.tempFilePath) : file.data
   const resp = await ctx.with(
     'storage upload',
     { workspace: workspace.name },
-    async (ctx) => await storageAdapter.put(ctx, workspace, id, data, file.mimetype, file.size),
+    async (ctx) => await storageAdapter.put(ctx, workspace, uuid, data, file.mimetype, file.size),
     { file: file.name, contentType: file.mimetype }
   )
 
-  ctx.info('minio upload', resp)
-  return id
+  ctx.info('storage upload', resp)
+  return uuid
 }
 
 function getRange (range: string, size: number): [number, number] {
@@ -85,6 +83,7 @@ async function getFileRange (
   workspace: WorkspaceId,
   res: Response
 ): Promise<void> {
+  const uuid = stat._id
   const size: number = stat.size
 
   const [start, end] = getRange(range, size)
@@ -129,11 +128,10 @@ async function getFileRange (
           dataStream.on('error', (err) => {
             ctx.error('error receive stream', { workspace: workspace.name, uuid, error: err })
             Analytics.handleError(err)
+
             res.end()
+            dataStream.destroy()
             reject(err)
-          })
-          dataStream.on('close', () => {
-            res.end()
           })
         })
       } catch (err: any) {
@@ -172,14 +170,21 @@ async function getFile (
       'content-type': stat.contentType,
       etag: stat.etag,
       'last-modified': new Date(stat.modifiedOn).toISOString(),
-      'cache-control': cacheControlValue
+      'cache-control': cacheControlValue,
+      Connection: 'keep-alive'
     })
     res.end()
     return
   }
   if (preConditions.IfUnmodifiedSince(req.headers, { lastModified: new Date(stat.modifiedOn) }) === 'failed') {
     // Send 412 (Precondition Failed)
-    res.statusCode = 412
+    res.writeHead(412, {
+      'content-type': stat.contentType,
+      etag: stat.etag,
+      'last-modified': new Date(stat.modifiedOn).toISOString(),
+      'cache-control': cacheControlValue,
+      Connection: 'keep-alive'
+    })
     res.end()
     return
   }
@@ -194,7 +199,8 @@ async function getFile (
           'Content-Type': stat.contentType,
           Etag: stat.etag,
           'Last-Modified': new Date(stat.modifiedOn).toISOString(),
-          'Cache-Control': cacheControlValue
+          'Cache-Control': cacheControlValue,
+          Connection: 'keep-alive'
         })
 
         dataStream.pipe(res)
@@ -207,6 +213,9 @@ async function getFile (
           dataStream.on('error', function (err) {
             Analytics.handleError(err)
             ctx.error('error', { err })
+
+            res.end()
+            dataStream.destroy()
             reject(err)
           })
         })
@@ -231,33 +240,44 @@ export function start (
     storageAdapter: StorageAdapter
     accountsUrl: string
     uploadUrl: string
+    filesUrl: string
     modelVersion: string
+    version: string
     rekoniUrl: string
     telegramUrl: string
     gmailUrl: string
     calendarUrl: string
     collaboratorUrl: string
-    collaboratorApiUrl: string
     brandingUrl?: string
     previewConfig: string
+    pushPublicKey?: string
   },
   port: number,
   extraConfig?: Record<string, string | undefined>
 ): () => void {
   const app = express()
 
+  const tempFileDir = mkdtempSync(join(tmpdir(), 'front-'))
+  let temoFileIndex = 0
+
   app.use(cors())
   app.use(
     fileUpload({
-      useTempFiles: true
+      useTempFiles: true,
+      tempFileDir
     })
   )
   app.use(bp.json())
   app.use(bp.urlencoded({ extended: true }))
 
+  const childLogger = ctx.logger.childLogger?.('requests', {
+    enableConsole: 'true'
+  })
+  const requests = ctx.newChild('requests', {}, {}, childLogger)
+
   class MyStream {
     write (text: string): void {
-      ctx.info(text)
+      requests.info(text)
     }
   }
 
@@ -270,19 +290,22 @@ export function start (
     const data = {
       ACCOUNTS_URL: config.accountsUrl,
       UPLOAD_URL: config.uploadUrl,
+      FILES_URL: config.filesUrl,
       MODEL_VERSION: config.modelVersion,
+      VERSION: config.version,
       REKONI_URL: config.rekoniUrl,
       TELEGRAM_URL: config.telegramUrl,
       GMAIL_URL: config.gmailUrl,
       CALENDAR_URL: config.calendarUrl,
       COLLABORATOR_URL: config.collaboratorUrl,
-      COLLABORATOR_API_URL: config.collaboratorApiUrl,
       BRANDING_URL: config.brandingUrl,
       PREVIEW_CONFIG: config.previewConfig,
+      PUSH_PUBLIC_KEY: config.pushPublicKey,
       ...(extraConfig ?? {})
     }
-    res.set('Cache-Control', cacheControlNoCache)
     res.status(200)
+    res.set('Cache-Control', cacheControlNoCache)
+    res.set('Connection', 'keep-alive')
     res.json(data)
   })
 
@@ -293,6 +316,7 @@ export function start (
       const admin = payload.extra?.admin === 'true'
       res.status(200)
       res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Connection', 'keep-alive')
       res.setHeader('Cache-Control', cacheControlNoCache)
 
       const json = JSON.stringify({
@@ -339,6 +363,7 @@ export function start (
           ) {
             res.setHeader('Cache-Control', cacheControlNoCache)
           }
+          res.setHeader('Connection', 'keep-alive')
         }
       }
     })
@@ -349,7 +374,7 @@ export function start (
       'handle-file',
       {},
       async (ctx) => {
-        let payload: Token = { email: 'guest', workspace: { name: req.query.workspace as string, productId: '' } }
+        let payload: Token = { email: 'guest', workspace: { name: req.query.workspace as string } }
         try {
           const cookies = ((req?.headers?.cookie as string) ?? '').split(';').map((it) => it.trim().split('='))
 
@@ -358,15 +383,10 @@ export function start (
             (req.query.token as string | undefined)
           payload = token !== undefined ? decodeToken(token) : payload
 
-          let uuid = req.params.file ?? req.query.file
+          const uuid = req.params.file ?? req.query.file
           if (uuid === undefined) {
             res.status(404).send()
             return
-          }
-
-          const format: SupportedFormat | undefined = supportedFormats.find((it) => uuid.endsWith(it))
-          if (format !== undefined) {
-            uuid = uuid.slice(0, uuid.length - format.length - 1)
           }
 
           let blobInfo = await ctx.with(
@@ -376,7 +396,7 @@ export function start (
           )
 
           if (blobInfo === undefined) {
-            ctx.error('No such key', { file: uuid, workspace: payload.workspace })
+            ctx.error('No such key', { file: uuid, workspace: payload.workspace.name })
             res.status(404).send()
             return
           }
@@ -409,12 +429,15 @@ export function start (
           }
 
           const size = req.query.size !== undefined ? parseInt(req.query.size as string) : undefined
-          if (format !== undefined && isImage && blobInfo.contentType !== 'image/gif') {
+          const accept = req.headers.accept
+          if (accept !== undefined && isImage && blobInfo.contentType !== 'image/gif' && size !== undefined) {
             blobInfo = await ctx.with(
               'resize',
               {},
               async (ctx) =>
-                await getGeneratePreview(ctx, blobInfo as PlatformBlob, size ?? -1, uuid, config, payload, format)
+                await getGeneratePreview(ctx, blobInfo as PlatformBlob, size, uuid, config, payload, accept, () =>
+                  join(tempFileDir, `${++temoFileIndex}`)
+                )
             )
           }
 
@@ -488,7 +511,12 @@ export function start (
           const payload = decodeToken(token)
           const uuid = await storageUpload(ctx, config.storageAdapter, payload.workspace, file)
 
-          res.status(200).send(uuid)
+          res.status(200).send([
+            {
+              key: 'file',
+              id: uuid
+            }
+          ])
         } catch (error: any) {
           ctx.error('error-post-files', error)
           res.status(500).send()
@@ -583,7 +611,7 @@ export function start (
               const buffer = Buffer.concat(data)
               config.storageAdapter
                 .put(ctx, payload.workspace, id, buffer, contentType, buffer.length)
-                .then(async (objInfo) => {
+                .then(async () => {
                   res.status(200).send({
                     id,
                     contentType,
@@ -705,7 +733,7 @@ export function start (
     '.avif'
   ]
 
-  app.get('*', function (request, response) {
+  app.get('*', (request, response) => {
     if (filesPatterns.some((it) => request.path.endsWith(it))) {
       response.sendStatus(404)
       return
@@ -721,10 +749,15 @@ export function start (
   })
 
   const server = app.listen(port)
+
+  server.keepAliveTimeout = 60 * 1000 + 1000
+  server.headersTimeout = 60 * 1000 + 2000
   return () => {
     server.close()
   }
 }
+
+const supportedFormats = ['avif', 'webp', 'heif', 'jpeg', 'png']
 
 async function getGeneratePreview (
   ctx: MeasureContext,
@@ -733,11 +766,38 @@ async function getGeneratePreview (
   uuid: string,
   config: { storageAdapter: StorageAdapter },
   payload: Token,
-  format: SupportedFormat = 'jpeg'
+  accept: string,
+  tempFile: () => string
 ): Promise<PlatformBlob> {
   if (size === undefined) {
     return blob
   }
+
+  const formats = accept.split(',').map((it) => it.trim())
+
+  // Select appropriate format
+  let format: string | undefined
+
+  for (const f of formats) {
+    const [type] = f.split(';')
+    const [clazz, kind] = type.split('/')
+    if (clazz === 'image' && supportedFormats.includes(kind)) {
+      format = kind
+      break
+    }
+  }
+  if (format === undefined) {
+    return blob
+  }
+
+  if (size === -1) {
+    size = 2048
+  }
+
+  if (size > 2048) {
+    size = 2048
+  }
+
   const sizeId = uuid + `%preview%${size}${format !== 'jpeg' ? format : ''}`
 
   const d = await config.storageAdapter.stat(ctx, payload.workspace, sizeId)
@@ -747,64 +807,85 @@ async function getGeneratePreview (
     // We have cached small document, let's proceed with it.
     return d
   } else {
-    let data: Buffer
+    const files: string[] = []
     try {
       // Let's get data and resize it
-      data = Buffer.concat(await config.storageAdapter.read(ctx, payload.workspace, uuid))
+      const fname = tempFile()
+      files.push(fname)
+      await writeFile(fname, await config.storageAdapter.get(ctx, payload.workspace, uuid))
 
-      let pipeline = sharp(data)
-
+      let pipeline = sharp(fname)
       sharp.cache(false)
 
-      // const metadata = await pipeline.metadata()
-
-      if (size !== -1) {
-        pipeline = pipeline.resize({
-          width: size,
-          fit: 'cover',
-          withoutEnlargement: true
-        })
-      }
+      pipeline = pipeline.resize({
+        width: size,
+        fit: 'cover',
+        withoutEnlargement: true
+      })
 
       let contentType = 'image/jpeg'
       switch (format) {
         case 'jpeg':
-          pipeline = pipeline.jpeg({})
+          pipeline = pipeline.jpeg({
+            progressive: true
+          })
           contentType = 'image/jpeg'
           break
         case 'avif':
           pipeline = pipeline.avif({
-            quality: size !== undefined && size < 128 ? undefined : 85
+            lossless: false,
+            effort: 0
           })
           contentType = 'image/avif'
           break
         case 'heif':
           pipeline = pipeline.heif({
-            quality: size !== undefined && size < 128 ? undefined : 80
+            effort: 0
           })
           contentType = 'image/heif'
           break
         case 'webp':
-          pipeline = pipeline.webp()
+          pipeline = pipeline.webp({
+            effort: 0
+          })
           contentType = 'image/webp'
           break
         case 'png':
-          pipeline = pipeline.png()
+          pipeline = pipeline.png({
+            effort: 0
+          })
           contentType = 'image/png'
           break
       }
 
-      const dataBuff = await pipeline.toBuffer()
+      const outFile = tempFile()
+      files.push(outFile)
+
+      const dataBuff = await ctx.with('resize', { contentType }, async () => await pipeline.toFile(outFile))
       pipeline.destroy()
 
       // Add support of avif as well.
-      await config.storageAdapter.put(ctx, payload.workspace, sizeId, dataBuff, contentType, dataBuff.length)
-      return (await config.storageAdapter.stat(ctx, payload.workspace, sizeId)) ?? blob
+      const upload = await config.storageAdapter.put(
+        ctx,
+        payload.workspace,
+        sizeId,
+        createReadStream(outFile),
+        contentType,
+        dataBuff.size
+      )
+      return {
+        ...blob,
+        _id: sizeId as Ref<PlatformBlob>,
+        size: dataBuff.size,
+        contentType,
+        etag: upload.etag,
+        storageId: sizeId
+      }
     } catch (err: any) {
       Analytics.handleError(err)
       ctx.error('failed to resize image', {
         err,
-        format,
+        format: accept,
         contentType: blob.contentType,
         uuid,
         size: blob.size,
@@ -813,6 +894,10 @@ async function getGeneratePreview (
 
       // Return original in case of error
       return blob
+    } finally {
+      for (const f of files) {
+        await rm(f)
+      }
     }
   }
 }

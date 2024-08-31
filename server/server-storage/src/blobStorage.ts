@@ -34,7 +34,12 @@ import core, {
 } from '@hcengineering/core'
 import { createMongoAdapter } from '@hcengineering/mongo'
 import { PlatformError, unknownError } from '@hcengineering/platform'
-import { DbAdapter, StorageAdapter, type StorageAdapterEx } from '@hcengineering/server-core'
+import {
+  DbAdapter,
+  StorageAdapter,
+  type DomainHelperOperations,
+  type StorageAdapterEx
+} from '@hcengineering/server-core'
 
 class StorageBlobAdapter implements DbAdapter {
   constructor (
@@ -53,22 +58,27 @@ class StorageBlobAdapter implements DbAdapter {
     return await this.blobAdapter.findAll(ctx, _class, query, options)
   }
 
+  helper (): DomainHelperOperations {
+    return this.blobAdapter.helper()
+  }
+
+  async groupBy<T>(ctx: MeasureContext, domain: Domain, field: string): Promise<Set<T>> {
+    return await this.blobAdapter.groupBy(ctx, domain, field)
+  }
+
   async tx (ctx: MeasureContext, ...tx: Tx[]): Promise<TxResult[]> {
     throw new PlatformError(unknownError('Direct Blob operations are not possible'))
   }
 
   async createIndexes (domain: Domain, config: Pick<IndexingConfiguration<Doc>, 'indexes'>): Promise<void> {}
-  async removeOldIndex (domain: Domain, deletePattern: RegExp, keepPattern: RegExp): Promise<void> {}
+  async removeOldIndex (domain: Domain, deletePattern: RegExp[], keepPattern: RegExp[]): Promise<void> {}
 
   async close (): Promise<void> {
     await this.blobAdapter.close()
   }
 
   find (ctx: MeasureContext, domain: Domain, recheck?: boolean): StorageIterator {
-    if (recheck === true) {
-      return (this.client as StorageAdapterEx).find(ctx, this.workspaceId)
-    }
-    return this.blobAdapter.find(ctx, domain, recheck)
+    return (this.client as StorageAdapterEx).find(ctx, this.workspaceId)
   }
 
   async load (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<Doc[]> {

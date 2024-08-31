@@ -21,7 +21,14 @@
   import notification, { DocNotifyContext, InboxNotification, notificationId } from '@hcengineering/notification'
   import { BrowserNotificatator, InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
   import { IntlString, broadcastEvent, getMetadata, getResource } from '@hcengineering/platform'
-  import { ActionContext, ComponentExtensions, getClient, isAdminUser, reduceCalls } from '@hcengineering/presentation'
+  import {
+    ActionContext,
+    ComponentExtensions,
+    createQuery,
+    getClient,
+    isAdminUser,
+    reduceCalls
+  } from '@hcengineering/presentation'
   import setting from '@hcengineering/setting'
   import support, { SupportStatus, supportLink } from '@hcengineering/support'
   import {
@@ -406,6 +413,7 @@
       const _class = props[2] as Ref<Class<Doc>>
       const _id = await parseLinkId(linkProviders, props[1], _class)
       const doc = await client.findOne<Doc>(_class, { _id })
+      panelDoc = { _class, _id }
 
       if (doc !== undefined) {
         const provider = ListSelectionProvider.Find(doc._id)
@@ -427,6 +435,17 @@
     } else {
       closePanel(false)
     }
+  }
+  let panelDoc: undefined | { _id: Ref<Doc>, _class: Ref<Class<Doc>> } = undefined
+  const panelQuery = createQuery()
+
+  $: if (panelDoc !== undefined) {
+    panelQuery.query(panelDoc._class, { _id: panelDoc._id }, (r) => {
+      if (r.length === 0) {
+        closePanel(false)
+        panelDoc = undefined
+      }
+    })
   }
 
   function clear (level: number): void {
@@ -589,9 +608,8 @@
 
   defineSeparators('workbench', workbenchSeparators)
 
-  let modern: boolean
-  $: modern = currentApplication?.modern ?? false
-  $: elementPanel = modern ? $deviceInfo.replacedPanel ?? contentPanel : contentPanel
+  $: mainNavigator = currentApplication && navigatorModel && navigator && $deviceInfo.navigator.visible
+  $: elementPanel = $deviceInfo.replacedPanel ?? contentPanel
 
   $: deactivated =
     person && client.getHierarchy().hasMixin(person, contact.mixin.Employee)
@@ -636,7 +654,6 @@
   </svg>
   <div
     class="workbench-container"
-    class:modern-app={modern}
     style:flex-direction={$deviceInfo.navigator.direction === 'horizontal' ? 'column-reverse' : 'row'}
   >
     <div
@@ -753,7 +770,7 @@
       }}
     />
     <div class="workbench-container inner">
-      {#if currentApplication && navigatorModel && navigator && $deviceInfo.navigator.visible}
+      {#if mainNavigator}
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <!-- svelte-ignore a11y-no-static-element-interactions -->
         {#if $deviceInfo.navigator.float}
@@ -762,7 +779,7 @@
         <div
           class="antiPanel-navigator no-print {$deviceInfo.navigator.direction === 'horizontal'
             ? 'portrait'
-            : 'landscape'}"
+            : 'landscape'} border-left"
         >
           <div class="antiPanel-wrap__content hulyNavPanel-container">
             {#if currentApplication}
@@ -788,7 +805,7 @@
               on:open={checkOnHide}
             />
             <NavFooter>
-              {#if currentApplication.navFooterComponent}
+              {#if currentApplication && currentApplication.navFooterComponent}
                 <Component is={currentApplication.navFooterComponent} props={{ currentSpace }} />
               {/if}
             </NavFooter>
@@ -804,12 +821,25 @@
           name={'workbench'}
           float={$deviceInfo.navigator.float}
           index={0}
-          color={'var(--theme-navpanel-border)'}
+          color={'transparent'}
+          separatorSize={0}
+          short
         />
       {/if}
-      <div class="antiPanel-component antiComponent" bind:this={contentPanel}>
+      <div
+        bind:this={contentPanel}
+        class={navigatorModel === undefined ? 'hulyPanels-container' : 'hulyComponent overflow-hidden'}
+      >
         {#if currentApplication && currentApplication.component}
-          <Component is={currentApplication.component} props={{ currentSpace }} />
+          <Component
+            is={currentApplication.component}
+            props={{
+              currentSpace,
+              asideId,
+              asideComponent: currentApplication?.aside
+            }}
+            on:close={closeAside}
+          />
         {:else if specialComponent}
           <Component
             is={specialComponent.component}
@@ -832,10 +862,10 @@
           <SpaceView {currentSpace} {currentView} {createItemDialog} {createItemLabel} />
         {/if}
       </div>
-      {#if asideId}
+      {#if asideId && navigatorModel !== undefined}
         {@const asideComponent = navigatorModel?.aside ?? currentApplication?.aside}
         {#if asideComponent !== undefined}
-          <Separator name={'workbench'} index={1} />
+          <Separator name={'workbench'} index={1} color={'transparent'} separatorSize={0} short />
           <div class="antiPanel-component antiComponent aside" bind:this={aside}>
             <Component is={asideComponent} props={{ currentSpace, _id: asideId }} on:close={closeAside} />
           </div>
@@ -846,7 +876,7 @@
   <Dock />
   <div bind:this={cover} class="cover" />
   <TooltipInstance />
-  <PanelInstance bind:this={panelInstance} contentPanel={elementPanel} kind={modern ? 'modern' : 'default'}>
+  <PanelInstance bind:this={panelInstance} contentPanel={elementPanel}>
     <svelte:fragment slot="panel-header">
       <ActionContext context={{ mode: 'panel' }} />
     </svelte:fragment>
@@ -862,38 +892,30 @@
 
 <style lang="scss">
   .workbench-container {
+    position: relative;
     display: flex;
     min-width: 0;
     min-height: 0;
     width: 100%;
     height: 100%;
+    background-color: var(--theme-statusbar-color);
     touch-action: none;
 
-    &:not(.modern-app, .inner) {
-      border-top: 1px solid var(--theme-navpanel-divider);
-      border-left: 1px solid var(--theme-navpanel-color);
-
-      & + :global(.dock) {
-        border-left: 1px solid var(--theme-navpanel-divider);
-      }
+    &.inner {
+      background-color: var(--theme-navpanel-color);
+      border-radius: 0 var(--medium-BorderRadius) var(--medium-BorderRadius) 0;
     }
-    &.modern-app {
-      position: relative;
-      background-color: var(--theme-statusbar-color);
-      border-top: 1px solid transparent;
-
-      &::after {
-        position: absolute;
-        content: '';
-        inset: 0;
-        border: 1px solid var(--theme-divider-color);
-        border-radius: var(--medium-BorderRadius);
-        pointer-events: none;
-      }
-      .antiPanel-application {
-        border-radius: var(--medium-BorderRadius) 0 0 var(--medium-BorderRadius);
-        border-right: none;
-      }
+    &:not(.inner)::after {
+      position: absolute;
+      content: '';
+      inset: 0;
+      border: 1px solid var(--theme-divider-color);
+      border-radius: var(--medium-BorderRadius);
+      pointer-events: none;
+    }
+    .antiPanel-application {
+      border-radius: var(--medium-BorderRadius) 0 0 var(--medium-BorderRadius);
+      border-right: none;
     }
   }
 

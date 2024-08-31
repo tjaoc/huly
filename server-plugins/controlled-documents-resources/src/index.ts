@@ -1,8 +1,7 @@
 //
-// Copyright © 2023 Hardcore Engineering Inc.
+// Copyright © 2023-2024 Hardcore Engineering Inc.
 //
 import core, {
-  Data,
   DocumentQuery,
   Ref,
   SortingOrder,
@@ -10,7 +9,6 @@ import core, {
   TxCollectionCUD,
   TxFactory,
   TxUpdateDoc,
-  generateId,
   type Timestamp,
   type Account,
   type RolesAssignment,
@@ -20,79 +18,19 @@ import core, {
 import contact, { type Employee, type PersonAccount } from '@hcengineering/contact'
 import { TriggerControl } from '@hcengineering/server-core'
 import documents, {
-  CollaborativeDocumentSection,
   ControlledDocument,
   ControlledDocumentState,
-  DEFAULT_SECTION_TITLE,
   Document,
   DocumentApprovalRequest,
   DocumentState,
   DocumentTemplate,
-  calcRank,
   type DocumentTraining,
   getEffectiveDocUpdate,
-  getDocumentId
+  getDocumentId,
+  type DocumentRequest
 } from '@hcengineering/controlled-documents'
 import training, { type TrainingRequest, TrainingState } from '@hcengineering/training'
-
-/**
- * @public
- */
-export async function OnCollaborativeSectionDeleted (
-  tx: TxCollectionCUD<Document, CollaborativeDocumentSection>,
-  control: TriggerControl
-): Promise<Tx[]> {
-  const sections = await control.findAll(documents.class.DocumentSection, { attachedTo: tx.objectId })
-  if (sections.length > 0) {
-    return []
-  }
-
-  // checking if the document itself is deleted
-  const removeTx = (await control.findAll(core.class.TxRemoveDoc, { objectId: tx.objectId }, { limit: 1 })).shift()
-  if (removeTx != null) {
-    return []
-  }
-
-  const document = (await control.findAll(tx.objectClass, { _id: tx.objectId }, { limit: 1 })).shift()
-  if (document == null) {
-    return []
-  }
-
-  const isTemplate = control.hierarchy.hasMixin(document, documents.mixin.DocumentTemplate)
-
-  const sectionId = generateId()
-  const collaboratorSectionId = generateId()
-  return [
-    control.txFactory.createTxCollectionCUD(
-      tx.objectClass,
-      tx.objectId,
-      tx.objectSpace,
-      tx.collection,
-      control.txFactory.createTxCreateDoc(
-        documents.class.CollaborativeDocumentSection,
-        tx.objectSpace,
-        {
-          title: DEFAULT_SECTION_TITLE,
-          rank: calcRank(),
-          collaboratorSectionId,
-          attachments: 0
-        } as unknown as Data<CollaborativeDocumentSection>,
-        sectionId as Ref<CollaborativeDocumentSection>
-      )
-    ),
-    ...(isTemplate
-      ? [
-          control.txFactory.createTxMixin(
-            sectionId,
-            documents.class.CollaborativeDocumentSection,
-            tx.objectSpace,
-            documents.mixin.DocumentTemplateSection,
-            { description: '', guidance: '', mandatory: false }
-          )
-        ]
-      : [])
-  ]
-}
+import { RequestStatus } from '@hcengineering/request'
 
 async function getDocs (
   control: TriggerControl,
@@ -284,7 +222,7 @@ async function createDocumentTrainingRequest (doc: ControlledDocument, control: 
   // Force space to make transaction persistent and raise notifications
   resTx.space = core.space.Tx
 
-  await control.apply([resTx], true)
+  await control.apply([resTx])
 
   return []
 }
@@ -351,6 +289,26 @@ export async function OnDocHasBecomeEffective (
   ]
 }
 
+export async function OnDocDeleted (tx: TxUpdateDoc<ControlledDocument>, control: TriggerControl): Promise<Tx[]> {
+  const requests = await control.findAll(documents.class.DocumentRequest, {
+    attachedTo: tx.objectId,
+    status: RequestStatus.Active
+  })
+  const cancelTxes = requests.map((request) =>
+    control.txFactory.createTxUpdateDoc<DocumentRequest>(request._class, request.space, request._id, {
+      status: RequestStatus.Cancelled
+    })
+  )
+  await control.apply([
+    ...cancelTxes,
+    control.txFactory.createTxUpdateDoc<ControlledDocument>(tx.objectClass, tx.objectSpace, tx.objectId, {
+      controlledState: undefined
+    })
+  ])
+
+  return []
+}
+
 export async function OnDocPlannedEffectiveDateChanged (
   tx: TxUpdateDoc<ControlledDocument>,
   control: TriggerControl
@@ -368,7 +326,7 @@ export async function OnDocPlannedEffectiveDateChanged (
   if (tx.operations.plannedEffectiveDate === 0 && doc.controlledState === ControlledDocumentState.Approved) {
     // Create with not derived tx factory in order for notifications to work
     const factory = new TxFactory(control.txFactory.account)
-    await control.apply([makeDocEffective(doc, factory)], true)
+    await control.apply([makeDocEffective(doc, factory)])
   }
 
   return []
@@ -385,7 +343,7 @@ export async function OnDocApprovalRequestApproved (
 
   // Create with not derived tx factory in order for notifications to work
   const factory = new TxFactory(control.txFactory.account)
-  await control.apply([makeDocEffective(doc, factory)], true)
+  await control.apply([makeDocEffective(doc, factory)])
 
   // make doc effective immediately
   return []
@@ -445,7 +403,7 @@ export async function documentTextPresenter (doc: ControlledDocument): Promise<s
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export default async () => ({
   trigger: {
-    OnCollaborativeSectionDeleted,
+    OnDocDeleted,
     OnDocPlannedEffectiveDateChanged,
     OnDocApprovalRequestApproved,
     OnDocHasBecomeEffective,

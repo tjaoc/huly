@@ -16,6 +16,7 @@
 import {
   MeasureMetricsContext,
   type Account,
+  type Branding,
   type Class,
   type Doc,
   type DocumentQuery,
@@ -40,14 +41,23 @@ import {
   type TxFactory,
   type TxResult,
   type WorkspaceId,
-  type WorkspaceIdWithUrl,
-  type Branding
+  type WorkspaceIdWithUrl
 } from '@hcengineering/core'
 import type { Asset, Resource } from '@hcengineering/platform'
 import { type Readable } from 'stream'
 import { type ServiceAdaptersManager } from './service'
 import { type StorageAdapter } from './storage'
 
+export interface ServerFindOptions<T extends Doc> extends FindOptions<T> {
+  domain?: Domain // Allow to find for Doc's in specified domain only.
+  prefix?: string
+
+  skipClass?: boolean
+  skipSpace?: boolean
+
+  // Optional measure context, for server side operations
+  ctx?: MeasureContext
+}
 /**
  * @public
  */
@@ -58,10 +68,7 @@ export interface ServerStorage extends LowLevelStorage {
     ctx: MeasureContext,
     _class: Ref<Class<T>>,
     query: DocumentQuery<T>,
-    options?: FindOptions<T> & {
-      domain?: Domain // Allow to find for Doc's in specified domain only.
-      prefix?: string
-    }
+    options?: ServerFindOptions<T>
   ) => Promise<FindResult<T>>
   searchFulltext: (ctx: MeasureContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
   tx: (ctx: SessionOperationContext, tx: Tx) => Promise<TxResult>
@@ -96,6 +103,8 @@ export interface Middleware {
     query: DocumentQuery<T>,
     options?: FindOptions<T>
   ) => Promise<FindResult<T>>
+
+  groupBy: <T>(ctx: MeasureContext, domain: Domain, field: string) => Promise<Set<T>>
   handleBroadcast: HandleBroadcastFunc
   searchFulltext: (ctx: SessionContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
 }
@@ -140,6 +149,17 @@ export interface Pipeline extends LowLevelStorage {
 /**
  * @public
  */
+export type PipelineFactory = (
+  ctx: MeasureContext,
+  ws: WorkspaceIdWithUrl,
+  upgrade: boolean,
+  broadcast: BroadcastFunc,
+  branding: Branding | null
+) => Promise<Pipeline>
+
+/**
+ * @public
+ */
 export interface TriggerControl {
   operationContext: SessionOperationContext
   ctx: MeasureContext
@@ -157,29 +177,35 @@ export interface TriggerControl {
   modelDb: ModelDb
   removedMap: Map<Ref<Doc>, Doc>
 
+  contextCache: Map<string, any>
+
   // Since we don't have other storages let's consider adapter is MinioClient
   // Later can be replaced with generic one with bucket encapsulated inside.
   storageAdapter: StorageAdapter
   serviceAdaptersManager: ServiceAdaptersManager
   // Bulk operations in case trigger require some
-  apply: (tx: Tx[], broadcast: boolean, target?: string[]) => Promise<TxResult>
-  applyCtx: (ctx: SessionOperationContext, tx: Tx[], broadcast: boolean, target?: string[]) => Promise<TxResult>
+  apply: (tx: Tx[], needResult?: boolean) => Promise<TxResult>
+  applyCtx: (ctx: SessionOperationContext, tx: Tx[], needResult?: boolean) => Promise<TxResult>
 
   // Will create a live query if missing and return values immediately if already asked.
   queryFind: <T extends Doc>(
+    ctx: MeasureContext,
     _class: Ref<Class<T>>,
     query: DocumentQuery<T>,
     options?: FindOptions<T>
   ) => Promise<FindResult<T>>
 
   // Current set of transactions to being processed for apply/bulks
-  result: Tx[]
+  txes: {
+    apply: Tx[]
+    result: Tx[]
+  }
 }
 
 /**
  * @public
  */
-export type TriggerFunc = (tx: Tx, ctrl: TriggerControl) => Promise<Tx[]>
+export type TriggerFunc = (tx: Tx | Tx[], ctrl: TriggerControl) => Promise<Tx[]>
 
 /**
  * @public
@@ -192,6 +218,9 @@ export interface Trigger extends Doc {
 
   // We should match transaction
   txMatch?: DocumentQuery<Tx>
+
+  // If set trigger will handle Tx[] instead of Tx
+  arrays?: boolean
 }
 
 /**
@@ -442,6 +471,8 @@ export interface ServerStorageOptions {
 
   broadcast: BroadcastFunc
   branding: Branding | null
+
+  disableTriggers?: boolean
 }
 
 export interface ServiceAdapter {
@@ -462,8 +493,6 @@ export interface StorageConfig {
   kind: string
   endpoint: string
   port?: number
-
-  contentTypes?: string[]
 }
 
 export interface StorageConfiguration {

@@ -17,6 +17,8 @@ import core, {
   MeasureMetricsContext,
   RateLimiter,
   TxOperations,
+  concatLink,
+  generateId,
   metricsToString,
   newMetrics,
   systemAccountEmail,
@@ -33,9 +35,12 @@ import { connect } from '@hcengineering/server-tool'
 
 import client from '@hcengineering/client'
 import { setMetadata } from '@hcengineering/platform'
+import serverClientPlugin, { getTransactorEndpoint } from '@hcengineering/server-client'
 import os from 'os'
 import { Worker, isMainThread, parentPort } from 'worker_threads'
 import { CSVWriter } from './csv'
+
+import { WebSocket } from 'ws'
 
 interface StartMessage {
   email: string
@@ -78,7 +83,7 @@ interface PendingMsg extends Msg {
 export async function benchmark (
   workspaceId: WorkspaceId[],
   users: Map<string, string[]>,
-  transactorUrl: string,
+  accountsUrl: string,
   cmd: {
     from: number
     steps: number
@@ -168,11 +173,14 @@ export async function benchmark (
 
   const token = generateToken(systemAccountEmail, workspaceId[0])
 
+  setMetadata(serverClientPlugin.metadata.Endpoint, accountsUrl)
+  const endpoint = await getTransactorEndpoint(token, 'external')
+  console.log('monitor endpoint', endpoint, 'workspace', workspaceId[0].name)
   const monitorConnection = isMainThread
     ? ((await ctx.with(
         'connect',
         {},
-        async () => await connect(transactorUrl, workspaceId[0], undefined, { mode: 'backup' })
+        async () => await connect(endpoint, workspaceId[0], undefined, { mode: 'backup' })
       )) as BackupClient & Client)
     : undefined
 
@@ -202,7 +210,7 @@ export async function benchmark (
       const st = Date.now()
 
       try {
-        const fetchUrl = transactorUrl.replace('ws:/', 'http:/') + '/api/v1/statistics?token=' + token
+        const fetchUrl = endpoint.replace('ws:/', 'http:/') + '/api/v1/statistics?token=' + token
         void fetch(fetchUrl)
           .then((res) => {
             void res
@@ -227,7 +235,7 @@ export async function benchmark (
 
                 requestTime = (r?.value ?? 0) / (((r?.operations as number) ?? 0) + 1)
 
-                const tr = extract(json.metrics as Metrics, '🧲 session', 'client', 'handleRequest', '#send-data')
+                const tr = extract(json.metrics as Metrics, '🧲 session', '#send-data')
                 transfer = (tr?.value ?? 0) - oldTransfer
                 oldTransfer = tr?.value ?? 0
               })
@@ -286,14 +294,18 @@ export async function benchmark (
         await Promise.all(
           Array.from(Array(i))
             .map((it, idx) => idx)
-            .map((it) => {
+            .map(async (it) => {
               const wsid = workspaceId[randNum(workspaceId.length)]
               const workId = 'w-' + i + '-' + it
               const wsUsers = users.get(wsid.name) ?? []
+
+              const token = generateToken(systemAccountEmail, wsid)
+              const endpoint = await getTransactorEndpoint(token, 'external')
+              console.log('endpoint', endpoint, 'workspace', wsid.name)
               const msg: StartMessage = {
                 email: wsUsers[randNum(wsUsers.length)],
                 workspaceId: wsid,
-                transactorUrl,
+                transactorUrl: endpoint,
                 id: i,
                 idd: it,
                 workId,
@@ -314,7 +326,7 @@ export async function benchmark (
               }
               workers[i % workers.length].postMessage(msg)
 
-              return new Promise((resolve) => {
+              return await new Promise((resolve) => {
                 works.set(workId, () => {
                   resolve(null)
                 })
@@ -456,5 +468,38 @@ export function benchmarkWorker (): void {
       type: 'complete',
       workId: msg.workId
     })
+  }
+}
+
+export type StressBenchmarkMode = 'wrong' | 'connect-disconnect'
+export async function stressBenchmark (transactor: string, mode: StressBenchmarkMode): Promise<void> {
+  if (mode === 'wrong') {
+    console.log('Stress with wrong workspace/email')
+    let counter = 0
+    const rate = new RateLimiter(1)
+    while (true) {
+      try {
+        counter++
+        console.log('Attempt', counter)
+        const token = generateToken(generateId(), { name: generateId() })
+        await rate.add(async () => {
+          try {
+            const ws = new WebSocket(concatLink(transactor, token))
+            await new Promise<void>((resolve) => {
+              ws.onopen = () => {
+                resolve()
+              }
+            })
+            // ws.close()
+            // await createClient(transactor, token, undefined, 50)
+            console.log('out')
+          } catch (err: any) {
+            console.error(err)
+          }
+        })
+      } catch (err: any) {
+        // Ignore
+      }
+    }
   }
 }

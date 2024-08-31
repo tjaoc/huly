@@ -115,7 +115,7 @@ export interface Tab extends TabBase {
 export type TabModel = Tab[]
 
 export interface TabItem {
-  id: string
+  id: string | number
   label?: string
   labelIntl?: IntlString
   labelParams?: Record<string, any>
@@ -123,6 +123,15 @@ export interface TabItem {
   color?: string
   tooltip?: IntlString
   action?: () => void
+}
+
+export interface BreadcrumbItem {
+  icon?: Asset | AnySvelteComponent | ComponentType
+  iconProps?: any
+  iconWidth?: string
+  withoutIconBackground?: boolean
+  label?: IntlString
+  title?: string
 }
 
 export interface RadioItem {
@@ -181,6 +190,7 @@ export type EditStyle =
   | 'default-large'
   | 'ghost-large'
   | 'modern-ghost-large'
+export type HeaderAdaptive = 'default' | 'freezeActions' | 'autoExtra' | 'doubleRow' | 'disabled'
 
 export interface ButtonItem {
   id: string

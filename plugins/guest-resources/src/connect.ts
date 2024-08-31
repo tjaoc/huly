@@ -2,6 +2,7 @@ import { Analytics } from '@hcengineering/analytics'
 import client from '@hcengineering/client'
 import core, {
   ClientConnectEvent,
+  concatLink,
   setCurrentAccount,
   versionToString,
   type AccountClient,
@@ -10,11 +11,15 @@ import core, {
 } from '@hcengineering/core'
 import login, { loginId } from '@hcengineering/login'
 import { getMetadata, getResource, setMetadata } from '@hcengineering/platform'
-import presentation, { closeClient, refreshClient, setClient, setPresentationCookie } from '@hcengineering/presentation'
-import { getCurrentWorkspaceUrl } from '@hcengineering/presentation/src/utils'
+import presentation, {
+  closeClient,
+  loadServerConfig,
+  refreshClient,
+  setClient,
+  setPresentationCookie
+} from '@hcengineering/presentation'
 import { fetchMetadataLocalStorage, getCurrentLocation, navigate, setMetadataLocalStorage } from '@hcengineering/ui'
 import { writable } from 'svelte/store'
-
 export const versionError = writable<string | undefined>(undefined)
 const versionStorageKey = 'last_server_version'
 
@@ -34,16 +39,20 @@ export async function connect (title: string): Promise<Client | undefined> {
   }
   setMetadata(presentation.metadata.Token, token)
 
-  setPresentationCookie(token, getCurrentWorkspaceUrl())
-
-  const getEndpoint = await getResource(login.function.GetEndpoint)
-  const endpoint = await getEndpoint()
-  if (endpoint == null) {
+  const selectWorkspace = await getResource(login.function.SelectWorkspace)
+  const workspaceLoginInfo = (await selectWorkspace(ws, token))[1]
+  if (workspaceLoginInfo == null) {
     navigate({
       path: [loginId]
     })
     return
   }
+
+  setPresentationCookie(token, workspaceLoginInfo.workspaceId)
+
+  setMetadata(presentation.metadata.Token, token)
+  setMetadata(presentation.metadata.Workspace, workspaceLoginInfo.workspace)
+  setMetadata(presentation.metadata.Endpoint, workspaceLoginInfo.endpoint)
 
   if (_token !== token && _client !== undefined) {
     await _client.close()
@@ -55,18 +64,12 @@ export async function connect (title: string): Promise<Client | undefined> {
   _token = token
 
   let version: Version | undefined
-  let serverEndpoint = endpoint.replace(/^ws/g, 'http')
-  if (serverEndpoint.endsWith('/')) {
-    serverEndpoint = serverEndpoint.substring(0, serverEndpoint.length - 1)
-  }
   const clientFactory = await getResource(client.function.GetClient)
-  _client = await clientFactory(
-    token,
-    endpoint,
-    () => {
+  _client = await clientFactory(token, workspaceLoginInfo.endpoint, {
+    onUpgrade: () => {
       location.reload()
     },
-    () => {
+    onUnauthorized: () => {
       clearMetadata(ws)
       navigate({
         path: [loginId],
@@ -74,9 +77,12 @@ export async function connect (title: string): Promise<Client | undefined> {
       })
     },
     // We need to refresh all active live queries and clear old queries.
-    (event: ClientConnectEvent) => {
+    onConnect: (event: ClientConnectEvent, data: any) => {
       console.log('WorkbenchClient: onConnect', event)
       try {
+        if (event === ClientConnectEvent.Connected) {
+          setMetadata(presentation.metadata.SessionId, data)
+        }
         if ((_clientSet && event === ClientConnectEvent.Connected) || event === ClientConnectEvent.Refresh) {
           void refreshClient(true)
         }
@@ -98,21 +104,24 @@ export async function connect (title: string): Promise<Client | undefined> {
               location.reload()
               versionError.set(`${currentVersionStr} != ${reconnectVersionStr}`)
             }
-            const serverVersion: { version: string } = await (
-              await fetch(serverEndpoint + '/api/v1/version', {})
-            ).json()
-
-            console.log('Server version', serverVersion.version)
-            if (serverVersion.version !== '' && serverVersion.version !== currentVersionStr) {
+            console.log('Server version', reconnectVersionStr)
+            if (reconnectVersionStr !== '' && reconnectVersionStr !== currentVersionStr) {
               if (typeof sessionStorage !== 'undefined') {
-                if (sessionStorage.getItem(versionStorageKey) !== serverVersion.version) {
-                  sessionStorage.setItem(versionStorageKey, serverVersion.version)
+                if (sessionStorage.getItem(versionStorageKey) !== reconnectVersionStr) {
+                  sessionStorage.setItem(versionStorageKey, reconnectVersionStr)
                   location.reload()
                 }
-              } else {
+              }
+              versionError.set(`${currentVersionStr} => ${reconnectVersionStr}`)
+            }
+
+            const frontUrl = getMetadata(presentation.metadata.FrontUrl) ?? ''
+            const currentFrontVersion = getMetadata(presentation.metadata.FrontVersion)
+            if (currentFrontVersion !== undefined) {
+              const frontConfig = await loadServerConfig(concatLink(frontUrl, '/config.json'))
+              if (frontConfig?.version !== undefined && frontConfig.version !== currentFrontVersion) {
                 location.reload()
               }
-              versionError.set(`${currentVersionStr} => ${serverVersion.version}`)
             }
           }
         })()
@@ -120,7 +129,7 @@ export async function connect (title: string): Promise<Client | undefined> {
         console.error(err)
       }
     }
-  )
+  })
   console.log('logging in as guest')
   Analytics.handleEvent('GUEST LOGIN')
   Analytics.setWorkspace(ws)
@@ -136,7 +145,7 @@ export async function connect (title: string): Promise<Client | undefined> {
     version = await _client.findOne<Version>(core.class.Version, {})
     console.log('Model version', version)
 
-    const requiredVersion = getMetadata(presentation.metadata.RequiredVersion)
+    const requiredVersion = getMetadata(presentation.metadata.ModelVersion)
     if (requiredVersion !== undefined && version !== undefined) {
       console.log('checking min model version', requiredVersion)
       const versionStr = versionToString(version)
@@ -146,27 +155,10 @@ export async function connect (title: string): Promise<Client | undefined> {
         return undefined
       }
     }
-
-    try {
-      const serverVersion: { version: string } = await (await fetch(serverEndpoint + '/api/v1/version', {})).json()
-
-      console.log('Server version', serverVersion.version, version !== undefined ? versionToString(version) : '')
-      if (
-        serverVersion.version !== '' &&
-        (version === undefined || serverVersion.version !== versionToString(version))
-      ) {
-        const versionStr = version !== undefined ? versionToString(version) : 'unknown'
-        versionError.set(`${versionStr} => ${serverVersion.version}`)
-        return
-      }
-    } catch (err: any) {
-      versionError.set('server version not available')
-      return
-    }
   } catch (err: any) {
     Analytics.handleError(err)
     console.error(err)
-    const requirdVersion = getMetadata(presentation.metadata.RequiredVersion)
+    const requirdVersion = getMetadata(presentation.metadata.ModelVersion)
     console.log('checking min model version', requirdVersion)
     if (requirdVersion !== undefined) {
       versionError.set(`'unknown' => ${requirdVersion}`)
@@ -191,10 +183,13 @@ function clearMetadata (ws: string): void {
     delete tokens[loc.path[1]]
     setMetadataLocalStorage(login.metadata.LoginTokens, tokens)
   }
+  const currentWorkspace = getMetadata(presentation.metadata.Workspace)
+  if (currentWorkspace !== undefined) {
+    setPresentationCookie('', currentWorkspace)
+  }
+
   setMetadata(presentation.metadata.Token, null)
   setMetadataLocalStorage(login.metadata.LastToken, null)
-  setPresentationCookie('', getCurrentWorkspaceUrl())
-  setMetadataLocalStorage(login.metadata.LoginEndpoint, null)
   setMetadataLocalStorage(login.metadata.LoginEmail, null)
   void closeClient()
 }

@@ -26,7 +26,7 @@
     "eslint-plugin-promise": "^6.1.1",
     "eslint-plugin-n": "^15.4.0",
     "eslint": "^8.54.0",
-    "@types/ws": "^8.5.3",
+    "@types/ws": "^8.5.11",
     "ts-node": "^10.8.0",
     "esbuild": "^0.20.0",
     "@typescript-eslint/parser": "^6.11.0",
@@ -73,6 +73,8 @@
     "@hcengineering/server-tags-resources": "^0.6.0",
     "@hcengineering/server-calendar": "^0.6.0",
     "@hcengineering/server-calendar-resources": "^0.6.0",
+    "@hcengineering/server-github": "^0.6.0",
+    "@hcengineering/server-github-resources": "^0.6.0",
     "@hcengineering/server-gmail": "^0.6.0",
     "@hcengineering/server-gmail-resources": "^0.6.0",
     "@hcengineering/server-preference": "^0.6.0",
@@ -99,9 +101,9 @@
     "@hcengineering/server-training-resources": "^0.1.0",
     "@hcengineering/middleware": "^0.6.0",
     "@hcengineering/minio": "^0.6.0",
-    "@hcengineering/openai": "^0.6.0",
     "@hcengineering/translate": "^0.6.0",
     "@hcengineering/login-assets": "^0.6.0",
+    "@hcengineering/onboard-assets": "^0.6.0",
     "@hcengineering/view-assets": "^0.6.11",
     "@hcengineering/task-assets": "^0.6.19",
     "@hcengineering/chunter-assets": "^0.6.18",
@@ -132,6 +134,7 @@
     "@hcengineering/products-assets": "^0.1.0",
     "@hcengineering/training-assets": "^0.1.0",
     "@hcengineering/login": "^0.6.12",
+    "@hcengineering/onboard": "^0.6.0",
     "@hcengineering/view": "^0.6.13",
     "@hcengineering/task": "^0.6.20",
     "@hcengineering/chunter": "^0.6.20",
@@ -166,6 +169,10 @@
     "@hcengineering/server-love-resources": "^0.6.0",
     "@hcengineering/controlled-documents": "^0.1.0",
     "@hcengineering/products": "^0.1.0",
-    "@hcengineering/training": "^0.1.0"
+    "@hcengineering/training": "^0.1.0",
+    "@hcengineering/github": "^0.6.0",
+    "@hcengineering/github-assets": "^0.6.0",
+    "@hcengineering/server-ai-bot": "^0.6.0",
+    "@hcengineering/server-ai-bot-resources": "^0.6.0"
   }
 }

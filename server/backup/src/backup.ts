@@ -14,12 +14,15 @@
 // limitations under the License.
 //
 
+import { Analytics } from '@hcengineering/analytics'
 import core, {
   AttachedDoc,
   BackupClient,
   Client as CoreClient,
   Doc,
   Domain,
+  DOMAIN_BLOB,
+  DOMAIN_DOC_INDEX_STATE,
   DOMAIN_FULLTEXT_BLOB,
   DOMAIN_MODEL,
   DOMAIN_TRANSIENT,
@@ -28,13 +31,16 @@ import core, {
   RateLimiter,
   Ref,
   SortingOrder,
+  systemAccountEmail,
   TxCollectionCUD,
   WorkspaceId,
   type Blob,
   type DocIndexState
 } from '@hcengineering/core'
-import type { StorageAdapter } from '@hcengineering/server-core'
-import { BlobClient, connect } from '@hcengineering/server-tool'
+import { BlobClient, createClient } from '@hcengineering/server-client'
+import { fullTextPushStagePrefix, type StorageAdapter } from '@hcengineering/server-core'
+import { generateToken } from '@hcengineering/server-token'
+import { connect } from '@hcengineering/server-tool'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { PassThrough } from 'node:stream'
 import { createGzip } from 'node:zlib'
@@ -110,7 +116,6 @@ export interface BackupSnapshot {
 export interface BackupInfo {
   workspace: string
   version: string
-  productId: string
   snapshots: BackupSnapshot[]
   snapshotsIndex?: number
   lastTxId?: string
@@ -230,8 +235,7 @@ export async function cloneWorkspace (
   targetWorkspaceId: WorkspaceId,
   clearTime: boolean = true,
   progress: (value: number) => Promise<void>,
-  skipFullText: boolean,
-  storageAdapter?: StorageAdapter
+  storageAdapter: StorageAdapter
 ): Promise<void> {
   await ctx.with(
     'clone-workspace',
@@ -255,10 +259,6 @@ export async function cloneWorkspace (
             admin: 'true'
           })) as unknown as CoreClient & BackupClient
       )
-
-      const blobClientSource = new BlobClient(transactorUrl, sourceWorkspaceId)
-      const blobClientTarget = new BlobClient(transactorUrl, targetWorkspaceId)
-
       try {
         const domains = sourceConnection
           .getHierarchy()
@@ -267,10 +267,6 @@ export async function cloneWorkspace (
 
         let i = 0
         for (const c of domains) {
-          if (skipFullText && c === DOMAIN_FULLTEXT_BLOB) {
-            ctx.info('clone skip domain...', { domain: c, workspace: targetWorkspaceId.name })
-            continue
-          }
           ctx.info('clone domain...', { domain: c, workspace: targetWorkspaceId.name })
 
           // We need to clean target connection before copying something.
@@ -290,6 +286,7 @@ export async function cloneWorkspace (
           const needRetrieveChunks: Ref<Doc>[][] = []
 
           let processed = 0
+          let domainProgress = 0
           let st = Date.now()
           // Load all digest from collection.
           await ctx.with('retrieve-domain-info', { domain: c }, async (ctx) => {
@@ -349,14 +346,14 @@ export async function cloneWorkspace (
               try {
                 docs = await ctx.with('load-docs', {}, async (ctx) => await sourceConnection.loadDocs(c, needRetrieve))
                 if (clearTime) {
-                  docs = prepareClonedDocuments(docs, sourceConnection, skipFullText)
+                  docs = prepareClonedDocuments(docs, sourceConnection)
                 }
+                const executor = new RateLimiter(10)
                 for (const d of docs) {
                   if (d._class === core.class.Blob) {
                     const blob = d as Blob
-                    const blobs: Buffer[] = []
-                    try {
-                      if (storageAdapter !== undefined) {
+                    await executor.exec(async () => {
+                      try {
                         ctx.info('clone blob', { name: blob._id, contentType: blob.contentType })
                         const readable = await storageAdapter.get(ctx, sourceWorkspaceId, blob._id)
                         const passThrue = new PassThrough()
@@ -369,29 +366,18 @@ export async function cloneWorkspace (
                           blob.contentType,
                           blob.size
                         )
-                      } else {
-                        ctx.info('clone blob', { name: blob._id, contentType: blob.contentType })
-                        await ctx.with('download-blob', { contentType: blob.contentType }, async (ctx) => {
-                          await blobClientSource.writeTo(ctx, blob._id, blob.size, {
-                            write: (b, cb) => {
-                              blobs.push(b)
-                              cb()
-                            },
-                            end: (cb) => {
-                              cb()
-                            }
-                          })
-                        })
-                        await ctx.with('upload-blob', { contentType: blob.contentType }, async (ctx) => {
-                          const buffer = Buffer.concat(blobs)
-                          await blobClientTarget.upload(ctx, blob._id, buffer.length, blob.contentType, buffer)
-                        })
+                      } catch (err: any) {
+                        Analytics.handleError(err)
+                        console.error(err)
                       }
-                    } catch (err: any) {
-                      console.error(err)
-                    }
+                      domainProgress++
+                      await progress((100 / domains.length) * i + (100 / domains.length / processed) * domainProgress)
+                    })
+                  } else {
+                    domainProgress++
                   }
                 }
+                await executor.waitProcessing()
                 await ctx.with(
                   'upload-docs',
                   {},
@@ -400,8 +386,10 @@ export async function cloneWorkspace (
                   },
                   { length: docs.length }
                 )
+                await progress((100 / domains.length) * i + (100 / domains.length / processed) * domainProgress)
               } catch (err: any) {
                 console.log(err)
+                Analytics.handleError(err)
                 // Put back.
                 needRetrieveChunks.push(needRetrieve)
                 continue
@@ -414,6 +402,7 @@ export async function cloneWorkspace (
         }
       } catch (err: any) {
         console.error(err)
+        Analytics.handleError(err)
       } finally {
         ctx.info('end clone')
         await ctx.with('close-source', {}, async (ctx) => {
@@ -432,11 +421,7 @@ export async function cloneWorkspace (
   )
 }
 
-function prepareClonedDocuments (
-  docs: Doc[],
-  sourceConnection: CoreClient & BackupClient,
-  skipFullText: boolean
-): Doc[] {
+function prepareClonedDocuments (docs: Doc[], sourceConnection: CoreClient & BackupClient): Doc[] {
   docs = docs.map((p) => {
     let collectionCud = false
     try {
@@ -446,8 +431,13 @@ function prepareClonedDocuments (
     }
 
     // if full text is skipped, we need to clean stages for indexes.
-    if (p._class === core.class.DocIndexState && skipFullText) {
-      ;(p as DocIndexState).stages = {}
+    if (p._class === core.class.DocIndexState) {
+      for (const k of Object.keys((p as DocIndexState).stages)) {
+        if (k.startsWith(fullTextPushStagePrefix)) {
+          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+          delete (p as DocIndexState).stages[k]
+        }
+      }
     }
 
     if (collectionCud) {
@@ -515,6 +505,8 @@ export async function backup (
     connectTimeout: number
     skipBlobContentTypes: string[]
     blobDownloadLimit: number
+    connection?: CoreClient & BackupClient
+    storageAdapter?: StorageAdapter
   } = {
     force: false,
     recheck: false,
@@ -541,18 +533,16 @@ export async function backup (
       canceled = true
     }, options.timeout)
   }
-  const connection = (await connect(
-    transactorUrl,
-    workspaceId,
-    undefined,
-    {
-      mode: 'backup'
-    },
-    undefined,
-    options.connectTimeout
-  )) as unknown as CoreClient & BackupClient
 
-  const blobClient = new BlobClient(transactorUrl, workspaceId)
+  const token = generateToken(systemAccountEmail, workspaceId, {
+    mode: 'backup'
+  })
+
+  const connection =
+    options.connection ??
+    ((await createClient(transactorUrl, token, undefined, options.connectTimeout)) as CoreClient & BackupClient)
+
+  const blobClient = new BlobClient(transactorUrl, token, workspaceId, { storageAdapter: options.storageAdapter })
   ctx.info('starting backup', { workspace: workspaceId.name })
 
   let tmpDir: string | undefined
@@ -566,6 +556,7 @@ export async function backup (
           (it) =>
             it !== DOMAIN_TRANSIENT &&
             it !== DOMAIN_MODEL &&
+            it !== ('fulltext-blob' as Domain) &&
             !options.skipDomains.includes(it) &&
             (options.include === undefined || options.include.has(it))
         )
@@ -574,7 +565,6 @@ export async function backup (
 
     let backupInfo: BackupInfo = {
       workspace: workspaceId.name,
-      productId: workspaceId.productId,
       version: '0.6.2',
       snapshots: []
     }
@@ -589,7 +579,6 @@ export async function backup (
     backupInfo.version = '0.6.2'
 
     backupInfo.workspace = workspaceId.name
-    backupInfo.productId = workspaceId.productId
 
     // Skip backup if there is no transaction changes.
     const lastTx = await connection.findOne(
@@ -908,14 +897,15 @@ export async function backup (
                   ctx.error('error packing file', { err })
                 }
               })
-              // if (blob.size > 1024 * 1024) {
-              ctx.info('download blob', {
-                _id: blob._id,
-                contentType: blob.contentType,
-                size: blob.size,
-                provider: blob.provider,
-                pending: docs.length
-              })
+              if (blob.size > 1024 * 1024) {
+                ctx.info('download blob', {
+                  _id: blob._id,
+                  contentType: blob.contentType,
+                  size: blob.size,
+                  provider: blob.provider,
+                  pending: docs.length
+                })
+              }
 
               printDownloaded(blob._id, blob.size)
             } catch (err: any) {
@@ -981,7 +971,9 @@ export async function backup (
     ctx.error('backup error', { err, workspace: workspaceId.name })
   } finally {
     ctx.info('end backup', { workspace: workspaceId.name })
-    await connection.close()
+    if (options.connection === undefined) {
+      await connection.close()
+    }
     ctx.end()
     if (options.timeout !== -1) {
       clearTimeout(timer)
@@ -1100,6 +1092,7 @@ export async function restore (
   const infoFile = 'backup.json.gz'
 
   if (!(await storage.exists(infoFile))) {
+    ctx.error('file not pressent', { file: infoFile })
     throw new Error(`${infoFile} should present to restore`)
   }
   const backupInfo: BackupInfo = JSON.parse(gunzipSync(await storage.loadFile(infoFile)).toString())
@@ -1107,13 +1100,14 @@ export async function restore (
   if (opt.date !== -1) {
     const bk = backupInfo.snapshots.findIndex((it) => it.date === opt.date)
     if (bk === -1) {
+      ctx.error('could not restore to', { date: opt.date, file: infoFile, workspaceId: workspaceId.name })
       throw new Error(`${infoFile} could not restore to ${opt.date}. Snapshot is missing.`)
     }
     snapshots = backupInfo.snapshots.slice(0, bk + 1)
   } else {
     opt.date = snapshots[snapshots.length - 1].date
   }
-  console.log('restore to ', opt.date, new Date(opt.date))
+  ctx.info('restore to ', { id: opt.date, date: new Date(opt.date).toDateString() })
   const rsnapshots = Array.from(snapshots).reverse()
 
   // Collect all possible domains
@@ -1122,13 +1116,16 @@ export async function restore (
     Object.keys(s.domains).forEach((it) => domains.add(it as Domain))
   }
 
-  console.log('connecting:', transactorUrl, workspaceId.name)
-  const connection = (await connect(transactorUrl, workspaceId, undefined, {
+  ctx.info('connecting:', { transactorUrl, workspace: workspaceId.name })
+
+  const token = generateToken(systemAccountEmail, workspaceId, {
     mode: 'backup',
     model: 'upgrade'
-  })) as unknown as CoreClient & BackupClient
+  })
 
-  const blobClient = new BlobClient(transactorUrl, workspaceId)
+  const connection = (await createClient(transactorUrl, token)) as CoreClient & BackupClient
+
+  const blobClient = new BlobClient(transactorUrl, token, workspaceId)
   console.log('connected')
 
   // We need to find empty domains and clean them.
@@ -1136,6 +1133,9 @@ export async function restore (
   for (const d of allDomains) {
     domains.add(d)
   }
+
+  // We do not backup elastic anymore
+  domains.delete('fulltext-blob' as Domain)
 
   let uploadedMb = 0
   let uploaded = 0
@@ -1148,7 +1148,8 @@ export async function restore (
       uploadedMb = newId
       ctx.info('Uploaded', {
         msg,
-        written: newDownloadedMb
+        written: newDownloadedMb,
+        workspace: workspaceId.name
       })
     }
   }
@@ -1177,7 +1178,7 @@ export async function restore (
         }
 
         if (el > 2500) {
-          console.log(c, ' loaded from server', loaded, el, chunks)
+          ctx.info('loaded from server', { domain: c, loaded, el, chunks, workspace: workspaceId.name })
           el = 0
           chunks = 0
         }
@@ -1190,8 +1191,12 @@ export async function restore (
         await connection.closeChunk(idx)
       }
     }
-    console.log(' loaded', loaded)
-    console.log('\tcompare documents', changeset.size, serverChangeset.size)
+    ctx.info('loaded', { loaded, workspace: workspaceId.name })
+    ctx.info('\tcompare documents', {
+      size: changeset.size,
+      serverSize: serverChangeset.size,
+      workspace: workspaceId.name
+    })
 
     // Let's find difference
     const docsToAdd = new Map(
@@ -1208,13 +1213,23 @@ export async function restore (
     async function sendChunk (doc: Doc | undefined, len: number): Promise<void> {
       if (doc !== undefined) {
         docsToAdd.delete(doc._id)
+        if (opt.recheck === true) {
+          // We need to clear %hash% in case our is wrong.
+          delete (doc as any)['%hash%']
+        }
         docs.push(doc)
       }
       sendSize = sendSize + len
 
       if (sendSize > dataUploadSize || (doc === undefined && docs.length > 0)) {
         totalSend += docs.length
-        console.log('upload', docs.length, `send: ${totalSend} from ${docsToAdd.size + totalSend}`, 'size:', sendSize)
+        ctx.info('upload', {
+          docs: docs.length,
+          totalSend,
+          from: docsToAdd.size + totalSend,
+          sendSize,
+          workspace: workspaceId.name
+        })
         await connection.upload(c, docs)
         docs.length = 0
         sendSize = 0
@@ -1230,13 +1245,13 @@ export async function restore (
         const sDigest = await loadDigest(ctx, storage, [s], c)
         const requiredDocs = new Map(Array.from(sDigest.entries()).filter(([it]) => docsToAdd.has(it)))
         if (requiredDocs.size > 0) {
-          console.log('updating', c, requiredDocs.size)
+          ctx.info('updating', { domain: c, requiredDocs: requiredDocs.size, workspace: workspaceId.name })
           // We have required documents here.
           for (const sf of d.storage ?? []) {
             if (docsToAdd.size === 0) {
               break
             }
-            console.log('processing', sf, processed)
+            ctx.info('processing', { storageFile: sf, processed, workspace: workspaceId.name })
 
             const readStream = await storage.load(sf)
             const ex = extract()
@@ -1338,11 +1353,27 @@ export async function restore (
     }
 
     await sendChunk(undefined, 0)
-    if (docsToRemove.length > 0 && opt.merge !== true) {
-      console.log('cleanup', docsToRemove.length)
+    async function performCleanOfDomain (docsToRemove: Ref<Doc>[], c: Domain): Promise<void> {
+      ctx.info('cleanup', { toRemove: docsToRemove.length, workspace: workspaceId.name, domain: c })
       while (docsToRemove.length > 0) {
         const part = docsToRemove.splice(0, 10000)
-        await connection.clean(c, part)
+        try {
+          await connection.clean(c, part)
+        } catch (err: any) {
+          ctx.error('failed to clean, will retry', { error: err, workspaceId: workspaceId.name })
+          docsToRemove.push(...part)
+        }
+      }
+    }
+    if (c !== DOMAIN_BLOB) {
+      // Clean domain documents if not blob
+      if (docsToRemove.length > 0 && opt.merge !== true) {
+        if (c === DOMAIN_DOC_INDEX_STATE) {
+          // We need o clean a FULLTEXT domain as well
+          await performCleanOfDomain([...docsToRemove], DOMAIN_FULLTEXT_BLOB)
+        }
+
+        await performCleanOfDomain(docsToRemove, c)
       }
     }
   }
@@ -1358,7 +1389,7 @@ export async function restore (
         continue
       }
       await limiter.exec(async () => {
-        console.log('processing domain', c)
+        ctx.info('processing domain', { domain: c, workspaceId: workspaceId.name })
         let retry = 5
         let delay = 1
         while (retry > 0) {
@@ -1366,13 +1397,13 @@ export async function restore (
           try {
             await processDomain(c)
             if (delay > 1) {
-              console.log('retry-success')
+              ctx.warn('retry-success', { retry, delay, workspaceId: workspaceId.name })
             }
             break
           } catch (err: any) {
-            console.error('error', err)
+            ctx.error('failed to process domain', { err, domain: c, workspaceId: workspaceId.name })
             if (retry !== 0) {
-              console.log('cool-down to retry', delay)
+              ctx.warn('cool-down to retry', { delay, domain: c, workspaceId: workspaceId.name })
               await new Promise((resolve) => setTimeout(resolve, delay * 1000))
               delay++
             }

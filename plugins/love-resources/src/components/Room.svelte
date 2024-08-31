@@ -31,7 +31,7 @@
   } from 'livekit-client'
   import { onDestroy, onMount, tick } from 'svelte'
   import love from '../plugin'
-  import { currentRoom, infos, invites, myInfo, myRequests } from '../stores'
+  import { storePromise, currentRoom, infos, invites, myInfo, myRequests } from '../stores'
   import {
     awaitConnect,
     isConnected,
@@ -43,6 +43,7 @@
   } from '../utils'
   import ControlBar from './ControlBar.svelte'
   import ParticipantView from './ParticipantView.svelte'
+  import presentation from '@hcengineering/presentation'
 
   export let withVideo: boolean
   export let room: TypeRoom
@@ -221,7 +222,13 @@
 
     configured = true
 
-    if (!$isConnected && !$isCurrentInstanceConnected) {
+    await $storePromise
+
+    if (
+      !$isConnected &&
+      !$isCurrentInstanceConnected &&
+      $myInfo?.sessionId === getMetadata(presentation.metadata.SessionId)
+    ) {
       const info = $infos.filter((p) => p.room === room._id)
       await tryConnect($personByIdStore, $myInfo, room, info, $myRequests, $invites)
     }

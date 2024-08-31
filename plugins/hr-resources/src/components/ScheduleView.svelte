@@ -21,6 +21,7 @@
   import { createQuery, getClient } from '@hcengineering/presentation'
   import tracker, { Issue } from '@hcengineering/tracker'
   import { Label } from '@hcengineering/ui'
+  import { Viewlet, ViewletPreference } from '@hcengineering/view'
   import { groupBy } from '@hcengineering/view-resources'
   import hr from '../plugin'
   import { EmployeeReports, getEndDate, getStartDate } from '../utils'
@@ -35,6 +36,9 @@
   export let mode: CalendarMode
   export let display: 'chart' | 'stats'
   export let staffQuery: DocumentQuery<Staff> = {}
+  export let preference: ViewletPreference | undefined = undefined
+  export let viewlet: Viewlet | undefined = undefined
+  export let loading: boolean = false
 
   $: startDate =
     mode === CalendarMode.Year
@@ -212,11 +216,13 @@
             tasks: new Map()
           }
           const tsk = r.$lookup?.attachedTo as Issue
-          newMap.set(r.employee, {
-            value: or.value + r.value,
-            reports: [...or.reports, r],
-            tasks: or.tasks.set(tsk._id, tsk)
-          })
+          if (tsk !== undefined) {
+            newMap.set(r.employee, {
+              value: or.value + r.value,
+              reports: [...or.reports, r],
+              tasks: or.tasks.set(tsk._id, tsk)
+            })
+          }
         }
       }
       timeReports = newMap
@@ -313,6 +319,9 @@
         {holidays}
         {staffDepartmentMap}
         {getHolidays}
+        {preference}
+        {viewlet}
+        {loading}
       />
     {/if}
   {/if}

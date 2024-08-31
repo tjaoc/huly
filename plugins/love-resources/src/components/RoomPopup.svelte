@@ -27,7 +27,8 @@
     location,
     navigate,
     showPopup,
-    Scroller
+    Scroller,
+    closePanel
   } from '@hcengineering/ui'
   import {
     ParticipantInfo,
@@ -104,6 +105,7 @@
   }
 
   function back (): void {
+    closePanel()
     const loc = getCurrentLocation()
     loc.path[2] = loveId
     loc.path.length = 3
@@ -127,7 +129,6 @@
   }
 
   const me = (getCurrentAccount() as PersonAccount).person
-  $: myRoom = isOffice(room) && room.person === me
 </script>
 
 <div class="antiPopup room-popup">
@@ -194,9 +195,9 @@
       />
     </div>
   {/if}
-  {#if (joined && !myRoom) || (!allowLeave && $myRequests.length === 0 && !myRoom)}
+  {#if $location.path[2] !== loveId || (joined && allowLeave) || !joined}
     <div class="btns flex-row-center flex-reverse flex-no-shrink w-full flex-gap-2">
-      {#if allowLeave}
+      {#if joined && allowLeave}
         <ModernButton
           label={love.string.LeaveRoom}
           icon={love.icon.LeaveRoom}
@@ -204,7 +205,7 @@
           kind={'negative'}
           on:click={leave}
         />
-      {:else if $myRequests.length === 0 && !myRoom}
+      {:else if !joined}
         <ModernButton
           icon={love.icon.EnterRoom}
           label={love.string.EnterRoom}

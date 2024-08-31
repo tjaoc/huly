@@ -18,6 +18,7 @@ import {
   AttachedDoc,
   Attribute,
   Class,
+  CollaborativeDoc,
   CollectionSize,
   Data,
   Doc,
@@ -33,6 +34,7 @@ import {
 import { Asset, IntlString, Plugin, Resource, plugin } from '@hcengineering/platform'
 import { Preference } from '@hcengineering/preference'
 import { TagCategory, TagElement, TagReference } from '@hcengineering/tags'
+import { ToDo } from '@hcengineering/time'
 import {
   ProjectTypeDescriptor,
   Task,
@@ -43,6 +45,8 @@ import {
 } from '@hcengineering/task'
 import { AnyComponent, ComponentExtensionId, Location, ResolvedLocation } from '@hcengineering/ui'
 import { Action, ActionCategory, IconProps } from '@hcengineering/view'
+
+export * from './analytics'
 
 /**
  * @public
@@ -178,7 +182,7 @@ export interface Milestone extends Doc {
 export interface Issue extends Task {
   attachedTo: Ref<Issue>
   title: string
-  description: Markup
+  description: CollaborativeDoc
   status: Ref<IssueStatus>
   priority: IssuePriority
 
@@ -213,6 +217,8 @@ export interface Issue extends Task {
     // Child id in template
     childId?: string
   }
+
+  todos?: CollectionSize<ToDo>
 }
 
 /**
@@ -352,6 +358,7 @@ export interface Component extends Doc {
  * @public
  */
 export const trackerId = 'tracker' as Plugin
+export * from './analytics'
 
 const pluginState = plugin(trackerId, {
   class: {

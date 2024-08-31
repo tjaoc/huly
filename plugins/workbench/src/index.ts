@@ -43,7 +43,6 @@ export interface Application extends Doc {
   navHeaderComponent?: AnyComponent
   accessLevel?: AccountRole
   navFooterComponent?: AnyComponent
-  modern?: boolean
 }
 
 /**
@@ -135,6 +134,8 @@ export interface SpaceView extends Class<Obj> {
  * @public
  */
 export const workbenchId = 'workbench' as Plugin
+
+export * from './analytics'
 
 export default plugin(workbenchId, {
   class: {

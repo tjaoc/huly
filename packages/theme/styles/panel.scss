@@ -61,7 +61,7 @@
     min-width: 0;
     min-height: 0;
   }
-  &.small { padding-bottom: .75rem; }
+  &.small { padding-bottom: var(--spacing-1_5); }
 }
 
 .hulyNavGroup-container {
@@ -291,8 +291,13 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  
+  border-radius: var(--small-focus-BorderRadius);
+
   &:not(.rowContent) { flex-direction: column; }
+  .panel-instance & {
+    background-color: var(--theme-panel-color);
+    border: 1px solid var(--theme-divider-color);
+  }
 
   .popupPanel-title {
     display: flex;
@@ -300,7 +305,7 @@
     justify-content: stretch;
     align-items: center;
     min-width: 0;
-    min-height: 3.25rem;
+    min-height: 3.5rem;
     background-color: var(--theme-comp-header-color);
     border-bottom: 1px solid var(--theme-divider-color);
 
@@ -340,6 +345,7 @@
   }
 
   .popupPanel-body {
+    overflow: hidden;
     position: relative;
     display: flex;
     min-width: 0;
@@ -347,7 +353,7 @@
     width: 100%;
     height: 100%;
     background-color: var(--theme-panel-color);
-    border: 1px solid var(--theme-divider-color);
+    // border: 1px solid var(--theme-divider-color);
     border-top: none;
     border-left: none;
 
@@ -358,10 +364,15 @@
       justify-content: center;
     }
     &__main, &__mobile, &__aside {
+      overflow: hidden;
       display: flex;
       flex-direction: column;
       min-width: 0;
       min-height: 0;
+
+      @media print {
+        overflow: visible;
+      }
     }
     &__main, &__aside {
       height: 100%;
@@ -531,6 +542,7 @@
 
     @media print {
       border: none;
+      overflow: visible;
     }
 
     // &.asideShown .popupPanel-body__main {
@@ -555,18 +567,12 @@
     visibility: hidden;
   }
 
-  &.modern {
-    border: 1px solid transparent;
-    border-radius: var(--small-focus-BorderRadius);
-
-    .popupPanel-title {
-      min-height: 3.5rem;
-    }
-  }
-
   @media print {
     overflow: visible;
   }
+}
+.popupPanel .popupPanel-body__aside .popupPanel-body__aside-grid + .popupPanel-title {
+  border-top: 1px solid var(--theme-divider-color);
 }
 
 // Full size state

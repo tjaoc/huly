@@ -27,7 +27,6 @@ import {
   type AttachedDoc,
   type Class,
   type Doc,
-  type DocIndexState,
   type IndexingConfiguration,
   type TxCollectionCUD
 } from '@hcengineering/core'
@@ -49,9 +48,7 @@ import {
   TEnum,
   TEnumOf,
   TFullTextSearchContext,
-  TFulltextData,
   TIndexConfiguration,
-  TIndexStageState,
   TInterface,
   TMigrationState,
   TMixin,
@@ -64,7 +61,6 @@ import {
   TTypeBoolean,
   TTypeCollaborativeDoc,
   TTypeCollaborativeDocVersion,
-  TTypeCollaborativeMarkup,
   TTypeDate,
   TTypeFileSize,
   TTypeHyperlink,
@@ -96,9 +92,9 @@ import { TUserStatus } from './transient'
 import {
   TTx,
   TTxApplyIf,
-  TTxCUD,
   TTxCollectionCUD,
   TTxCreateDoc,
+  TTxCUD,
   TTxMixin,
   TTxRemoveDoc,
   TTxUpdateDoc,
@@ -144,7 +140,6 @@ export function createModel (builder: Builder): void {
     TTypeMarkup,
     TTypeCollaborativeDoc,
     TTypeCollaborativeDocVersion,
-    TTypeCollaborativeMarkup,
     TArrOf,
     TRefTo,
     TTypeDate,
@@ -164,10 +159,8 @@ export function createModel (builder: Builder): void {
     TUserStatus,
     TEnum,
     TTypeAny,
-    TFulltextData,
     TTypeRelatedDocument,
     TDocIndexState,
-    TIndexStageState,
     TFullTextSearchContext,
     TConfiguration,
     TConfigurationElement,
@@ -196,26 +189,33 @@ export function createModel (builder: Builder): void {
     core.class.Class,
     core.mixin.IndexConfiguration,
     {
-      indexes: [
-        'tx.objectId',
-        'tx.operations.attachedTo',
-        'space',
-        {
-          objectSpace: 1,
-          _id: 1,
-          modifiedOn: 1
-        },
-        {
-          objectSpace: 1,
-          modifiedBy: 1,
-          objectClass: 1
-        }
-      ]
+      indexes: ['tx.objectId', 'tx.operations.attachedTo']
     }
   )
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_TX,
-    disabled: [{ space: 1 }, { objectClass: 1 }, { createdBy: 1 }, { createdBy: -1 }, { createdOn: -1 }]
+    disabled: [
+      { _class: 1 },
+      { space: 1 },
+      { objectClass: 1 },
+      { createdBy: 1 },
+      { createdBy: -1 },
+      { createdOn: -1 },
+      { modifiedBy: 1 },
+      { objectSpace: 1 }
+    ],
+    indexes: [
+      {
+        keys: {
+          objectSpace: 1,
+          _id: 1,
+          modifiedOn: 1
+        },
+        filter: {
+          objectSpace: core.space.Model
+        }
+      }
+    ]
   })
 
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
@@ -266,7 +266,14 @@ export function createModel (builder: Builder): void {
 
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_STATUS,
-    disabled: [{ modifiedOn: 1 }, { modifiedBy: 1 }, { createdBy: 1 }, { createdBy: -1 }, { createdOn: -1 }]
+    disabled: [
+      { modifiedOn: 1 },
+      { modifiedBy: 1 },
+      { createdBy: 1 },
+      { createdBy: -1 },
+      { createdOn: -1 },
+      { space: 1 }
+    ]
   })
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_SPACE,
@@ -275,11 +282,24 @@ export function createModel (builder: Builder): void {
 
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_BLOB,
-    disabled: [{ _class: 1 }, { space: 1 }, { modifiedBy: 1 }, { createdBy: 1 }, { createdBy: -1 }, { createdOn: -1 }]
+    disabled: [
+      { _class: 1 },
+      { space: 1 },
+      { modifiedBy: 1 },
+      { createdBy: 1 },
+      { createdBy: -1 },
+      { createdOn: -1 },
+      { modifiedOn: 1 }
+    ]
   })
 
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_DOC_INDEX_STATE,
+    indexes: [
+      {
+        keys: { needIndex: 1 }
+      }
+    ],
     disabled: [
       { attachedToClass: 1 },
       { stages: 1 },
@@ -290,35 +310,8 @@ export function createModel (builder: Builder): void {
       { createdBy: 1 },
       { createdBy: -1 },
       { createdOn: -1 }
-    ],
-    skip: ['stages.']
+    ]
   })
-
-  builder.mixin<Class<DocIndexState>, IndexingConfiguration<TxCollectionCUD<Doc, AttachedDoc>>>(
-    core.class.DocIndexState,
-    core.class.Class,
-    core.mixin.IndexConfiguration,
-    {
-      indexes: [
-        {
-          _class: 1,
-          stages: 1,
-          _id: 1,
-          modifiedOn: 1
-        },
-        {
-          _class: 1,
-          _id: 1,
-          modifiedOn: 1
-        },
-        {
-          _class: 1,
-          _id: 1,
-          objectClass: 1
-        }
-      ]
-    }
-  )
 
   builder.mixin(core.class.Space, core.class.Class, core.mixin.FullTextSearchContext, {
     childProcessingAllowed: false
