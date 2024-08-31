@@ -18,8 +18,9 @@ import contact, { type Employee, type Person } from '@hcengineering/contact'
 import {
   DOMAIN_MODEL,
   DateRangeMode,
-  type Domain,
   IndexKind,
+  type CollaborativeDoc,
+  type Domain,
   type Markup,
   type Ref,
   type RelatedDocument,
@@ -27,6 +28,7 @@ import {
   type Type,
   type RolesAssignment,
   type Role,
+  type CollectionSize,
   Account
 } from '@hcengineering/core'
 import {
@@ -38,7 +40,7 @@ import {
   Model,
   Prop,
   ReadOnly,
-  TypeCollaborativeMarkup,
+  TypeCollaborativeDoc,
   TypeDate,
   TypeMarkup,
   TypeNumber,
@@ -52,6 +54,7 @@ import core, { TAttachedDoc, TDoc, TStatus, TType } from '@hcengineering/model-c
 import task, { TTask, TProject as TTaskProject } from '@hcengineering/model-task'
 import { getEmbeddedLabel, type IntlString } from '@hcengineering/platform'
 import tags, { type TagElement } from '@hcengineering/tags'
+import time, { type ToDo } from '@hcengineering/time'
 import {
   type ProjectTargetPreference,
   type Component,
@@ -180,9 +183,9 @@ export class TIssue extends TTask implements Issue {
   @Index(IndexKind.FullText)
     title!: string
 
-  @Prop(TypeCollaborativeMarkup(), tracker.string.Description)
+  @Prop(TypeCollaborativeDoc(), tracker.string.Description)
   @Index(IndexKind.FullText)
-    description!: Markup
+    description!: CollaborativeDoc
 
   @Prop(TypeRef(tracker.class.IssueStatus), tracker.string.Status, {
     _id: tracker.attribute.IssueStatus,
@@ -251,6 +254,9 @@ export class TIssue extends TTask implements Issue {
     reports!: number
 
   declare childInfo: IssueChildInfo[]
+
+  @Prop(Collection(time.class.ToDo), getEmbeddedLabel('Action Items'))
+    todos?: CollectionSize<ToDo>
 }
 /**
  * @public
@@ -270,7 +276,7 @@ export class TIssueTemplate extends TDoc implements IssueTemplate {
   @Index(IndexKind.FullText)
     title!: string
 
-  @Prop(TypeCollaborativeMarkup(), tracker.string.Description)
+  @Prop(TypeMarkup(), tracker.string.Description)
   @Index(IndexKind.FullText)
     description!: Markup
 

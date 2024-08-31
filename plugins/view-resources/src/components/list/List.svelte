@@ -43,6 +43,7 @@
   export let createItemDialog: AnyComponent | AnySvelteComponent | undefined = undefined
   export let createItemDialogProps: Record<string, any> | undefined = undefined
   export let createItemLabel: IntlString | undefined = undefined
+  export let createItemEvent: string | undefined = undefined
   export let viewOptionsConfig: ViewOptionModel[] | undefined = undefined
   export let viewOptions: ViewOptions
   export let flatHeaders = false
@@ -83,7 +84,7 @@
 
   let categoryQueryOptions: Partial<FindOptions<Doc>>
   $: categoryQueryOptions = {
-    ...noLookupOptions(resultOptions),
+    ...noLookupSortingOptions(resultOptions),
     projection: {
       ...resultOptions.projection,
       _id: 1,
@@ -151,8 +152,8 @@
     return newQuery
   }
 
-  function noLookupOptions (options: FindOptions<Doc>): FindOptions<Doc> {
-    const { lookup, ...resultOptions } = options
+  function noLookupSortingOptions (options: FindOptions<Doc>): FindOptions<Doc> {
+    const { lookup, sort, ...resultOptions } = options
     return resultOptions
   }
 
@@ -224,6 +225,7 @@
     {createItemDialog}
     {createItemDialogProps}
     {createItemLabel}
+    {createItemEvent}
     on:check
     on:uncheckAll={uncheckAll}
     on:row-focus

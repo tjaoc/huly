@@ -16,22 +16,16 @@
 import { Client, type BucketItem, type BucketStream } from 'minio'
 
 import core, {
-  concatLink,
   toWorkspaceString,
   withContext,
   type Blob,
-  type BlobLookup,
   type MeasureContext,
   type Ref,
-  type WorkspaceId,
-  type WorkspaceIdWithUrl,
-  type Branding
+  type WorkspaceId
 } from '@hcengineering/core'
-
 import { getMetadata } from '@hcengineering/platform'
 import serverCore, {
   removeAllObjects,
-  type BlobLookupResult,
   type BlobStorageIterator,
   type BucketInfo,
   type ListBlobResult,
@@ -62,7 +56,6 @@ export interface MinioConfig extends StorageConfig {
 export class MinioService implements StorageAdapter {
   static config = 'minio'
   client: Client
-  contentTypes?: string[]
   constructor (readonly opt: MinioConfig) {
     this.client = new Client({
       endPoint: opt.endpoint,
@@ -72,35 +65,19 @@ export class MinioService implements StorageAdapter {
       port: opt.port ?? 9000,
       useSSL: opt.useSSL === 'true'
     })
-    this.contentTypes = opt.contentTypes
   }
 
   async initialize (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {}
-
-  async lookup (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceIdWithUrl,
-    branding: Branding | null,
-    docs: Blob[]
-  ): Promise<BlobLookupResult> {
-    const frontUrl = branding?.front ?? getMetadata(serverCore.metadata.FrontUrl) ?? ''
-    for (const d of docs) {
-      // Let's add current from URI for previews.
-      const bl = d as BlobLookup
-      bl.downloadUrl = concatLink(frontUrl, `/files/${workspaceId.workspaceUrl}?file=${d._id}`)
-    }
-    return { lookups: docs as BlobLookup[] }
-  }
 
   /**
    * @public
    */
   getBucketId (workspaceId: WorkspaceId): string {
-    return this.opt.rootBucket ?? (this.opt.bucketPrefix ?? '') + toWorkspaceString(workspaceId, '.')
+    return this.opt.rootBucket ?? (this.opt.bucketPrefix ?? '') + toWorkspaceString(workspaceId)
   }
 
   getBucketFolder (workspaceId: WorkspaceId): string {
-    return toWorkspaceString(workspaceId, '.')
+    return toWorkspaceString(workspaceId)
   }
 
   async close (): Promise<void> {}
@@ -120,7 +97,7 @@ export class MinioService implements StorageAdapter {
     }
   }
 
-  async listBuckets (ctx: MeasureContext, productId: string): Promise<BucketInfo[]> {
+  async listBuckets (ctx: MeasureContext): Promise<BucketInfo[]> {
     if (this.opt.rootBucket !== undefined) {
       const info = new Map<string, BucketInfo>()
       const stream = this.client.listObjects(this.opt.rootBucket, '', false)
@@ -140,9 +117,9 @@ export class MinioService implements StorageAdapter {
             info.set(wsName, {
               name: wsName,
               delete: async () => {
-                await this.delete(ctx, { name: wsName, productId })
+                await this.delete(ctx, { name: wsName })
               },
-              list: async () => await this.listStream(ctx, { name: wsName, productId })
+              list: async () => await this.listStream(ctx, { name: wsName })
             })
           }
         })
@@ -151,8 +128,7 @@ export class MinioService implements StorageAdapter {
       return Array.from(info.values())
     } else {
       const productPostfix = this.getBucketFolder({
-        name: '',
-        productId
+        name: ''
       })
       const buckets = await this.client.listBuckets()
       return buckets
@@ -163,9 +139,9 @@ export class MinioService implements StorageAdapter {
           return {
             name,
             delete: async () => {
-              await this.delete(ctx, { name, productId })
+              await this.delete(ctx, { name })
             },
-            list: async () => await this.listStream(ctx, { name, productId })
+            list: async () => await this.listStream(ctx, { name })
           }
         })
     }
@@ -385,6 +361,12 @@ export class MinioService implements StorageAdapter {
       offset,
       length
     )
+  }
+
+  @withContext('getUrl')
+  async getUrl (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<string> {
+    const filesUrl = getMetadata(serverCore.metadata.FilesUrl) ?? ''
+    return filesUrl.replaceAll(':workspace', workspaceId.name).replaceAll(':blobId', objectName)
   }
 }
 

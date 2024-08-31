@@ -10,6 +10,7 @@ import { contactId } from '@hcengineering/contact'
 import { documentsId } from '@hcengineering/controlled-documents'
 import { documentId } from '@hcengineering/document'
 import { driveId } from '@hcengineering/drive'
+import { githubId } from '@hcengineering/github'
 import { gmailId } from '@hcengineering/gmail'
 import { hrId } from '@hcengineering/hr'
 import { inventoryId } from '@hcengineering/inventory'
@@ -17,6 +18,7 @@ import { leadId } from '@hcengineering/lead'
 import { loginId } from '@hcengineering/login'
 import { loveId } from '@hcengineering/love'
 import { notificationId } from '@hcengineering/notification'
+import { onboardId } from '@hcengineering/onboard'
 import { preferenceId } from '@hcengineering/preference'
 import { productsId } from '@hcengineering/products'
 import { recruitId } from '@hcengineering/recruit'
@@ -44,12 +46,14 @@ import contactEn from '@hcengineering/contact-assets/lang/en.json'
 import documentsEn from '@hcengineering/controlled-documents-assets/lang/en.json'
 import documentEn from '@hcengineering/document-assets/lang/en.json'
 import driveEn from '@hcengineering/drive-assets/lang/en.json'
+import githubEn from '@hcengineering/github-assets/lang/en.json'
 import gmailEn from '@hcengineering/gmail-assets/lang/en.json'
 import hrEn from '@hcengineering/hr-assets/lang/en.json'
 import inventoryEn from '@hcengineering/inventory-assets/lang/en.json'
 import leadEn from '@hcengineering/lead-assets/lang/en.json'
 import loveEn from '@hcengineering/love-assets/lang/en.json'
 import notificationEn from '@hcengineering/notification-assets/lang/en.json'
+import onboardEn from '@hcengineering/onboard-assets/lang/en.json'
 import preferenceEn from '@hcengineering/preference-assets/lang/en.json'
 import productsEn from '@hcengineering/products-assets/lang/en.json'
 import recruitEn from '@hcengineering/recruit-assets/lang/en.json'
@@ -68,6 +72,7 @@ import workbenchEn from '@hcengineering/workbench-assets/lang/en.json'
 export function registerStringLoaders (): void {
   addStringsLoader(coreId, async (lang: string) => coreEng)
   addStringsLoader(loginId, async (lang: string) => loginEng)
+  addStringsLoader(onboardId, async (lang: string) => onboardEn)
   addStringsLoader(platformId, async (lang: string) => platformEng)
 
   addStringsLoader(taskId, async (lang: string) => taskEn)
@@ -100,4 +105,5 @@ export function registerStringLoaders (): void {
   addStringsLoader(documentsId, async (lang: string) => documentsEn)
   addStringsLoader(productsId, async (lang: string) => productsEn)
   addStringsLoader(trainingId, async (lang: string) => trainingEn)
+  addStringsLoader(githubId, async (lang: string) => githubEn)
 }

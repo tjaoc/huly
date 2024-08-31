@@ -15,6 +15,7 @@
 
 import { getEmbeddedLabel, IntlString } from '@hcengineering/platform'
 import { deepEqual } from 'fast-equals'
+import { DOMAIN_BENCHMARK } from './benchmark'
 import {
   Account,
   AccountRole,
@@ -28,7 +29,6 @@ import {
   DocIndexState,
   DOMAIN_BLOB,
   DOMAIN_DOC_INDEX_STATE,
-  DOMAIN_FULLTEXT_BLOB,
   DOMAIN_MODEL,
   DOMAIN_TRANSIENT,
   FullTextSearchContext,
@@ -111,6 +111,9 @@ export function escapeLikeForRegexp (value: string): string {
  */
 export function toFindResult<T extends Doc> (docs: T[], total?: number, lookupMap?: Record<string, Doc>): FindResult<T> {
   const length = total ?? docs.length
+  if (Object.keys(lookupMap ?? {}).length === 0) {
+    lookupMap = undefined
+  }
   return Object.assign(docs, { total: length, lookupMap })
 }
 
@@ -119,7 +122,6 @@ export function toFindResult<T extends Doc> (docs: T[], total?: number, lookupMa
  */
 export interface WorkspaceId {
   name: string
-  productId: string
 }
 
 /**
@@ -133,20 +135,20 @@ export interface WorkspaceIdWithUrl extends WorkspaceId {
 /**
  * @public
  *
- * Combine workspace with productId, if not equal ''
+ * Previously was combining workspace with productId, if not equal ''
+ * Now just returning workspace as is. Keeping it to simplify further refactoring of ws id.
  */
-export function getWorkspaceId (workspace: string, productId: string = ''): WorkspaceId {
+export function getWorkspaceId (workspace: string): WorkspaceId {
   return {
-    name: workspace,
-    productId
+    name: workspace
   }
 }
 
 /**
  * @public
  */
-export function toWorkspaceString (id: WorkspaceId, sep = '@'): string {
-  return id.name + (id.productId === '' ? '' : sep + id.productId)
+export function toWorkspaceString (id: WorkspaceId): string {
+  return id.name
 }
 
 const attributesPrefix = 'attributes.'
@@ -365,11 +367,15 @@ export class RateLimiter {
     this.rate = rate
   }
 
+  notify: (() => void)[] = []
+
   async exec<T, B extends Record<string, any> = any>(op: (args?: B) => Promise<T>, args?: B): Promise<T> {
     const processingId = this.idCounter++
 
-    while (this.processingQueue.size > this.rate) {
-      await Promise.race(this.processingQueue.values())
+    while (this.processingQueue.size >= this.rate) {
+      await new Promise<void>((resolve) => {
+        this.notify.push(resolve)
+      })
     }
     try {
       const p = op(args)
@@ -377,6 +383,10 @@ export class RateLimiter {
       return await p
     } finally {
       this.processingQueue.delete(processingId)
+      const n = this.notify.shift()
+      if (n !== undefined) {
+        n()
+      }
     }
   }
 
@@ -384,10 +394,7 @@ export class RateLimiter {
     if (this.processingQueue.size < this.rate) {
       void this.exec(op, args)
     } else {
-      while (this.processingQueue.size > this.rate) {
-        await Promise.race(this.processingQueue.values())
-      }
-      void this.exec(op, args)
+      await this.exec(op, args)
     }
   }
 
@@ -599,9 +606,10 @@ export const isEnum =
 export async function checkPermission (
   client: TxOperations,
   _id: Ref<Permission>,
-  _space: Ref<TypedSpace>
+  _space: Ref<TypedSpace>,
+  space?: TypedSpace
 ): Promise<boolean> {
-  const space = await client.findOne(core.class.TypedSpace, { _id: _space })
+  space = space ?? (await client.findOne(core.class.TypedSpace, { _id: _space }))
   const type = await client
     .getModel()
     .findOne(core.class.SpaceType, { _id: space?.type }, { lookup: { _id: { roles: core.class.Role } } })
@@ -713,8 +721,8 @@ export function isClassIndexable (hierarchy: Hierarchy, c: Ref<Class<Doc>>): boo
     domain === DOMAIN_TX ||
     domain === DOMAIN_MODEL ||
     domain === DOMAIN_BLOB ||
-    domain === DOMAIN_FULLTEXT_BLOB ||
-    domain === DOMAIN_TRANSIENT
+    domain === DOMAIN_TRANSIENT ||
+    domain === DOMAIN_BENCHMARK
   ) {
     hierarchy.setClassifierProp(c, 'class_indexed', false)
     return false

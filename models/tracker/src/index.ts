@@ -149,11 +149,7 @@ function defineNotifications (builder: Builder): void {
         htmlTemplate: '<p>{doc} was assigned to you by {sender}</p>',
         subjectTemplate: '{doc} was assigned to you'
       },
-      providers: {
-        [notification.providers.PlatformNotification]: true,
-        [notification.providers.BrowserNotification]: true,
-        [notification.providers.EmailNotification]: true
-      }
+      defaultEnabled: true
     },
     tracker.ids.AssigneeNotification
   )
@@ -328,6 +324,7 @@ function defineApplication (
             icon: tracker.icon.MyIssues,
             component: tracker.component.MyIssues,
             componentProps: {
+              icon: tracker.icon.MyIssues,
               config: [
                 ['assigned', view.string.Assigned, {}],
                 ['active', tracker.string.Active, {}],
@@ -345,6 +342,7 @@ function defineApplication (
             component: tracker.component.Issues,
             componentProps: {
               space: undefined,
+              icon: tracker.icon.Issues,
               title: tracker.string.AllIssues,
               config: [
                 ['all', tracker.string.All, {}],
@@ -364,6 +362,7 @@ function defineApplication (
             spaceClass: tracker.class.Project,
             componentProps: {
               _class: tracker.class.Project,
+              icon: view.icon.List,
               label: tracker.string.AllProjects
             }
           }
@@ -384,6 +383,7 @@ function defineApplication (
                 icon: tracker.icon.Issues,
                 component: tracker.component.Issues,
                 componentProps: {
+                  icon: tracker.icon.Issues,
                   title: tracker.string.Issues,
                   config: [
                     ['all', tracker.string.All, {}],
@@ -447,46 +447,6 @@ export function createModel (builder: Builder): void {
   builder.mixin(tracker.class.Issue, core.class.Class, view.mixin.LinkIdProvider, {
     encode: tracker.function.GetIssueId,
     decode: tracker.function.GetIssueIdByIdentifier
-  })
-
-  builder.createDoc(activity.class.ActivityMessageControl, core.space.Model, {
-    objectClass: tracker.class.Issue,
-    skip: [
-      {
-        _class: core.class.TxCollectionCUD,
-        collection: 'comments'
-      }
-    ]
-  })
-
-  builder.createDoc(activity.class.ActivityMessageControl, core.space.Model, {
-    objectClass: tracker.class.Milestone,
-    skip: [
-      {
-        _class: core.class.TxCollectionCUD,
-        collection: 'comments'
-      }
-    ]
-  })
-
-  builder.createDoc(activity.class.ActivityMessageControl, core.space.Model, {
-    objectClass: tracker.class.Component,
-    skip: [
-      {
-        _class: core.class.TxCollectionCUD,
-        collection: 'comments'
-      }
-    ]
-  })
-
-  builder.createDoc(activity.class.ActivityMessageControl, core.space.Model, {
-    objectClass: tracker.class.IssueTemplate,
-    skip: [
-      {
-        _class: core.class.TxCollectionCUD,
-        collection: 'comments'
-      }
-    ]
   })
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {

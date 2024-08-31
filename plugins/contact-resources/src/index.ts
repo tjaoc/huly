@@ -15,11 +15,11 @@
 //
 
 import {
-  type Channel,
-  type AvatarInfo,
-  type Contact,
   getGravatarUrl,
   getName,
+  type AvatarInfo,
+  type Channel,
+  type Contact,
   type Person,
   type PersonAccount
 } from '@hcengineering/contact'
@@ -49,6 +49,7 @@ import {
   type ColorDefinition,
   type TooltipAlignment
 } from '@hcengineering/ui'
+import { AggregationManager } from '@hcengineering/view-resources'
 import AccountArrayEditor from './components/AccountArrayEditor.svelte'
 import AccountBox from './components/AccountBox.svelte'
 import AssigneeBox from './components/AssigneeBox.svelte'
@@ -122,7 +123,6 @@ import NameChangedActivityMessage from './components/activity/NameChangedActivit
 import IconAddMember from './components/icons/AddMember.svelte'
 import ExpandRightDouble from './components/icons/ExpandRightDouble.svelte'
 import IconMembers from './components/icons/Members.svelte'
-import { AggregationManager } from '@hcengineering/view-resources'
 
 import { get, writable } from 'svelte/store'
 import contact from './plugin'
@@ -268,26 +268,20 @@ async function kickEmployee (doc: Person): Promise<void> {
   const client = getClient()
 
   const employee = client.getHierarchy().as(doc, contact.mixin.Employee)
-  const email = await client.findOne(contact.class.PersonAccount, { person: doc._id })
-  if (email === undefined) {
+  const accounts = client.getModel().getAccountByPersonId(doc._id)
+  if (accounts.length === 0) {
     await client.update(employee, { active: false })
   } else {
-    showPopup(
-      MessageBox,
-      {
-        label: contact.string.KickEmployee,
-        message: contact.string.KickEmployeeDescr
-      },
-      undefined,
-      (res?: boolean) => {
-        if (res === true) {
-          // eslint-disable-next-line @typescript-eslint/no-floating-promises
-          getResource(login.function.LeaveWorkspace).then(async (f) => {
-            await f(email.email)
-          })
+    showPopup(MessageBox, {
+      label: contact.string.KickEmployee,
+      message: contact.string.KickEmployeeDescr,
+      action: async () => {
+        const leaveWorkspace = await getResource(login.function.LeaveWorkspace)
+        for (const i of accounts) {
+          await leaveWorkspace(i.email)
         }
       }
-    )
+    })
   }
 }
 async function openChannelURL (doc: Channel): Promise<void> {
@@ -408,7 +402,7 @@ export default async (): Promise<Resources> => ({
           color: getPersonColor(person, name)
         }
       }
-      const blobRef = await getBlobRef(person.$lookup?.avatar, person.avatar, undefined, width)
+      const blobRef = await getBlobRef(person.avatar, undefined, width)
       return {
         url: blobRef.src,
         srcSet: blobRef.srcset,

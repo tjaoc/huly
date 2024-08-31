@@ -14,12 +14,13 @@
 //
 
 import { ActivityMessage, ActivityMessageViewlet } from '@hcengineering/activity'
-import type { Class, Doc, Markup, Mixin, Ref, Space, Timestamp } from '@hcengineering/core'
-import { NotificationType } from '@hcengineering/notification'
-import type { Asset, Plugin } from '@hcengineering/platform'
+import type { AttachedDoc, Class, Doc, Markup, Mixin, Ref, Space, Timestamp } from '@hcengineering/core'
+import { DocNotifyContext, NotificationType } from '@hcengineering/notification'
+import type { Asset, Plugin, Resource } from '@hcengineering/platform'
 import { IntlString, plugin } from '@hcengineering/platform'
 import { AnyComponent } from '@hcengineering/ui'
 import { Action } from '@hcengineering/view'
+import { Person, ChannelProvider as SocialChannelProvider } from '@hcengineering/contact'
 
 /**
  * @public
@@ -52,6 +53,8 @@ export interface ChatMessage extends ActivityMessage {
   message: Markup
   attachments?: number
   editedOn?: Timestamp
+  provider?: Ref<SocialChannelProvider>
+  inlineButtons?: number
 }
 
 /**
@@ -72,12 +75,39 @@ export interface ChatMessageViewlet extends ActivityMessageViewlet {
   label?: IntlString
 }
 
+export interface ChatInfo extends Doc {
+  user: Ref<Person>
+  hidden: Ref<DocNotifyContext>[]
+  timestamp: Timestamp
+}
+
+export interface TypingInfo extends Doc {
+  objectId: Ref<Doc>
+  objectClass: Ref<Class<Doc>>
+  person: Ref<Person>
+  lastTyping: Timestamp
+}
+
+export interface ChannelInfo extends DocNotifyContext {
+  hidden: boolean
+}
+
+export type InlineButtonAction = (button: InlineButton, message: Ref<ChatMessage>, channel: Ref<Doc>) => Promise<void>
+
+export interface InlineButton extends AttachedDoc {
+  name: string
+  titleIntl?: IntlString
+  title?: string
+  action: Resource<InlineButtonAction>
+}
+
 /**
  * @public
  */
 export const chunterId = 'chunter' as Plugin
 
 export * from './utils'
+export * from './analytics'
 
 export default plugin(chunterId, {
   icon: {
@@ -86,7 +116,10 @@ export default plugin(chunterId, {
     Thread: '' as Asset,
     Lock: '' as Asset,
     ChannelBrowser: '' as Asset,
-    Copy: '' as Asset
+    ChunterBrowser: '' as Asset,
+    Copy: '' as Asset,
+    Messages: '' as Asset,
+    Bookmarks: '' as Asset
   },
   component: {
     DmHeader: '' as AnyComponent,
@@ -101,16 +134,23 @@ export default plugin(chunterId, {
     ChatMessagePreview: '' as AnyComponent,
     ThreadMessagePreview: '' as AnyComponent
   },
+  activity: {
+    MembersChangedMessage: '' as AnyComponent
+  },
   class: {
     ThreadMessage: '' as Ref<Class<ThreadMessage>>,
     ChunterSpace: '' as Ref<Class<ChunterSpace>>,
     Channel: '' as Ref<Class<Channel>>,
     DirectMessage: '' as Ref<Class<DirectMessage>>,
     ChatMessage: '' as Ref<Class<ChatMessage>>,
-    ChatMessageViewlet: '' as Ref<Class<ChatMessageViewlet>>
+    ChatMessageViewlet: '' as Ref<Class<ChatMessageViewlet>>,
+    ChatInfo: '' as Ref<Class<ChatInfo>>,
+    InlineButton: '' as Ref<Class<InlineButton>>,
+    TypingInfo: '' as Ref<Class<TypingInfo>>
   },
   mixin: {
-    ObjectChatPanel: '' as Ref<Mixin<ObjectChatPanel>>
+    ObjectChatPanel: '' as Ref<Mixin<ObjectChatPanel>>,
+    ChannelInfo: '' as Ref<Mixin<ChannelInfo>>
   },
   string: {
     Reactions: '' as IntlString,
@@ -153,12 +193,23 @@ export default plugin(chunterId, {
     StarChannel: '' as IntlString,
     StarConversation: '' as IntlString,
     UnstarChannel: '' as IntlString,
-    UnstarConversation: '' as IntlString
+    UnstarConversation: '' as IntlString,
+    NoMessagesInChannel: '' as IntlString,
+    SendMessagesInChannel: '' as IntlString,
+    Joined: '' as IntlString,
+    Left: '' as IntlString,
+    Added: '' as IntlString,
+    Removed: '' as IntlString,
+    CreatedChannelOn: '' as IntlString,
+    YouJoinedChannel: '' as IntlString,
+    AndMore: '' as IntlString,
+    IsTyping: '' as IntlString
   },
   ids: {
     DMNotification: '' as Ref<NotificationType>,
     ThreadNotification: '' as Ref<NotificationType>,
     ChannelNotification: '' as Ref<NotificationType>,
+    JoinChannelNotification: '' as Ref<NotificationType>,
     ThreadMessageViewlet: '' as Ref<ChatMessageViewlet>
   },
   app: {

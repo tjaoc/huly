@@ -13,17 +13,7 @@
 // limitations under the License.
 //
 
-import {
-  type Blob,
-  type Branding,
-  type DocumentUpdate,
-  type MeasureContext,
-  type Ref,
-  type StorageIterator,
-  type WorkspaceId,
-  type WorkspaceIdWithUrl
-} from '@hcengineering/core'
-import type { BlobLookup } from '@hcengineering/core/src/classes'
+import { type Blob, type MeasureContext, type StorageIterator, type WorkspaceId } from '@hcengineering/core'
 import { type Readable } from 'stream'
 
 export type ListBlobResult = Omit<Blob, 'contentType' | 'version'>
@@ -38,11 +28,6 @@ export interface BlobStorageIterator {
   close: () => Promise<void>
 }
 
-export interface BlobLookupResult {
-  lookups: BlobLookup[]
-  updates?: Map<Ref<Blob>, DocumentUpdate<BlobLookup>>
-}
-
 export interface BucketInfo {
   name: string
   delete: () => Promise<void>
@@ -50,11 +35,6 @@ export interface BucketInfo {
 }
 
 export interface StorageAdapter {
-  // If specified will limit a blobs available to put into selected provider.
-  // A set of content type patterns supported by this storage provider.
-  // If not defined, will be suited for any other content types.
-  contentTypes?: string[]
-
   initialize: (ctx: MeasureContext, workspaceId: WorkspaceId) => Promise<void>
 
   close: () => Promise<void>
@@ -63,7 +43,7 @@ export interface StorageAdapter {
   make: (ctx: MeasureContext, workspaceId: WorkspaceId) => Promise<void>
   delete: (ctx: MeasureContext, workspaceId: WorkspaceId) => Promise<void>
 
-  listBuckets: (ctx: MeasureContext, productId: string) => Promise<BucketInfo[]>
+  listBuckets: (ctx: MeasureContext) => Promise<BucketInfo[]>
   remove: (ctx: MeasureContext, workspaceId: WorkspaceId, objectNames: string[]) => Promise<void>
   listStream: (ctx: MeasureContext, workspaceId: WorkspaceId, prefix?: string) => Promise<BlobStorageIterator>
   stat: (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string) => Promise<Blob | undefined>
@@ -85,13 +65,7 @@ export interface StorageAdapter {
     length?: number
   ) => Promise<Readable>
 
-  // Lookup will extend Blob with lookup information.
-  lookup: (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceIdWithUrl,
-    branding: Branding | null,
-    docs: Blob[]
-  ) => Promise<BlobLookupResult>
+  getUrl: (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string) => Promise<string>
 }
 
 export interface StorageAdapterEx extends StorageAdapter {
@@ -130,7 +104,7 @@ export class DummyStorageAdapter implements StorageAdapter, StorageAdapterEx {
     }
   }
 
-  async listBuckets (ctx: MeasureContext, productId: string): Promise<BucketInfo[]> {
+  async listBuckets (ctx: MeasureContext): Promise<BucketInfo[]> {
     return []
   }
 
@@ -190,13 +164,8 @@ export class DummyStorageAdapter implements StorageAdapter, StorageAdapterEx {
     throw new Error('not implemented')
   }
 
-  async lookup (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceIdWithUrl,
-    branding: Branding | null,
-    docs: Blob[]
-  ): Promise<BlobLookupResult> {
-    return { lookups: [] }
+  async getUrl (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<string> {
+    throw new Error('not implemented')
   }
 }
 

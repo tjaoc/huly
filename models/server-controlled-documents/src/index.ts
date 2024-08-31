@@ -14,11 +14,11 @@ export { serverDocumentsId } from '@hcengineering/server-controlled-documents/sr
 
 export function createModel (builder: Builder): void {
   builder.createDoc(serverCore.class.Trigger, core.space.Model, {
-    trigger: serverDocuments.trigger.OnCollaborativeSectionDeleted,
+    trigger: serverDocuments.trigger.OnDocDeleted,
     txMatch: {
-      _class: core.class.TxCollectionCUD,
-      'tx.objectClass': documents.class.CollaborativeDocumentSection,
-      'tx._class': core.class.TxRemoveDoc
+      _class: core.class.TxUpdateDoc,
+      objectClass: documents.class.ControlledDocument,
+      'operations.state': DocumentState.Deleted
     }
   })
 

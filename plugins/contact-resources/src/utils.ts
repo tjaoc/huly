@@ -320,19 +320,10 @@ function fillStores (): void {
     const accountPersonQuery = createQuery(true)
 
     const query = createQuery(true)
-    query.query(
-      contact.mixin.Employee,
-      {},
-      (res) => {
-        employeesStore.set(res)
-        employeeByIdStore.set(toIdMap(res))
-      },
-      {
-        lookup: {
-          avatar: core.class.Blob
-        }
-      }
-    )
+    query.query(contact.mixin.Employee, { active: { $in: [true, false] } }, (res) => {
+      employeesStore.set(res)
+      employeeByIdStore.set(toIdMap(res))
+    })
 
     const accountQ = createQuery(true)
     accountQ.query(contact.class.PersonAccount, {}, (res) => {
@@ -340,18 +331,10 @@ function fillStores (): void {
 
       const persons = res.map((it) => it.person)
 
-      accountPersonQuery.query<Person>(
-        contact.class.Person,
-        { _id: { $in: persons }, [contact.mixin.Employee]: { $exists: false } },
-        (res) => {
-          personAccountPersonByIdStore.set(toIdMap(res))
-        },
-        {
-          lookup: {
-            avatar: core.class.Blob
-          }
-        }
-      )
+      accountPersonQuery.query<Person>(contact.class.Person, { _id: { $in: persons } }, (res) => {
+        const personIn = toIdMap(res)
+        personAccountPersonByIdStore.set(personIn)
+      })
     })
 
     const providerQuery = createQuery(true)
@@ -481,7 +464,12 @@ export function groupByPersonAccountCategories (categories: any[]): AggregateVal
           .map((it) => new AggregateValueData(it.person, it._id, it.space))
         fst = new AggregateValue(personAccount.person, people)
         personMap.set(personAccount.person, fst)
-        existingCategories.push(fst)
+        if (fst.name === undefined) {
+          existingCategories[0] = new AggregateValue(undefined, [...existingCategories[0].values, ...fst.values])
+          // Join with first value
+        } else {
+          existingCategories.push(fst)
+        }
       }
     }
   }

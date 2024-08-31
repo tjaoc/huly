@@ -209,7 +209,8 @@ const view = plugin(viewId, {
     Unpin: '' as IntlString,
     Join: '' as IntlString,
     Leave: '' as IntlString,
-    Copied: '' as IntlString
+    Copied: '' as IntlString,
+    And: '' as IntlString
   },
   icon: {
     Table: '' as Asset,
@@ -352,7 +353,8 @@ const view = plugin(viewId, {
 
       // If defined, documents will be set into value
       valueKey?: string
-    }>
+    }>,
+    Delete: '' as ViewAction
   }
 })
 export default view

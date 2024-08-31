@@ -2,6 +2,8 @@ import core, {
   WorkspaceEvent,
   generateId,
   getTypeOf,
+  type Branding,
+  type BrandingMap,
   type BulkUpdateEvent,
   type Class,
   type Doc,
@@ -10,9 +12,7 @@ import core, {
   type ParamsType,
   type Ref,
   type TxWorkspaceEvent,
-  type WorkspaceIdWithUrl,
-  type Branding,
-  type BrandingMap
+  type WorkspaceIdWithUrl
 } from '@hcengineering/core'
 import { type Hash } from 'crypto'
 import fs from 'fs'
@@ -142,7 +142,10 @@ export class SessionContextImpl implements SessionContext {
     readonly admin: boolean | undefined,
     readonly derived: SessionContext['derived'],
     readonly workspace: WorkspaceIdWithUrl,
-    readonly branding: Branding | null
+    readonly branding: Branding | null,
+    readonly isAsyncContext: boolean,
+    readonly removedMap: Map<Ref<Doc>, Doc>,
+    readonly contextCache: Map<string, any>
   ) {}
 
   with<T>(
@@ -163,7 +166,10 @@ export class SessionContextImpl implements SessionContext {
             this.admin,
             this.derived,
             this.workspace,
-            this.branding
+            this.branding,
+            this.isAsyncContext,
+            this.removedMap,
+            this.contextCache
           )
         ),
       fullParams

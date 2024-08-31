@@ -17,6 +17,7 @@ import type { Doc, Ref } from '@hcengineering/core'
 import {} from '@hcengineering/core'
 import { driveId } from '@hcengineering/drive'
 import drive from '@hcengineering/drive-resources/src/plugin'
+import { type ObjectSearchCategory, type ObjectSearchFactory } from '@hcengineering/model-presentation'
 import { type IntlString, type Resource, mergeIds } from '@hcengineering/platform'
 import { type AnyComponent, type Location } from '@hcengineering/ui'
 import {
@@ -43,6 +44,9 @@ export default mergeIds(driveId, drive, {
     FolderPresenter: '' as AnyComponent,
     FilePresenter: '' as AnyComponent,
     FileSizePresenter: '' as AnyComponent,
+    FileVersionPresenter: '' as AnyComponent,
+    FileVersionVersionPresenter: '' as AnyComponent,
+    MoveResource: '' as AnyComponent,
     ResourcePresenter: '' as AnyComponent
   },
   function: {
@@ -51,6 +55,12 @@ export default mergeIds(driveId, drive, {
     FileLinkProvider: '' as Resource<(doc: Doc, props: Record<string, any>) => Promise<Location>>,
     CanRenameFile: '' as Resource<ViewActionAvailabilityFunction>,
     CanRenameFolder: '' as Resource<ViewActionAvailabilityFunction>
+  },
+  completion: {
+    FileQuery: '' as Resource<ObjectSearchFactory>,
+    FileCategory: '' as Ref<ObjectSearchCategory>,
+    FolderQuery: '' as Resource<ObjectSearchFactory>,
+    FolderCategory: '' as Ref<ObjectSearchCategory>
   },
   viewlet: {
     Grid: '' as Ref<ViewletDescriptor>,
@@ -67,7 +77,8 @@ export default mergeIds(driveId, drive, {
     EditDrive: '' as Ref<Action>,
     DownloadFile: '' as Ref<Action>,
     RenameFile: '' as Ref<Action>,
-    RenameFolder: '' as Ref<Action>
+    RenameFolder: '' as Ref<Action>,
+    RestoreFileVersion: '' as Ref<Action>
   },
   actionImpl: {
     CreateChildFolder: '' as ViewAction,
@@ -75,17 +86,23 @@ export default mergeIds(driveId, drive, {
     EditDrive: '' as ViewAction,
     DownloadFile: '' as ViewAction,
     RenameFile: '' as ViewAction,
-    RenameFolder: '' as ViewAction
+    RenameFolder: '' as ViewAction,
+    RestoreFileVersion: '' as ViewAction
   },
   string: {
     Grid: '' as IntlString,
     Name: '' as IntlString,
     Description: '' as IntlString,
     Metadata: '' as IntlString,
+    ContentType: '' as IntlString,
+    Size: '' as IntlString,
+    LastModified: '' as IntlString,
     Parent: '' as IntlString,
     Path: '' as IntlString,
     Drives: '' as IntlString,
-    Download: '' as IntlString,
-    Preview: '' as IntlString
+    Files: '' as IntlString,
+    Folders: '' as IntlString,
+    Version: '' as IntlString,
+    Restore: '' as IntlString
   }
 })

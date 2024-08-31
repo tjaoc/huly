@@ -4,19 +4,15 @@ import core, {
   toIdMap,
   withContext,
   type Blob,
-  type BlobLookup,
-  type Branding,
   type MeasureContext,
   type Ref,
   type StorageIterator,
-  type WorkspaceId,
-  type WorkspaceIdWithUrl
+  type WorkspaceId
 } from '@hcengineering/core'
 import { type Readable } from 'stream'
-import { type RawDBAdapter } from '../adapter'
 
+import { getMetadata } from '@hcengineering/platform'
 import {
-  type BlobLookupResult,
   type BlobStorageIterator,
   type BucketInfo,
   type ListBlobResult,
@@ -24,6 +20,9 @@ import {
   type StorageAdapterEx,
   type UploadedObjectInfo
 } from '@hcengineering/storage'
+
+import { type RawDBAdapter } from '../adapter'
+import serverCore from '../plugin'
 import { type StorageConfig, type StorageConfiguration } from '../types'
 
 class NoSuchKeyError extends Error {
@@ -187,10 +186,10 @@ export class AggregatorStorageAdapter implements StorageAdapter, StorageAdapterE
   }
 
   @withContext('aggregator-listBuckets', {})
-  async listBuckets (ctx: MeasureContext, productId: string): Promise<BucketInfo[]> {
+  async listBuckets (ctx: MeasureContext): Promise<BucketInfo[]> {
     const result: BucketInfo[] = []
     for (const a of this.adapters.values()) {
-      result.push(...(await a.listBuckets(ctx, productId)))
+      result.push(...(await a.listBuckets(ctx)))
     }
     return result
   }
@@ -275,7 +274,7 @@ export class AggregatorStorageAdapter implements StorageAdapter, StorageAdapterE
     }
     const provider = this.adapters.get(stat.provider)
     if (provider === undefined) {
-      throw new NoSuchKeyError('No such provider found')
+      throw new NoSuchKeyError(`No such provider found: ${provider}`)
     }
     return { provider, stat }
   }
@@ -308,16 +307,6 @@ export class AggregatorStorageAdapter implements StorageAdapter, StorageAdapterE
         provider: forceProvider
       }
     }
-    // try select provider based on content type matching.
-    for (const [provider, adapter] of this.adapters.entries()) {
-      if (adapter.contentTypes === undefined) {
-        continue
-      }
-      if (adapter.contentTypes.some((it) => contentType.includes(it))) {
-        // we have matched content type for adapter.
-        return { adapter, provider }
-      }
-    }
 
     return { adapter: this.adapters.get(this.defaultAdapter) as StorageAdapter, provider: this.defaultAdapter }
   }
@@ -331,12 +320,11 @@ export class AggregatorStorageAdapter implements StorageAdapter, StorageAdapterE
     contentType: string,
     size?: number | undefined
   ): Promise<UploadedObjectInfo> {
-    // We need to reuse same provider for existing documents.
     const stat = (
       await this.dbAdapter.find<Blob>(ctx, workspaceId, DOMAIN_BLOB, { _id: objectName as Ref<Blob> }, { limit: 1 })
     ).shift()
 
-    const { provider, adapter } = this.selectProvider(stat?.provider, contentType)
+    const { provider, adapter } = this.selectProvider(undefined, contentType)
 
     const result = await adapter.put(ctx, workspaceId, objectName, stream, contentType, size)
 
@@ -365,32 +353,23 @@ export class AggregatorStorageAdapter implements StorageAdapter, StorageAdapterE
     }
 
     await this.dbAdapter.upload<Blob>(ctx, workspaceId, DOMAIN_BLOB, [blobDoc])
+
+    // If the file is already stored in different provider, we need to remove it.
+    if (stat !== undefined && stat.provider !== provider) {
+      // TODO temporary not needed
+      // const adapter = this.adapters.get(stat.provider)
+      // await adapter?.remove(ctx, workspaceId, [stat._id])
+    }
+
     return result
   }
 
-  @withContext('aggregator-lookup', {})
-  async lookup (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceIdWithUrl,
-    branding: Branding | null,
-    docs: Blob[]
-  ): Promise<BlobLookupResult> {
-    const result: BlobLookup[] = []
-
-    const byProvider = groupByArray(docs, (it) => it.provider)
-    for (const [k, v] of byProvider.entries()) {
-      const provider = this.adapters.get(k)
-      if (provider?.lookup !== undefined) {
-        const upd = await provider.lookup(ctx, workspaceId, branding, v)
-        if (upd.updates !== undefined) {
-          await this.dbAdapter.update(ctx, workspaceId, DOMAIN_BLOB, upd.updates)
-        }
-        result.push(...upd.lookups)
-      }
-    }
-    // Check if we need to perform diff update for blobs
-
-    return { lookups: result }
+  @withContext('aggregator-getUrl', {})
+  async getUrl (ctx: MeasureContext, workspaceId: WorkspaceId, name: string): Promise<string> {
+    // const { provider, stat } = await this.findProvider(ctx, workspaceId, name)
+    // return await provider.getUrl(ctx, workspaceId, stat.storageId)
+    const filesUrl = getMetadata(serverCore.metadata.FilesUrl) ?? ''
+    return filesUrl.replaceAll(':workspace', workspaceId.name).replaceAll(':blobId', name)
   }
 }
 
@@ -400,11 +379,11 @@ export class AggregatorStorageAdapter implements StorageAdapter, StorageAdapterE
 export function buildStorage (
   config: StorageConfiguration,
   dbAdapter: RawDBAdapter,
-  storageFactory: (kind: string, config: StorageConfig) => StorageAdapter
+  storageFactory: (config: StorageConfig) => StorageAdapter
 ): AggregatorStorageAdapter {
   const adapters = new Map<string, StorageAdapter>()
   for (const c of config.storages) {
-    adapters.set(c.name, storageFactory(c.kind, c))
+    adapters.set(c.name, storageFactory(c))
   }
   return new AggregatorStorageAdapter(adapters, config.default, dbAdapter)
 }

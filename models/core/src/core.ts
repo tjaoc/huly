@@ -17,7 +17,6 @@ import {
   DOMAIN_BLOB,
   DOMAIN_CONFIGURATION,
   DOMAIN_DOC_INDEX_STATE,
-  DOMAIN_FULLTEXT_BLOB,
   DOMAIN_MIGRATION,
   DOMAIN_MODEL,
   IndexKind,
@@ -37,10 +36,8 @@ import {
   type DomainIndexConfiguration,
   type Enum,
   type EnumOf,
-  type FieldIndex,
-  type FullTextData,
+  type FieldIndexConfig,
   type FullTextSearchContext,
-  type IndexStageState,
   type IndexingConfiguration,
   type Interface,
   type MigrationState,
@@ -136,7 +133,7 @@ export class TAttachedDoc extends TDoc implements AttachedDoc {
 export class TBlob extends TDoc implements Blob {
   @Prop(TypeString(), core.string.Blob)
   @ReadOnly()
-  @Index(IndexKind.Indexed)
+  // @Index(IndexKind.Indexed)
     provider!: string
 
   @Prop(TypeString(), core.string.BlobContentType)
@@ -236,10 +233,6 @@ export class TTypeFileSize extends TType {}
 @Model(core.class.TypeMarkup, core.class.Type)
 export class TTypeMarkup extends TType {}
 
-@UX(core.string.Collaborative)
-@Model(core.class.TypeCollaborativeMarkup, core.class.Type)
-export class TTypeCollaborativeMarkup extends TType {}
-
 @UX(core.string.Ref)
 @Model(core.class.RefTo, core.class.Type)
 export class TRefTo extends TType implements RefTo<Doc> {
@@ -309,10 +302,6 @@ export class TPluginConfiguration extends TDoc implements PluginConfiguration {
   enabled!: boolean
   beta!: boolean
 }
-@Model(core.class.FulltextData, core.class.Doc, DOMAIN_FULLTEXT_BLOB)
-export class TFulltextData extends TDoc implements FullTextData {
-  data!: any
-}
 
 @Model(core.class.DocIndexState, core.class.Doc, DOMAIN_DOC_INDEX_STATE)
 export class TDocIndexState extends TDoc implements DocIndexState {
@@ -335,26 +324,22 @@ export class TDocIndexState extends TDoc implements DocIndexState {
   attributes!: Record<string, any>
 
   @Prop(TypeBoolean(), getEmbeddedLabel('Removed'))
-  @Index(IndexKind.Indexed)
   @Hidden()
     removed!: boolean
 
+  @Prop(TypeBoolean(), getEmbeddedLabel('NeedIndexing'))
+  @Hidden()
+    needIndex!: boolean
+
   // States for different stages
   @Prop(TypeRecord(), getEmbeddedLabel('Stages'))
-  @Index(IndexKind.Indexed)
+  // @Index(IndexKind.Indexed)
   @Hidden()
-    stages!: Record<string, boolean | string>
+    stages!: Record<string, boolean>
 
   @Prop(TypeString(), getEmbeddedLabel('Generation'))
-  @Index(IndexKind.Indexed)
   @Hidden()
     generationId?: string
-}
-
-@Model(core.class.IndexStageState, core.class.Doc, DOMAIN_DOC_INDEX_STATE)
-export class TIndexStageState extends TDoc implements IndexStageState {
-  stageId!: string
-  attributes!: Record<string, any>
 }
 
 @MMixin(core.mixin.FullTextSearchContext, core.class.Class)
@@ -377,7 +362,7 @@ export class TConfiguration extends TDoc implements Configuration {
 
 @MMixin(core.mixin.IndexConfiguration, core.class.Class)
 export class TIndexConfiguration<T extends Doc = Doc> extends TClass implements IndexingConfiguration<T> {
-  indexes!: FieldIndex<T>[]
+  indexes!: (string | FieldIndexConfig<T>)[]
   searchDisabled!: boolean
 }
 

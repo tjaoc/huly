@@ -23,7 +23,8 @@
   import { createQuery, getClient } from '@hcengineering/presentation'
   import setting, { Integration } from '@hcengineering/setting'
   import templates, { TemplateDataProvider } from '@hcengineering/templates'
-  import { EmptyMarkup, StyledTextEditor, isEmptyMarkup } from '@hcengineering/text-editor'
+  import { StyledTextEditor } from '@hcengineering/text-editor-resources'
+  import { EmptyMarkup, isEmptyMarkup, markupToHTML } from '@hcengineering/text'
   import {
     Button,
     EditBox,
@@ -34,11 +35,11 @@
     Scroller,
     showPopup
   } from '@hcengineering/ui'
+  import { GmailEvents } from '@hcengineering/gmail'
   import { createEventDispatcher, onDestroy } from 'svelte'
   import plugin from '../plugin'
   import Connect from './Connect.svelte'
   import IntegrationSelector from './IntegrationSelector.svelte'
-  import { markupToHTML } from '@hcengineering/text'
 
   export let value: Contact[] | Contact
   const contacts = Array.isArray(value) ? value : [value]
@@ -94,6 +95,7 @@
           .map((m) => m.trim())
           .filter((m) => m.length)
       })
+      Analytics.handleEvent(GmailEvents.SentEmail, { to: channel.value })
       await inboxClient.forceReadDoc(getClient(), channel._id, channel._class)
       for (const attachment of attachments) {
         await client.addCollection(

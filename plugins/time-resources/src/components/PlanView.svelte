@@ -14,7 +14,7 @@
 -->
 
 <script lang="ts">
-  import { createEventDispatcher, afterUpdate } from 'svelte'
+  import { createEventDispatcher, afterUpdate, onDestroy } from 'svelte'
   import calendar, { Calendar, generateEventId } from '@hcengineering/calendar'
   import { PersonAccount } from '@hcengineering/contact'
   import { Ref, getCurrentAccount } from '@hcengineering/core'
@@ -28,6 +28,8 @@
   import { timeSeparators } from '../utils'
   import { dragging } from '../dragging'
   import time from '../plugin'
+  import { Analytics } from '@hcengineering/analytics'
+  import { TimeEvents } from '@hcengineering/time'
 
   const dispatch = createEventDispatcher()
 
@@ -67,6 +69,7 @@
       visibility: doc.visibility === 'public' ? 'public' : 'freeBusy',
       reminders: []
     })
+    Analytics.handleEvent(TimeEvents.ToDoScheduled, { id: doc._id })
   }
 
   defineSeparators('time', timeSeparators)
@@ -78,6 +81,7 @@
   afterUpdate(() => {
     $deviceInfo.replacedPanel = replacedPanel ?? mainPanel
   })
+  onDestroy(() => ($deviceInfo.replacedPanel = undefined))
 </script>
 
 {#if $deviceInfo.navigator.visible}
@@ -87,7 +91,7 @@
     float={$deviceInfo.navigator.float}
     index={0}
     disabledWhen={['panel-aside']}
-    color={'var(--theme-navpanel-border)'}
+    color={'var(--theme-divider-color)'}
   />
 {/if}
 <div class="flex-col w-full clear-mins" class:left-divider={!$deviceInfo.navigator.visible} bind:this={mainPanel}>
