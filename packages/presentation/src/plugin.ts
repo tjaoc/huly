@@ -43,6 +43,7 @@ import {
   type InstantTransactions,
   type ObjectSearchCategory
 } from './types'
+import { type UploadConfig } from './file'
 
 /**
  * @public
@@ -123,7 +124,8 @@ export default plugin(presentationId, {
     ContentTypeNotSupported: '' as IntlString
   },
   extension: {
-    FilePreviewExtension: '' as ComponentExtensionId
+    FilePreviewExtension: '' as ComponentExtensionId,
+    FilePreviewPopupActions: '' as ComponentExtensionId
   },
   metadata: {
     ModelVersion: '' as Metadata<string>,
@@ -135,7 +137,9 @@ export default plugin(presentationId, {
     Token: '' as Metadata<string>,
     Endpoint: '' as Metadata<string>,
     Workspace: '' as Metadata<string>,
+    WorkspaceId: '' as Metadata<string>,
     FrontUrl: '' as Asset,
+    UploadConfig: '' as Metadata<UploadConfig>,
     PreviewConfig: '' as Metadata<PreviewConfig | undefined>,
     ClientHook: '' as Metadata<ClientHook>,
     SessionId: '' as Metadata<string>

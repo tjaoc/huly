@@ -100,3 +100,7 @@ services/github/pod-github/src/github.graphql
 dev/tool/report.csv
 bundle/*
 bundle.js.map
+tests/profiles
+_*
+**/bundle/model.json
+.wrangler

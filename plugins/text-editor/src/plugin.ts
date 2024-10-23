@@ -17,7 +17,7 @@
 import { type Class, type Ref } from '@hcengineering/core'
 import { type Asset, type IntlString, type Metadata, type Plugin, plugin } from '@hcengineering/platform'
 
-import { type TextEditorExtensionFactory, type RefInputActionItem, TextEditorAction } from './types'
+import { type TextEditorExtensionFactory, type RefInputActionItem, TextEditorAction, CollaboratorType } from './types'
 
 /**
  * @public
@@ -31,7 +31,7 @@ export default plugin(textEditorId, {
     TextEditorAction: '' as Ref<Class<TextEditorAction>>
   },
   metadata: {
-    CollaboratorUrl: '' as Metadata<string>
+    Collaborator: '' as Metadata<CollaboratorType>
   },
   string: {
     TableOfContents: '' as IntlString,
@@ -72,6 +72,7 @@ export default plugin(textEditorId, {
     AlignRight: '' as IntlString,
     ViewImage: '' as IntlString,
     ViewOriginal: '' as IntlString,
+    Download: '' as IntlString,
     MoreActions: '' as IntlString,
 
     InsertTable: '' as IntlString,
@@ -115,6 +116,7 @@ export default plugin(textEditorId, {
     MoreH: '' as Asset,
     Expand: '' as Asset,
     ScaleOut: '' as Asset,
+    Download: '' as Asset,
     Note: '' as Asset
   }
 })

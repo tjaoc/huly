@@ -16,8 +16,9 @@
   import { Class, Doc, Ref } from '@hcengineering/core'
   import { AttrValue, MarkupNode, MarkupNodeType } from '@hcengineering/text'
 
-  import MarkupNodes from './Nodes.svelte'
+  import CodeBlockNode from './CodeBlockNode.svelte'
   import ObjectNode from './ObjectNode.svelte'
+  import Node from './Node.svelte'
 
   export let node: MarkupNode
   export let preview = false
@@ -51,16 +52,28 @@
   {@const nodes = node.content ?? []}
 
   {#if node.type === MarkupNodeType.doc}
-    <MarkupNodes {nodes} {preview} />
+    {#if nodes.length > 0}
+      {#each nodes as node}
+        <Node {node} {preview} />
+      {/each}
+    {/if}
   {:else if node.type === MarkupNodeType.text}
     {node.text}
   {:else if node.type === MarkupNodeType.paragraph}
     <p class="p-inline contrast" class:overflow-label={preview}>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </p>
   {:else if node.type === MarkupNodeType.blockquote}
     <blockquote class="proseBlockQuote" style:margin={preview ? '0' : null}>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </blockquote>
   {:else if node.type === MarkupNodeType.horizontal_rule}
     <hr />
@@ -68,10 +81,14 @@
     {@const level = toNumber(node.attrs?.level) ?? 1}
     {@const element = `h${level}`}
     <svelte:element this={element}>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </svelte:element>
   {:else if node.type === MarkupNodeType.code_block}
-    <pre class="proseCodeBlock" style:margin={preview ? '0' : null}><code><MarkupNodes {nodes} {preview} /></code></pre>
+    <CodeBlockNode {node} {preview} />
   {:else if node.type === MarkupNodeType.image}
     {@const src = toString(attrs.src)}
     {@const alt = toString(attrs.alt)}
@@ -87,22 +104,37 @@
 
     {#if objectClass !== undefined && objectId !== undefined}
       <ObjectNode _id={toRef(objectId)} _class={toClassRef(objectClass)} title={objectLabel} />
-    {:else}
-      <MarkupNodes {nodes} {preview} />
+    {:else if nodes.length > 0}
+      {#each nodes as node}
+        <Node {node} {preview} />
+      {/each}
     {/if}
   {:else if node.type === MarkupNodeType.hard_break}
     <br />
   {:else if node.type === MarkupNodeType.ordered_list}
-    <ol style:margin={preview ? '0' : null}>
-      <MarkupNodes {nodes} {preview} />
+    {@const start = toNumber(attrs.start) ?? 1}
+    <ol style:margin={preview ? '0' : null} {start}>
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </ol>
   {:else if node.type === MarkupNodeType.bullet_list}
     <ul style:margin={preview ? '0' : null}>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </ul>
   {:else if node.type === MarkupNodeType.list_item}
     <li>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </li>
   {:else if node.type === MarkupNodeType.taskList}
     <!-- TODO not implemented -->
@@ -110,33 +142,59 @@
     <!-- TODO not implemented -->
   {:else if node.type === MarkupNodeType.subLink}
     <sub>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </sub>
   {:else if node.type === MarkupNodeType.table}
     <table class="proseTable">
       <tbody>
-        <MarkupNodes {nodes} {preview} />
+        {#if nodes.length > 0}
+          {#each nodes as node}
+            <Node {node} {preview} />
+          {/each}
+        {/if}
       </tbody>
     </table>
   {:else if node.type === MarkupNodeType.table_row}
     <tr>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </tr>
   {:else if node.type === MarkupNodeType.table_cell}
     {@const colspan = toNumber(attrs.colspan)}
     {@const rowspan = toNumber(attrs.rowspan)}
     <td {colspan} {rowspan}>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </td>
   {:else if node.type === MarkupNodeType.table_header}
     {@const colspan = toNumber(attrs.colspan)}
     {@const rowspan = toNumber(attrs.rowspan)}
     <th {colspan} {rowspan}>
-      <MarkupNodes {nodes} {preview} />
+      {#if nodes.length > 0}
+        {#each nodes as node}
+          <Node {node} {preview} />
+        {/each}
+      {/if}
     </th>
+  {:else if node.type === MarkupNodeType.comment}
+    <!-- Ignore -->
   {:else}
     unknown node: "{node.type}"
-    <MarkupNodes {nodes} {preview} />
+    {#if nodes.length > 0}
+      {#each nodes as node}
+        <Node {node} {preview} />
+      {/each}
+    {/if}
   {/if}
 {/if}
 

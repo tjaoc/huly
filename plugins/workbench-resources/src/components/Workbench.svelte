@@ -16,11 +16,20 @@
   import { Analytics } from '@hcengineering/analytics'
   import contact, { PersonAccount } from '@hcengineering/contact'
   import { personByIdStore } from '@hcengineering/contact-resources'
-  import core, { AccountRole, Class, Doc, Ref, Space, getCurrentAccount, hasAccountRole } from '@hcengineering/core'
+  import core, {
+    AccountRole,
+    Class,
+    Doc,
+    getCurrentAccount,
+    hasAccountRole,
+    Ref,
+    SortingOrder,
+    Space
+  } from '@hcengineering/core'
   import login from '@hcengineering/login'
   import notification, { DocNotifyContext, InboxNotification, notificationId } from '@hcengineering/notification'
   import { BrowserNotificatator, InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
-  import { IntlString, broadcastEvent, getMetadata, getResource } from '@hcengineering/platform'
+  import { broadcastEvent, getMetadata, getResource, IntlString, translate } from '@hcengineering/platform'
   import {
     ActionContext,
     ComponentExtensions,
@@ -30,54 +39,63 @@
     reduceCalls
   } from '@hcengineering/presentation'
   import setting from '@hcengineering/setting'
-  import support, { SupportStatus, supportLink } from '@hcengineering/support'
+  import support, { supportLink, SupportStatus } from '@hcengineering/support'
   import {
     AnyComponent,
+    areLocationsEqual,
     Button,
+    closePanel,
+    closePopup,
+    closeTooltip,
     CompAndProps,
     Component,
+    defineSeparators,
+    deviceOptionsStore as deviceInfo,
     Dock,
+    getCurrentLocation,
+    getLocation,
     IconSettings,
     Label,
+    languageStore,
     Location,
+    location,
+    locationStorageKeyId,
+    locationToUrl,
+    mainSeparators,
+    navigate,
+    openPanel,
     PanelInstance,
     Popup,
     PopupAlignment,
     PopupPosAlignment,
     PopupResult,
-    ResolvedLocation,
-    Separator,
-    TooltipInstance,
-    areLocationsEqual,
-    closePanel,
-    closePopup,
-    closeTooltip,
-    defineSeparators,
-    deviceOptionsStore as deviceInfo,
-    getCurrentLocation,
-    getLocation,
-    location,
-    locationStorageKeyId,
-    navigate,
-    openPanel,
     popupstore,
+    pushRootBarComponent,
+    ResolvedLocation,
     resolvedLocationStore,
-    rootBarExtensions,
+    Separator,
     setResolvedLocation,
     showPopup,
+    TooltipInstance,
     workbenchSeparators
   } from '@hcengineering/ui'
   import view from '@hcengineering/view'
   import {
+    accessDeniedStore,
     ActionHandler,
     ListSelectionProvider,
-    NavLink,
-    accessDeniedStore,
     migrateViewOpttions,
-    updateFocus,
-    parseLinkId
+    NavLink,
+    parseLinkId,
+    updateFocus
   } from '@hcengineering/view-resources'
-  import type { Application, NavigatorModel, SpecialNavModel, ViewConfiguration } from '@hcengineering/workbench'
+  import type {
+    Application,
+    NavigatorModel,
+    SpecialNavModel,
+    ViewConfiguration,
+    WorkbenchTab
+  } from '@hcengineering/workbench'
   import { getContext, onDestroy, onMount, tick } from 'svelte'
   import { subscribeMobile } from '../mobile'
   import workbench from '../plugin'
@@ -93,6 +111,18 @@
   import SelectWorkspaceMenu from './SelectWorkspaceMenu.svelte'
   import SpaceView from './SpaceView.svelte'
   import TopMenu from './icons/TopMenu.svelte'
+  import WidgetsBar from './sidebar/Sidebar.svelte'
+  import { sidebarStore, SidebarVariant, syncSidebarState } from '../sidebar'
+  import {
+    getTabDataByLocation,
+    getTabLocation,
+    prevTabIdStore,
+    selectTab,
+    syncWorkbenchTab,
+    tabIdStore,
+    tabsStore
+  } from '../workbench'
+  import { get } from 'svelte/store'
 
   let contentPanel: HTMLElement
 
@@ -139,17 +169,80 @@
     }
   }
 
-  onMount(() => {
-    rootBarExtensions.update((cur) => {
-      if (!cur.find((p) => p[1] === view.component.SearchSelector)) {
-        cur.push(['right', view.component.SearchSelector])
+  let tabs: WorkbenchTab[] = []
+  let areTabsLoaded = false
+
+  const query = createQuery()
+  $: query.query(
+    workbench.class.WorkbenchTab,
+    { attachedTo: account._id },
+    (res) => {
+      tabs = res
+      tabsStore.set(tabs)
+      if (!areTabsLoaded) {
+        void initCurrentTab(tabs)
+        areTabsLoaded = true
       }
-      return cur
-    })
+    },
+    {
+      sort: {
+        isPinned: SortingOrder.Descending,
+        createdOn: SortingOrder.Ascending
+      }
+    }
+  )
+
+  async function initCurrentTab (tabs: WorkbenchTab[]): Promise<void> {
+    const tab = tabs.find((t) => t._id === $tabIdStore)
+    const loc = getCurrentLocation()
+    const tabLoc = tab ? getTabLocation(tab) : undefined
+    const isLocEqual = tabLoc ? areLocationsEqual(loc, tabLoc) : false
+    if (!isLocEqual) {
+      const url = locationToUrl(loc)
+      const data = await getTabDataByLocation(loc)
+      const name = data.name ?? (await translate(data.label, {}, get(languageStore)))
+      const tabByName = get(tabsStore).find((t) => {
+        if (t.location === url) return true
+        if (t.name !== name) return false
+
+        const tabLoc = getTabLocation(t)
+
+        return tabLoc.path[2] === loc.path[2] && tabLoc.path[3] === loc.path[3]
+      })
+      if (tabByName !== undefined) {
+        selectTab(tabByName._id)
+        prevTabIdStore.set(tabByName._id)
+      } else {
+        const tabToReplace = tabs.findLast((t) => !t.isPinned)
+        if (tabToReplace !== undefined) {
+          await client.update(tabToReplace, {
+            location: url
+          })
+          selectTab(tabToReplace._id)
+          prevTabIdStore.set(tabToReplace._id)
+        } else {
+          console.log('Creating new tab on init')
+          const _id = await client.createDoc(workbench.class.WorkbenchTab, core.space.Workspace, {
+            attachedTo: account._id,
+            location: url,
+            isPinned: false
+          })
+          selectTab(_id)
+          prevTabIdStore.set(_id)
+        }
+      }
+    }
+  }
+
+  onMount(() => {
+    pushRootBarComponent('right', view.component.SearchSelector)
+    pushRootBarComponent('left', workbench.component.WorkbenchTabs, 30)
     void getResource(login.function.GetWorkspaces).then(async (getWorkspaceFn) => {
       $workspacesStore = await getWorkspaceFn()
       await updateWindowTitle(getLocation())
     })
+    syncSidebarState()
+    syncWorkbenchTab()
   })
 
   const account = getCurrentAccount() as PersonAccount
@@ -174,6 +267,7 @@
 
   const doSyncLoc = reduceCalls(async (loc: Location): Promise<void> => {
     if (workspaceId !== $location.path[1]) {
+      tabs = []
       // Switch of workspace
       return
     }
@@ -297,7 +391,17 @@
   async function syncLoc (loc: Location): Promise<void> {
     accessDeniedStore.set(false)
     const originalLoc = JSON.stringify(loc)
-
+    if ($tabIdStore !== $prevTabIdStore) {
+      if ($prevTabIdStore) {
+        const prevTab = tabs.find((t) => t._id === $prevTabIdStore)
+        const prevTabLoc = prevTab ? getTabLocation(prevTab) : undefined
+        if (prevTabLoc === undefined || prevTabLoc.path[2] !== loc.path[2]) {
+          clear(1)
+          clear(2)
+        }
+      }
+      prevTabIdStore.set($tabIdStore)
+    }
     if (loc.path.length > 3 && getSpecialComponent(loc.path[3]) === undefined) {
       // resolve short links
       const resolvedLoc = await resolveShortLink(loc)
@@ -607,6 +711,7 @@
   let lastLoc: Location | undefined = undefined
 
   defineSeparators('workbench', workbenchSeparators)
+  defineSeparators('main', mainSeparators)
 
   $: mainNavigator = currentApplication && navigatorModel && navigator && $deviceInfo.navigator.visible
   $: elementPanel = $deviceInfo.replacedPanel ?? contentPanel
@@ -615,6 +720,14 @@
     person && client.getHierarchy().hasMixin(person, contact.mixin.Employee)
       ? !client.getHierarchy().as(person, contact.mixin.Employee).active
       : false
+
+  let asideComponent: AnyComponent | undefined
+
+  $: if (asideId !== undefined && navigatorModel !== undefined) {
+    asideComponent = navigatorModel?.aside ?? currentApplication?.aside
+  } else {
+    asideComponent = undefined
+  }
 </script>
 
 {#if person && deactivated && !isAdminUser()}
@@ -640,16 +753,6 @@
     <clipPath id="notify-small">
       <path d="M10.5,12.2c0-2.9,2.4-5.2,5.2-5.2c0.6,0,1.2,0.1,1.8,0.3V0H0v17.5h15.8C12.9,17.5,10.5,15.1,10.5,12.2z" />
       <path d="M15.8,17.5h1.8v-0.4C17,17.4,16.4,17.5,15.8,17.5z" />
-    </clipPath>
-    <clipPath id="nub-bg">
-      <path
-        d="M7.3.6 4.2 4.3C2.9 5.4 1.5 6 0 6v1h18V6c-1.5 0-2.9-.6-4.2-1.7L10.7.6C9.9-.1 8.5-.2 7.5.4c0 .1-.1.1-.2.2z"
-      />
-    </clipPath>
-    <clipPath id="nub-border">
-      <path
-        d="M4.8 5.1 8 1.3s.1 0 .1-.1c.5-.3 1.4-.3 1.9.1L13.1 5l.1.1 1.2.9H18c-1.5 0-2.9-.6-4.2-1.7L10.7.6C9.9-.1 8.5-.2 7.5.4c0 .1-.1.1-.2.2L4.2 4.3C2.9 5.4 1.5 6 0 6h3.6l1.2-.9z"
-      />
     </clipPath>
   </svg>
   <div
@@ -862,17 +965,18 @@
           <SpaceView {currentSpace} {currentView} {createItemDialog} {createItemLabel} />
         {/if}
       </div>
-      {#if asideId && navigatorModel !== undefined}
-        {@const asideComponent = navigatorModel?.aside ?? currentApplication?.aside}
-        {#if asideComponent !== undefined}
-          <Separator name={'workbench'} index={1} color={'transparent'} separatorSize={0} short />
-          <div class="antiPanel-component antiComponent aside" bind:this={aside}>
-            <Component is={asideComponent} props={{ currentSpace, _id: asideId }} on:close={closeAside} />
-          </div>
-        {/if}
+      {#if asideComponent !== undefined}
+        <Separator name={'workbench'} index={1} color={'transparent'} separatorSize={0} short />
+        <div class="antiPanel-component antiComponent aside" bind:this={aside}>
+          <Component is={asideComponent} props={{ currentSpace, _id: asideId }} on:close={closeAside} />
+        </div>
       {/if}
     </div>
   </div>
+  {#if $sidebarStore.variant === SidebarVariant.EXPANDED}
+    <Separator name={'main'} index={0} color={'transparent'} separatorSize={0} short />
+  {/if}
+  <WidgetsBar />
   <Dock />
   <div bind:this={cover} class="cover" />
   <TooltipInstance />
@@ -911,6 +1015,8 @@
       inset: 0;
       border: 1px solid var(--theme-divider-color);
       border-radius: var(--medium-BorderRadius);
+      border-bottom-right-radius: 0;
+      border-top-right-radius: 0;
       pointer-events: none;
     }
     .antiPanel-application {

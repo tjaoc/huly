@@ -20,6 +20,7 @@ import activity, {
   DocUpdateMessage,
   Reaction
 } from '@hcengineering/activity'
+import { PersonAccount } from '@hcengineering/contact'
 import core, {
   Account,
   AttachedDoc,
@@ -38,6 +39,8 @@ import core, {
   TxCUD,
   TxProcessor
 } from '@hcengineering/core'
+import notification, { NotificationContent } from '@hcengineering/notification'
+import { getResource, translate } from '@hcengineering/platform'
 import { ActivityControl, DocObjectCache } from '@hcengineering/server-activity'
 import type { TriggerControl } from '@hcengineering/server-core'
 import {
@@ -46,12 +49,9 @@ import {
   getTextPresenter,
   removeDocInboxNotifications
 } from '@hcengineering/server-notification-resources'
-import { PersonAccount } from '@hcengineering/contact'
-import { NotificationContent } from '@hcengineering/notification'
-import { getResource, translate } from '@hcengineering/platform'
 
-import { getAttrName, getCollectionAttribute, getDocUpdateAction, getTxAttributesUpdates } from './utils'
 import { ReferenceTrigger } from './references'
+import { getAttrName, getCollectionAttribute, getDocUpdateAction, getTxAttributesUpdates } from './utils'
 
 export async function OnReactionChanged (originTx: Tx, control: TriggerControl): Promise<Tx[]> {
   const tx = originTx as TxCollectionCUD<ActivityMessage, Reaction>
@@ -60,13 +60,13 @@ export async function OnReactionChanged (originTx: Tx, control: TriggerControl):
   if (innerTx._class === core.class.TxCreateDoc) {
     const txes = await createReactionNotifications(tx, control)
 
-    await control.apply(txes, true)
+    await control.apply(control.ctx, txes)
     return []
   }
 
   if (innerTx._class === core.class.TxRemoveDoc) {
     const txes = await removeReactionNotifications(tx, control)
-    await control.apply(txes, true)
+    await control.apply(control.ctx, txes)
     return []
   }
 
@@ -79,6 +79,7 @@ export async function removeReactionNotifications (
 ): Promise<Tx[]> {
   const message = (
     await control.findAll(
+      control.ctx,
       activity.class.ActivityMessage,
       { objectId: tx.tx.objectId },
       { projection: { _id: 1, _class: 1, space: 1 } }
@@ -106,7 +107,7 @@ export async function createReactionNotifications (
 ): Promise<Tx[]> {
   const createTx = TxProcessor.extractTx(tx) as TxCreateDoc<Reaction>
 
-  const parentMessage = (await control.findAll(activity.class.ActivityMessage, { _id: tx.objectId }))[0]
+  const parentMessage = (await control.findAll(control.ctx, activity.class.ActivityMessage, { _id: tx.objectId }))[0]
 
   if (parentMessage === undefined) {
     return []
@@ -318,7 +319,7 @@ export async function generateDocUpdateMessages (
 
       let doc = objectCache?.docs?.get(tx.objectId)
       if (doc === undefined) {
-        doc = (await control.findAll(tx.objectClass, { _id: tx.objectId }, { limit: 1 }))[0]
+        doc = (await control.findAll(ctx, tx.objectClass, { _id: tx.objectId }, { limit: 1 }))[0]
         objectCache?.docs?.set(tx.objectId, doc)
       }
       return await ctx.with(
@@ -347,10 +348,21 @@ export async function generateDocUpdateMessages (
 
         let doc = objectCache?.docs?.get(tx.objectId)
         if (doc === undefined) {
-          doc = (await control.findAll(tx.objectClass, { _id: tx.objectId }, { limit: 1 }))[0]
-          objectCache?.docs?.set(tx.objectId, doc)
+          doc = (await control.findAll(ctx, tx.objectClass, { _id: tx.objectId }, { limit: 1 }))[0]
+        }
+        if (doc === undefined) {
+          const isAttachedDoc = hierarchy.isDerived(tx.objectClass, core.class.AttachedDoc)
+          const createTx = isAttachedDoc
+            ? (await control.findAll(ctx, core.class.TxCollectionCUD, { 'tx.objectId': tx.objectId }, { limit: 1 }))[0]
+            : (await control.findAll(ctx, core.class.TxCreateDoc, { objectId: tx.objectId }, { limit: 1 }))[0]
+
+          doc =
+            createTx !== undefined
+              ? TxProcessor.createDoc2Doc(TxProcessor.extractTx(createTx) as TxCreateDoc<Doc>)
+              : undefined
         }
         if (doc !== undefined) {
+          objectCache?.docs?.set(tx.objectId, doc)
           return await ctx.with(
             'pushDocUpdateMessages',
             {},
@@ -376,19 +388,29 @@ export async function generateDocUpdateMessages (
 }
 
 async function ActivityMessagesHandler (tx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
-  if (control.hierarchy.isDerived(tx.objectClass, activity.class.ActivityMessage)) {
+  if (
+    control.hierarchy.isDerived(tx.objectClass, activity.class.ActivityMessage) ||
+    control.hierarchy.isDerived(tx.objectClass, notification.class.DocNotifyContext) ||
+    control.hierarchy.isDerived(tx.objectClass, notification.class.ActivityInboxNotification) ||
+    control.hierarchy.isDerived(tx.objectClass, notification.class.BrowserNotification)
+  ) {
     return []
   }
 
-  const cache: DocObjectCache = {
+  const cache: DocObjectCache = control.contextCache.get('ActivityMessagesHandler') ?? {
     docs: new Map(),
     transactions: new Map()
   }
-  const txes = await control.ctx.with(
-    'generateDocUpdateMessages',
-    {},
-    async (ctx) => await generateDocUpdateMessages(ctx, tx, control, [], undefined, cache)
-  )
+  control.contextCache.set('ActivityMessagesHandler', cache)
+
+  const txes =
+    tx.space === core.space.DerivedTx
+      ? []
+      : await control.ctx.with(
+        'generateDocUpdateMessages',
+        {},
+        async (ctx) => await generateDocUpdateMessages(ctx, tx, control, [], undefined, cache)
+      )
 
   const messages = txes.map((messageTx) => TxProcessor.createDoc2Doc(messageTx.tx as TxCreateDoc<DocUpdateMessage>))
 
@@ -402,7 +424,7 @@ async function ActivityMessagesHandler (tx: TxCUD<Doc>, control: TriggerControl)
   const result = [...txes, ...notificationTxes]
 
   if (result.length > 0) {
-    await control.apply(result)
+    await control.apply(control.ctx, result)
   }
   return []
 }
@@ -421,6 +443,7 @@ async function OnDocRemoved (originTx: TxCUD<Doc>, control: TriggerControl): Pro
   }
 
   const messages = await control.findAll(
+    control.ctx,
     activity.class.ActivityMessage,
     { attachedTo: tx.objectId },
     { projection: { _id: 1, _class: 1, space: 1 } }

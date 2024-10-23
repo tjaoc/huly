@@ -2,7 +2,7 @@
 // Copyright © 2023 Hardcore Engineering Inc.
 //
 
-import core, { toIdMap, type AnyAttribute, type Ref, type Status } from '@hcengineering/core'
+import core, { DOMAIN_TX, toIdMap, type AnyAttribute, type Ref, type Status } from '@hcengineering/core'
 import {
   tryMigrate,
   tryUpgrade,
@@ -271,7 +271,6 @@ async function processMigrateMarkupFor (
   client: MigrationClient,
   iterator: MigrationIterator<DocSyncInfo>
 ): Promise<void> {
-  let processed = 0
   while (true) {
     const docs = await iterator.next(1000)
     if (docs === null || docs.length === 0) {
@@ -298,9 +297,6 @@ async function processMigrateMarkupFor (
     if (operations.length > 0) {
       await client.bulk(DOMAIN_GITHUB, operations)
     }
-
-    processed += docs.length
-    console.log('...processed', processed)
   }
 }
 
@@ -326,6 +322,12 @@ export const githubOperationPreTime: MigrateOperation = {
       {
         state: 'migrate-missing-states',
         func: migrateMissingStates
+      },
+      {
+        state: 'remove-doc-sync-info-txes',
+        func: async (client) => {
+          await client.deleteMany(DOMAIN_TX, { objectClass: github.class.DocSyncInfo })
+        }
       }
     ])
   },

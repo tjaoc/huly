@@ -14,12 +14,20 @@
 -->
 <script lang="ts">
   import { type Blob, type Ref } from '@hcengineering/core'
-  import { Button, Component, Label, resizeObserver, deviceOptionsStore as deviceInfo } from '@hcengineering/ui'
+  import {
+    Button,
+    Component,
+    Label,
+    resizeObserver,
+    deviceOptionsStore as deviceInfo,
+    Loading
+  } from '@hcengineering/ui'
 
   import presentation from '../plugin'
 
   import { getFileUrl } from '../file'
   import { getPreviewType, previewTypes } from '../filetypes'
+  import { imageSizeToRatio } from '../image'
   import { BlobMetadata, FilePreviewExtension } from '../types'
 
   export let file: Ref<Blob>
@@ -34,9 +42,11 @@
   let minHeight: number | undefined
   $: parentHeight = ($deviceInfo.docHeight * 80) / 100
 
+  let loading = true
   let previewType: FilePreviewExtension | undefined = undefined
   $: void getPreviewType(contentType, $previewTypes).then((res) => {
     previewType = res
+    loading = false
   })
 
   const updateHeight = (
@@ -59,8 +69,8 @@
       return
     }
     const pR: number = mD?.pixelRatio ?? 1
-    const fWidth: number = mD.originalWidth / pR
-    const fHeight: number = mD.originalHeight / pR
+    const fWidth: number = imageSizeToRatio(mD.originalWidth, pR)
+    const fHeight: number = imageSizeToRatio(mD.originalHeight, pR)
     let mHeight: number = 0
     let scale: number = 1
     if (fWidth > pWidth) {
@@ -91,6 +101,8 @@
       </div>
     {:else if previewType !== undefined}
       <Component is={previewType.component} props={{ value: file, name, contentType, metadata, ...props, fit }} />
+    {:else if loading}
+      <Loading />
     {:else}
       <div class="flex-col items-center flex-gap-3">
         <Label label={presentation.string.ContentTypeNotSupported} />

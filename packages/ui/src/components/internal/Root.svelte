@@ -6,7 +6,7 @@
   // import { applicationShortcutKey } from '../../utils'
   import { Theme } from '@hcengineering/theme'
   import { IconArrowLeft, IconArrowRight, checkMobile, deviceOptionsStore as deviceInfo } from '../../'
-  import { embeddedPlatform, getCurrentLocation, location, locationStorageKeyId, navigate } from '../../location'
+  import { desktopPlatform, getCurrentLocation, location, locationStorageKeyId, navigate } from '../../location'
   import uiPlugin from '../../plugin'
   import Component from '../Component.svelte'
   import Label from '../Label.svelte'
@@ -137,7 +137,7 @@
   <div id="ui-root">
     <div class="antiStatusBar">
       <div class="flex-row-center h-full content-color gap-3 pl-4">
-        {#if embeddedPlatform}
+        {#if desktopPlatform}
           <div class="history-box flex-row-center gap-3">
             <button
               id="statusbar-back"
@@ -161,7 +161,7 @@
             </button>
           </div>
         {/if}
-        <div class="flex-row-center" style:-webkit-app-region={'no-drag'}>
+        <div class="flex-row-center left-items flex-gap-0-5" style:-webkit-app-region={'no-drag'}>
           <RootBarExtension position="left" />
         </div>
         <div
@@ -216,7 +216,7 @@
       min-height: var(--status-bar-height);
       height: var(--status-bar-height);
       // min-width: 600px;
-      font-size: 12px;
+      font-size: 0.75rem;
       line-height: 150%;
       background-color: var(--theme-statusbar-color);
       // border-bottom: 1px solid var(--theme-navpanel-divider);
@@ -266,5 +266,9 @@
         flex-direction: column;
       }
     }
+  }
+
+  .left-items {
+    overflow-x: auto;
   }
 </style>

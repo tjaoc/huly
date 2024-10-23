@@ -18,6 +18,8 @@ import view, { actionTemplates as viewTemplates, createAction, template } from '
 import notification, { notificationActionTemplates } from '@hcengineering/model-notification'
 import activity from '@hcengineering/activity'
 import workbench from '@hcengineering/model-workbench'
+import core from '@hcengineering/model-core'
+import contact from '@hcengineering/contact'
 
 import chunter from './plugin'
 
@@ -35,6 +37,30 @@ const actionTemplates = template({
 })
 
 export function defineActions (builder: Builder): void {
+  builder.createDoc(
+    view.class.ActionCategory,
+    core.space.Model,
+    { label: chunter.string.Chat, visible: true },
+    chunter.category.Chunter
+  )
+
+  createAction(builder, {
+    action: chunter.actionImpl.StartConversation,
+    label: chunter.string.Message,
+    icon: view.icon.Bubble,
+    input: 'focus',
+    category: chunter.category.Chunter,
+    target: contact.mixin.Employee,
+    context: {
+      mode: 'context',
+      group: 'associate'
+    }
+  })
+  defineMessageActions(builder)
+  defineChannelActions(builder)
+}
+
+function defineMessageActions (builder: Builder): void {
   createAction(
     builder,
     {
@@ -76,6 +102,61 @@ export function defineActions (builder: Builder): void {
     chunter.action.CopyChatMessageLink
   )
 
+  createAction(
+    builder,
+    {
+      action: chunter.actionImpl.DeleteChatMessage,
+      label: view.string.Delete,
+      icon: view.icon.Delete,
+      input: 'focus',
+      keyBinding: ['Backspace'],
+      category: chunter.category.Chunter,
+      target: chunter.class.ChatMessage,
+      visibilityTester: chunter.function.CanDeleteMessage,
+      context: { mode: ['context', 'browser'], group: 'remove' }
+    },
+    chunter.action.DeleteChatMessage
+  )
+
+  createAction(
+    builder,
+    {
+      action: chunter.actionImpl.TranslateMessage,
+      label: chunter.string.Translate,
+      icon: view.icon.Translate,
+      input: 'focus',
+      category: chunter.category.Chunter,
+      target: chunter.class.ChatMessage,
+      visibilityTester: chunter.function.CanTranslateMessage,
+      inline: true,
+      context: {
+        mode: 'context',
+        group: 'edit'
+      }
+    },
+    chunter.action.TranslateMessage
+  )
+  createAction(
+    builder,
+    {
+      action: chunter.actionImpl.ShowOriginalMessage,
+      label: chunter.string.ShowOriginal,
+      icon: view.icon.Undo,
+      input: 'focus',
+      category: chunter.category.Chunter,
+      target: chunter.class.ChatMessage,
+      visibilityTester: chunter.function.CanTranslateMessage,
+      inline: true,
+      context: {
+        mode: 'context',
+        group: 'edit'
+      }
+    },
+    chunter.action.ShowOriginalMessage
+  )
+}
+
+function defineChannelActions (builder: Builder): void {
   createAction(
     builder,
     {
@@ -125,9 +206,11 @@ export function defineActions (builder: Builder): void {
       query: {
         archived: false
       },
+      override: [view.action.Archive],
+      visibilityTester: view.function.CanArchiveSpace,
       context: {
         mode: 'context',
-        group: 'tools'
+        group: 'remove'
       }
     },
     chunter.action.ArchiveChannel
@@ -138,7 +221,7 @@ export function defineActions (builder: Builder): void {
     target: chunter.class.Channel,
     context: {
       mode: ['browser', 'context'],
-      group: 'create'
+      group: 'edit'
     },
     action: workbench.actionImpl.Navigate,
     actionProps: {
@@ -149,27 +232,11 @@ export function defineActions (builder: Builder): void {
   createAction(
     builder,
     {
-      action: chunter.actionImpl.DeleteChatMessage,
-      label: view.string.Delete,
-      icon: view.icon.Delete,
-      input: 'focus',
-      keyBinding: ['Backspace'],
-      category: chunter.category.Chunter,
-      target: chunter.class.ChatMessage,
-      visibilityTester: chunter.function.CanDeleteMessage,
-      context: { mode: ['context', 'browser'], group: 'remove' }
-    },
-    chunter.action.DeleteChatMessage
-  )
-
-  createAction(
-    builder,
-    {
       ...actionTemplates.removeChannel,
       icon: view.icon.EyeCrossed,
       label: view.string.Hide,
       query: {
-        attachedToClass: { $nin: [chunter.class.DirectMessage, chunter.class.Channel] }
+        objectClass: { $nin: [chunter.class.DirectMessage, chunter.class.Channel] }
       }
     },
     chunter.action.RemoveChannel
@@ -181,7 +248,7 @@ export function defineActions (builder: Builder): void {
       ...actionTemplates.removeChannel,
       label: chunter.string.CloseConversation,
       query: {
-        attachedToClass: chunter.class.DirectMessage
+        objectClass: chunter.class.DirectMessage
       }
     },
     chunter.action.CloseConversation
@@ -194,7 +261,7 @@ export function defineActions (builder: Builder): void {
       action: chunter.actionImpl.LeaveChannel,
       label: chunter.string.LeaveChannel,
       query: {
-        attachedToClass: chunter.class.Channel
+        objectClass: chunter.class.Channel
       }
     },
     chunter.action.LeaveChannel
@@ -204,7 +271,7 @@ export function defineActions (builder: Builder): void {
     ...notificationActionTemplates.pinContext,
     label: chunter.string.StarChannel,
     query: {
-      attachedToClass: chunter.class.Channel
+      objectClass: chunter.class.Channel
     },
     override: [notification.action.PinDocNotifyContext]
   })
@@ -213,7 +280,7 @@ export function defineActions (builder: Builder): void {
     ...notificationActionTemplates.unpinContext,
     label: chunter.string.UnstarChannel,
     query: {
-      attachedToClass: chunter.class.Channel
+      objectClass: chunter.class.Channel
     }
   })
 
@@ -221,7 +288,7 @@ export function defineActions (builder: Builder): void {
     ...notificationActionTemplates.pinContext,
     label: chunter.string.StarConversation,
     query: {
-      attachedToClass: chunter.class.DirectMessage
+      objectClass: chunter.class.DirectMessage
     }
   })
 
@@ -229,21 +296,31 @@ export function defineActions (builder: Builder): void {
     ...notificationActionTemplates.unpinContext,
     label: chunter.string.UnstarConversation,
     query: {
-      attachedToClass: chunter.class.DirectMessage
+      objectClass: chunter.class.DirectMessage
     }
   })
 
   createAction(builder, {
     ...notificationActionTemplates.pinContext,
     query: {
-      attachedToClass: { $nin: [chunter.class.DirectMessage, chunter.class.Channel] }
+      objectClass: { $nin: [chunter.class.DirectMessage, chunter.class.Channel] }
     }
   })
 
   createAction(builder, {
     ...notificationActionTemplates.unpinContext,
     query: {
-      attachedToClass: { $nin: [chunter.class.DirectMessage, chunter.class.Channel] }
+      objectClass: { $nin: [chunter.class.DirectMessage, chunter.class.Channel] }
     }
+  })
+
+  createAction(builder, {
+    action: chunter.actionImpl.OpenInSidebar,
+    label: workbench.string.OpenInSidebar,
+    icon: view.icon.DetailsFilled,
+    input: 'focus',
+    category: chunter.category.Chunter,
+    target: notification.class.DocNotifyContext,
+    context: { mode: ['context', 'browser'], group: 'tools' }
   })
 }

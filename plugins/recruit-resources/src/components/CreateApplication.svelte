@@ -135,7 +135,7 @@
       throw new Error('contact not found')
     }
 
-    const ops = client.apply(generateId(), recruitId + '.Create.CreateApplication')
+    const ops = client.apply(undefined, recruitId + '.Create.CreateApplication')
 
     if (!client.getHierarchy().hasMixin(candidateInstance, recruit.mixin.Candidate)) {
       await ops.createMixin<Contact, Candidate>(
@@ -169,7 +169,7 @@
       doc._id
     )
 
-    await descriptionBox.createAttachments()
+    await descriptionBox.createAttachments(undefined, ops)
 
     if (_comment.trim().length > 0 && !isEmptyMarkup(_comment)) {
       await ops.addCollection(chunter.class.ChatMessage, _space, doc._id, recruit.class.Applicant, 'comments', {

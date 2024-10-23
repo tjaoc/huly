@@ -20,6 +20,7 @@ import {
   Class,
   Doc,
   DocumentQuery,
+  type Domain,
   IdMap,
   Markup,
   Mixin,
@@ -42,6 +43,10 @@ import { Readable, Writable } from './types'
 
 export * from './types'
 
+export const DOMAIN_NOTIFICATION = 'notification' as Domain
+export const DOMAIN_DOC_NOTIFY = 'notification-dnc' as Domain
+export const DOMAIN_USER_NOTIFY = 'notification-user' as Domain
+
 /**
  * @public
  */
@@ -53,6 +58,10 @@ export interface BrowserNotification extends Doc {
   onClickLocation?: Location
   senderId?: Ref<Account>
   tag: Ref<Doc>
+  messageId?: Ref<ActivityMessage>
+  messageClass?: Ref<Class<ActivityMessage>>
+  objectId: Ref<Doc>
+  objectClass: Ref<Class<Doc>>
 }
 
 export interface PushData {
@@ -285,6 +294,7 @@ export interface DocNotifyContext extends Doc<PersonSpace> {
   objectSpace: Ref<Space>
 
   isPinned: boolean
+  hidden: boolean
   lastViewedTimestamp?: Timestamp
   lastUpdateTimestamp?: Timestamp
 

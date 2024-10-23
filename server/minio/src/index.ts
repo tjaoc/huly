@@ -100,6 +100,9 @@ export class MinioService implements StorageAdapter {
   async listBuckets (ctx: MeasureContext): Promise<BucketInfo[]> {
     if (this.opt.rootBucket !== undefined) {
       const info = new Map<string, BucketInfo>()
+      if (!(await this.client.bucketExists(this.opt.rootBucket))) {
+        return []
+      }
       const stream = this.client.listObjects(this.opt.rootBucket, '', false)
       await new Promise<void>((resolve, reject) => {
         stream.on('end', () => {
@@ -182,11 +185,7 @@ export class MinioService implements StorageAdapter {
   }
 
   @withContext('listStream')
-  async listStream (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceId,
-    prefix?: string | undefined
-  ): Promise<BlobStorageIterator> {
+  async listStream (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<BlobStorageIterator> {
     let hasMore = true
     let stream: BucketStream<BucketItem> | undefined
     let done = false
@@ -196,10 +195,10 @@ export class MinioService implements StorageAdapter {
 
     const rootPrefix = this.rootPrefix(workspaceId)
     return {
-      next: async (): Promise<ListBlobResult | undefined> => {
+      next: async (): Promise<ListBlobResult[]> => {
         try {
           if (stream === undefined && !done) {
-            const rprefix = rootPrefix !== undefined ? rootPrefix + (prefix ?? '') : prefix ?? ''
+            const rprefix = rootPrefix ?? ''
             stream = this.client.listObjects(this.getBucketId(workspaceId), rprefix, true)
             stream.on('end', () => {
               stream?.destroy()
@@ -231,7 +230,7 @@ export class MinioService implements StorageAdapter {
                 })
               }
               onNext()
-              if (buffer.length > 5) {
+              if (buffer.length > 100) {
                 stream?.pause()
               }
             })
@@ -240,24 +239,24 @@ export class MinioService implements StorageAdapter {
           const msg = (err?.message as string) ?? ''
           if (msg.includes('Invalid bucket name') || msg.includes('The specified bucket does not exist')) {
             hasMore = false
-            return
+            return []
           }
           error = err
         }
 
         if (buffer.length > 0) {
-          return buffer.shift()
+          return buffer.splice(0, 50)
         }
         if (!hasMore) {
-          return undefined
+          return []
         }
-        return await new Promise<ListBlobResult | undefined>((resolve, reject) => {
+        return await new Promise<ListBlobResult[]>((resolve, reject) => {
           onNext = () => {
             if (error != null) {
               reject(error)
             }
             onNext = () => {}
-            resolve(buffer.shift())
+            resolve(buffer.splice(0, 50))
           }
           stream?.resume()
         })
@@ -290,6 +289,15 @@ export class MinioService implements StorageAdapter {
         version: result.versionId ?? null
       }
     } catch (err: any) {
+      if (
+        err?.code === 'NoSuchKey' ||
+        err?.code === 'NotFound' ||
+        err?.message === 'No such key' ||
+        err?.Code === 'NoSuchKey'
+      ) {
+        // Do not print error in this case
+        return
+      }
       ctx.error('no object found', { error: err, objectName, workspaceId: workspaceId.name })
     }
   }

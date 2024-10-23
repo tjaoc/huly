@@ -39,8 +39,7 @@
 
   onMount(() => {
     void getResource(login.function.GetWorkspaces).then(async (f) => {
-      const workspaces = await f()
-      $workspacesStore = workspaces
+      $workspacesStore = await f()
     })
   })
 
@@ -179,8 +178,20 @@
               <div class="flex-col flex-grow">
                 <span class="label overflow-label flex flex-grow flex-between">
                   {wsName}
+                  {#if ws.region != null && ws.region !== ''}
+                    - ({ws.region})
+                  {/if}
                   {#if isAdmin && ws.lastVisit != null && ws.lastVisit !== 0}
                     <div class="text-sm">
+                      {#if ws.backupInfo != null}
+                        {@const sz = ws.backupInfo.dataSize + ws.backupInfo.blobsSize}
+                        {@const szGb = Math.round((sz * 100) / 1024) / 100}
+                        {#if szGb > 0}
+                          {Math.round((sz * 100) / 1024) / 100}Gb -
+                        {:else}
+                          {Math.round(sz)}Mb -
+                        {/if}
+                      {/if}
                       ({lastUsageDays} days)
                     </div>
                   {/if}

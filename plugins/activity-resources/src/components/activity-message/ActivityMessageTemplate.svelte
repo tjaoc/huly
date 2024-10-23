@@ -19,12 +19,14 @@
     ActivityMessageViewType
   } from '@hcengineering/activity'
   import { Person } from '@hcengineering/contact'
-  import { Avatar, EmployeePresenter, SystemAvatar } from '@hcengineering/contact-resources'
-  import core from '@hcengineering/core'
-  import { getClient } from '@hcengineering/presentation'
+  import { Avatar, SystemAvatar } from '@hcengineering/contact-resources'
+  import core, { Ref } from '@hcengineering/core'
+  import { ComponentExtensions, getClient } from '@hcengineering/presentation'
   import { Action, Icon, Label } from '@hcengineering/ui'
   import { getActions, restrictionStore, showMenu } from '@hcengineering/view-resources'
   import { Asset } from '@hcengineering/platform'
+  import { Action as ViewAction } from '@hcengineering/view'
+  import notification from '@hcengineering/notification'
 
   import ReactionsPresenter from '../reactions/ReactionsPresenter.svelte'
   import ActivityMessagePresenter from './ActivityMessagePresenter.svelte'
@@ -33,6 +35,8 @@
   import { savedMessagesStore } from '../../activity'
   import MessageTimestamp from '../MessageTimestamp.svelte'
   import Replies from '../Replies.svelte'
+  import { MessageInlineAction } from '../../types'
+  import InlineAction from './InlineAction.svelte'
 
   export let message: DisplayActivityMessage
   export let parentMessage: DisplayActivityMessage | undefined = undefined
@@ -55,6 +59,9 @@
   export let hoverStyles: 'borderedHover' | 'filledHover' = 'borderedHover'
   export let showDatePreposition = false
   export let type: ActivityMessageViewType = 'default'
+  export let inlineActions: MessageInlineAction[] = []
+  export let excludedActions: Ref<ViewAction>[] = []
+  export let readonly: boolean = false
   export let onClick: (() => void) | undefined = undefined
 
   export let socialIcon: Asset | undefined = undefined
@@ -101,8 +108,7 @@
   $: isHidden = !!viewlet?.onlyWithParent && parentMessage === undefined
   $: withActionMenu = withActions && !embedded && (actions.length > 0 || menuActionIds.length > 0)
 
-  let readonly: boolean = false
-  $: readonly = $restrictionStore.disableComments
+  $: readonly = readonly || $restrictionStore.disableComments
 
   function canDisplayShort (type: ActivityMessageViewType, isSaved: boolean): boolean {
     return type === 'short' && !isSaved && (message.replies ?? 0) === 0
@@ -137,9 +143,10 @@
   }
 
   function handleContextMenu (event: MouseEvent): void {
+    if (readonly) return
     const showCustomPopup = !isTextClicked(event.target as HTMLElement, event.clientX, event.clientY)
     if (showCustomPopup) {
-      showMenu(event, { object: message, baseMenuClass: activity.class.ActivityMessage }, () => {
+      showMenu(event, { object: message, baseMenuClass: activity.class.ActivityMessage, excludedActions }, () => {
         isActionsOpened = false
       })
       isActionsOpened = true
@@ -201,7 +208,9 @@
         {#if !isShort}
           <div class="header clear-mins">
             {#if person}
-              <EmployeePresenter value={person} shouldShowAvatar={false} compact />
+              <div class="username">
+                <ComponentExtensions extension={activity.extension.ActivityEmployeePresenter} props={{ person }} />
+              </div>
             {:else}
               <div class="strong">
                 <Label label={core.string.System} />
@@ -221,10 +230,21 @@
             <span class="text-sm lower">
               <MessageTimestamp date={message.createdOn ?? message.modifiedOn} />
             </span>
+            {#if message.editedOn}
+              <span class="text-sm lower">(<Label label={notification.string.Edited} />)</span>
+            {/if}
+
+            {#if withActions && inlineActions.length > 0 && !readonly}
+              <div class="flex-presenter flex-gap-2 ml-2">
+                {#each inlineActions as item}
+                  <InlineAction {item} />
+                {/each}
+              </div>
+            {/if}
           </div>
         {/if}
 
-        <slot name="content" />
+        <slot name="content" {readonly} />
 
         {#if !hideFooter}
           <Replies {embedded} object={message} />
@@ -242,6 +262,7 @@
             message={isReactionMessage(message) ? parentMessage : message}
             {actions}
             {withActionMenu}
+            {excludedActions}
             onOpen={handleActionsOpened}
             onClose={handleActionsClosed}
           />
@@ -268,6 +289,7 @@
     border: 1px solid transparent;
     border-radius: 0.25rem;
     width: 100%;
+    user-select: text;
 
     &.clickable {
       cursor: pointer;
@@ -419,5 +441,10 @@
     bottom: -0.375rem;
     right: -0.375rem;
     color: var(--content-color);
+  }
+
+  .username {
+    font-weight: 500;
+    margin-right: 0.25rem;
   }
 </style>

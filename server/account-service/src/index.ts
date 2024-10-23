@@ -3,12 +3,10 @@
 //
 
 import account, {
-  ACCOUNT_DB,
   EndpointKind,
-  UpgradeWorker,
   accountId,
   cleanExpiredOtp,
-  cleanInProgressWorkspaces,
+  getAccountDB,
   getAllTransactors,
   getMethods
 } from '@hcengineering/account'
@@ -16,18 +14,8 @@ import accountEn from '@hcengineering/account/lang/en.json'
 import accountRu from '@hcengineering/account/lang/ru.json'
 import { Analytics } from '@hcengineering/analytics'
 import { registerProviders } from '@hcengineering/auth-providers'
-import {
-  metricsAggregate,
-  type BrandingMap,
-  type Data,
-  type MeasureContext,
-  type Tx,
-  type Version
-} from '@hcengineering/core'
-import { type MigrateOperation } from '@hcengineering/model'
-import { getMongoClient, type MongoClientReference } from '@hcengineering/mongo'
+import { metricsAggregate, type BrandingMap, type MeasureContext } from '@hcengineering/core'
 import platform, { Severity, Status, addStringsLoader, setMetadata } from '@hcengineering/platform'
-import serverClientPlugin from '@hcengineering/server-client'
 import serverToken, { decodeToken } from '@hcengineering/server-token'
 import toolPlugin from '@hcengineering/server-tool'
 import cors from '@koa/cors'
@@ -35,26 +23,17 @@ import { type IncomingHttpHeaders } from 'http'
 import Koa from 'koa'
 import bodyParser from 'koa-bodyparser'
 import Router from 'koa-router'
-import type { MongoClient } from 'mongodb'
 import os from 'os'
 
 /**
  * @public
  */
-export function serveAccount (
-  measureCtx: MeasureContext,
-  version: Data<Version>,
-  txes: Tx[],
-  migrateOperations: [string, MigrateOperation][],
-  brandings: BrandingMap,
-  onClose?: () => void
-): void {
+export function serveAccount (measureCtx: MeasureContext, brandings: BrandingMap, onClose?: () => void): void {
   console.log('Starting account service with brandings: ', brandings)
-  const methods = getMethods(version, txes, migrateOperations)
   const ACCOUNT_PORT = parseInt(process.env.ACCOUNT_PORT ?? '3000')
-  const dbUri = process.env.MONGO_URL
-  if (dbUri === undefined) {
-    console.log('Please provide mongodb url')
+  const dbUrl = process.env.DB_URL
+  if (dbUrl === undefined) {
+    console.log('Please provide DB_URL')
     process.exit(1)
   }
 
@@ -86,6 +65,17 @@ export function serveAccount (
   const productName = process.env.PRODUCT_NAME
   const lang = process.env.LANGUAGE ?? 'en'
 
+  const wsLivenessDaysRaw = process.env.WS_LIVENESS_DAYS
+  let wsLivenessDays: number | undefined
+
+  if (wsLivenessDaysRaw !== undefined) {
+    try {
+      wsLivenessDays = parseInt(wsLivenessDaysRaw)
+    } catch (err: any) {
+      // DO NOTHING
+    }
+  }
+
   setMetadata(account.metadata.Transactors, transactorUri)
   setMetadata(platform.metadata.locale, lang)
   setMetadata(account.metadata.ProductName, productName)
@@ -93,23 +83,20 @@ export function serveAccount (
   setMetadata(account.metadata.OtpRetryDelaySec, parseInt(process.env.OTP_RETRY_DELAY ?? '60'))
   setMetadata(account.metadata.SES_URL, ses)
   setMetadata(account.metadata.FrontURL, frontURL)
+  setMetadata(account.metadata.WsLivenessDays, wsLivenessDays)
 
   setMetadata(serverToken.metadata.Secret, serverSecret)
 
-  const initWS = process.env.INIT_WORKSPACE
-  if (initWS !== undefined) {
-    setMetadata(toolPlugin.metadata.InitWorkspace, initWS)
-  }
   const initScriptUrl = process.env.INIT_SCRIPT_URL
   if (initScriptUrl !== undefined) {
     setMetadata(toolPlugin.metadata.InitScriptURL, initScriptUrl)
   }
-  setMetadata(serverClientPlugin.metadata.UserAgent, 'AccountService')
 
-  const client: MongoClientReference = getMongoClient(dbUri)
-  let _client: MongoClient | Promise<MongoClient> = client.getClient()
+  const hasSignUp = process.env.DISABLE_SIGNUP !== 'true'
+  const methods = getMethods(hasSignUp)
 
-  let worker: UpgradeWorker | undefined
+  const dbNs = process.env.DB_NS
+  const accountsDb = getAccountDB(dbUrl, dbNs)
 
   const app = new Koa()
   const router = new Router()
@@ -121,35 +108,30 @@ export function serveAccount (
   )
   app.use(bodyParser())
 
-  void client.getClient().then(async (p: MongoClient) => {
-    const db = p.db(ACCOUNT_DB)
-    registerProviders(measureCtx, app, router, db, serverSecret, frontURL, brandings)
+  registerProviders(
+    measureCtx,
+    app,
+    router,
+    new Promise((resolve) => {
+      void accountsDb.then((res) => {
+        const [db] = res
+        resolve(db)
+      })
+    }),
+    serverSecret,
+    frontURL,
+    brandings,
+    !hasSignUp
+  )
 
-    // We need to clean workspace with creating === true, since server is restarted.
-    void cleanInProgressWorkspaces(db)
-
+  void accountsDb.then((res) => {
+    const [db] = res
     setInterval(
       () => {
         void cleanExpiredOtp(db)
       },
       3 * 60 * 1000
     )
-
-    const performUpgrade = (process.env.PERFORM_UPGRADE ?? 'true') === 'true'
-    if (performUpgrade) {
-      await measureCtx.with('upgrade-all-models', {}, async (ctx) => {
-        worker = new UpgradeWorker(db, p, version, txes, migrateOperations)
-        await worker.upgradeAll(ctx, {
-          errorHandler: async (ws, err) => {
-            Analytics.handleError(err)
-          },
-          force: false,
-          console: false,
-          logs: 'upgrade-logs',
-          parallel: parseInt(process.env.PARALLEL ?? '1')
-        })
-      })
-    }
   })
 
   const extractToken = (header: IncomingHttpHeaders): string | undefined => {
@@ -238,10 +220,7 @@ export function serveAccount (
       ctx.body = JSON.stringify(response)
     }
 
-    if (_client instanceof Promise) {
-      _client = await _client
-    }
-    const db = _client.db(ACCOUNT_DB)
+    const [db] = await accountsDb
 
     let host: string | undefined
     const origin = ctx.request.headers.origin ?? ctx.request.headers.referer
@@ -255,7 +234,6 @@ export function serveAccount (
       async (ctx) => await method(ctx, db, branding, request, token)
     )
 
-    worker?.updateResponseStatistics(result)
     ctx.body = result
   })
 
@@ -267,11 +245,9 @@ export function serveAccount (
 
   const close = (): void => {
     onClose?.()
-    if (client instanceof Promise) {
-      void client.then((c) => c.close())
-    } else {
-      client.close()
-    }
+    void accountsDb.then(([, closeAccountsDb]) => {
+      closeAccountsDb()
+    })
     server.close()
   }
 

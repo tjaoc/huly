@@ -17,7 +17,7 @@
   import { getEmbeddedLabel } from '@hcengineering/platform'
   import { Card, getClient } from '@hcengineering/presentation'
   import tags, { TagCategory, TagElement, TagReference } from '@hcengineering/tags'
-  import { Button, CheckBox, EditBox, Lazy, ListView, Loading, Expandable } from '@hcengineering/ui'
+  import { Button, CheckBox, EditBox, Expandable, Lazy, ListView, Loading } from '@hcengineering/ui'
   import { FILTER_DEBOUNCE_MS } from '@hcengineering/view-resources'
   import { createEventDispatcher } from 'svelte'
   import recruit from '../plugin'
@@ -232,7 +232,8 @@
     goodTagMap = toIdMap(goodTags)
 
     const goodSortedTags = goodTags
-      .toSorted((a, b) => b.title.length - a.title.length)
+      .slice()
+      .sort((a, b) => b.title.length - a.title.length)
       .filter((t) => t.title.length > 2)
     const goodSortedTagsTitles = new Map<Ref<TagElement>, string>()
     processed = -1
@@ -251,7 +252,7 @@
 
     const tagElementIds = new Map<Ref<TagElement>, TagUpdatePlan['elements'][0]>()
 
-    for (const tag of tagElements.toSorted((a, b) => prepareTitle(a.title).length - prepareTitle(b.title).length)) {
+    for (const tag of tagElements.slice().sort((a, b) => prepareTitle(a.title).length - prepareTitle(b.title).length)) {
       processed++
       const refs = allRefs.filter((it) => it.tag === tag._id)
       if (goodTagMap.has(tag._id)) {
@@ -460,7 +461,7 @@
     for (const item of searchPlanElements) {
       console.log('Apply', item.original.title)
       const st = Date.now()
-      const ops = client.apply('optimize:' + item.original._id)
+      const ops = client.apply(undefined, 'optimize-skill')
       let allRefs: TagReference[] = await client.findAll(tags.class.TagReference, { tag: item.original._id })
 
       allRefs.sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0))

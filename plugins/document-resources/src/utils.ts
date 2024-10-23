@@ -13,47 +13,84 @@
 // limitations under the License.
 //
 
-import { type AttachedData, type Client, type Ref, type TxOperations, makeCollaborativeDoc } from '@hcengineering/core'
-import { type Document, type Teamspace, documentId } from '@hcengineering/document'
+import {
+  type Client,
+  type Data,
+  type QuerySelector,
+  type Ref,
+  SortingOrder,
+  type TxOperations,
+  makeCollaborativeDoc
+} from '@hcengineering/core'
+import { type Document, type Teamspace, documentId, getFirstRank } from '@hcengineering/document'
 import { getMetadata, translate } from '@hcengineering/platform'
 import presentation, { getClient } from '@hcengineering/presentation'
-import { getCurrentResolvedLocation, getPanelURI, type Location, type ResolvedLocation } from '@hcengineering/ui'
+import { makeRank } from '@hcengineering/rank'
+import { type Location, type ResolvedLocation, getCurrentResolvedLocation, getPanelURI } from '@hcengineering/ui'
+import { accessDeniedStore } from '@hcengineering/view-resources'
 import { workbenchId } from '@hcengineering/workbench'
 import slugify from 'slugify'
 
-import { accessDeniedStore } from '@hcengineering/view-resources'
 import document from './plugin'
+
+export async function moveDocument (doc: Document, space: Ref<Teamspace>, parent: Ref<Document>): Promise<void> {
+  const client = getClient()
+
+  const prevRank = await getFirstRank(client, space, parent)
+  const rank = makeRank(prevRank, undefined)
+
+  await client.update(doc, { space, parent, rank })
+}
+
+export async function moveDocumentBefore (doc: Document, before: Document): Promise<void> {
+  const client = getClient()
+
+  const { space, parent } = before
+  const query = { rank: { $lt: before.rank } as unknown as QuerySelector<Document['rank']> }
+  const lastRank = await getFirstRank(client, space, parent, SortingOrder.Descending, query)
+  const rank = makeRank(lastRank, before.rank)
+
+  await client.update(doc, { space, parent, rank })
+}
+
+export async function moveDocumentAfter (doc: Document, after: Document): Promise<void> {
+  const client = getClient()
+
+  const { space, parent } = after
+  const query = { rank: { $gt: after.rank } as unknown as QuerySelector<Document['rank']> }
+  const nextRank = await getFirstRank(client, space, parent, SortingOrder.Ascending, query)
+  const rank = makeRank(after.rank, nextRank)
+
+  await client.update(doc, { space, parent, rank })
+}
 
 export async function createEmptyDocument (
   client: TxOperations,
   id: Ref<Document>,
   space: Ref<Teamspace>,
-  parent: Ref<Document>,
-  data: Partial<Pick<AttachedData<Document>, 'name' | 'icon' | 'color'>> = {}
+  parentId?: Ref<Document>,
+  data: Partial<Pick<Data<Document>, 'title' | 'icon' | 'color'>> = {}
 ): Promise<void> {
-  const name = await translate(document.string.Untitled, {})
+  const title = await translate(document.string.Untitled, {})
+  const parent = parentId ?? document.ids.NoParent
 
-  const object: AttachedData<Document> = {
-    name,
+  const lastRank = await getFirstRank(client, space, parent)
+  const rank = makeRank(lastRank, undefined)
+
+  const object: Data<Document> = {
+    title,
     content: makeCollaborativeDoc(id, 'content'),
     attachments: 0,
-    children: 0,
     embeddings: 0,
     labels: 0,
     comments: 0,
     references: 0,
+    rank,
+    parent: parent ?? document.ids.NoParent,
     ...data
   }
 
-  await client.addCollection(
-    document.class.Document,
-    space,
-    parent ?? document.ids.NoParent,
-    document.class.Document,
-    'children',
-    object,
-    id
-  )
+  await client.createDoc(document.class.Document, space, object, id)
 }
 
 export async function resolveLocation (loc: Location): Promise<ResolvedLocation | undefined> {
@@ -127,11 +164,14 @@ export function getDocumentLink (doc: Document): Location {
 }
 
 export function getDocumentLinkId (doc: Document): string {
-  const slug = slugify(doc.name, { lower: true })
+  const slug = slugify(doc.title, { lower: true })
   return `${slug}-${doc._id}`
 }
 
-export function parseDocumentId (shortLink: string): Ref<Document> | undefined {
+export function parseDocumentId (shortLink?: string): Ref<Document> | undefined {
+  if (shortLink === undefined) {
+    return undefined
+  }
   const parts = shortLink.split('-')
   if (parts.length > 1) {
     return parts[parts.length - 1] as Ref<Document>
@@ -141,5 +181,5 @@ export function parseDocumentId (shortLink: string): Ref<Document> | undefined {
 
 export async function documentTitleProvider (client: Client, ref: Ref<Document>, doc?: Document): Promise<string> {
   const object = doc ?? (await client.findOne(document.class.Document, { _id: ref }))
-  return object?.name ?? ''
+  return object?.title ?? ''
 }

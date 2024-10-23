@@ -23,7 +23,7 @@ import {
 } from '@hcengineering/core'
 import { PlatformError, unknownStatus } from '@hcengineering/platform'
 import { type DomainHelperOperations } from '@hcengineering/server-core'
-import { MongoClient, type Collection, type Db, type Document, type MongoClientOptions } from 'mongodb'
+import { MongoClient, type Collection, type Db, type Document } from 'mongodb'
 
 const connections = new Map<string, MongoClientReferenceImpl>()
 
@@ -81,7 +81,11 @@ class MongoClientReferenceImpl {
       }
       this.onclose()
       void (async () => {
-        await (await this.client).close()
+        let cl = this.client
+        if (cl instanceof Promise) {
+          cl = await cl
+        }
+        await cl.close()
       })()
     }
   }
@@ -120,31 +124,20 @@ export class ClientRef implements MongoClientReference {
  * Initialize a workspace connection to DB
  * @public
  */
-export function getMongoClient (uri: string, options?: MongoClientOptions): MongoClientReference {
+export function getMongoClient (uri: string): MongoClientReference {
   const extraOptions = JSON.parse(process.env.MONGO_OPTIONS ?? '{}')
-  const key = `${uri}${process.env.MONGO_OPTIONS ?? '{}'}_${JSON.stringify(options ?? {})}`
+  const key = `${uri}${process.env.MONGO_OPTIONS ?? '{}'}`
   let existing = connections.get(key)
-
-  const allOptions: MongoClientOptions = {
-    ...options,
-    ...extraOptions
-  }
-
-  // Make poll size stable
-  if (allOptions.maxPoolSize !== undefined) {
-    allOptions.minPoolSize = allOptions.maxPoolSize
-  }
-  allOptions.monitorCommands = false
-  allOptions.noDelay = true
 
   // If not created or closed
   if (existing === undefined) {
     existing = new MongoClientReferenceImpl(
       MongoClient.connect(uri, {
+        retryReads: true,
         appName: 'transactor',
         enableUtf8Validation: false,
 
-        ...allOptions
+        ...extraOptions
       }),
       () => {
         connections.delete(key)
@@ -162,7 +155,7 @@ export function getMongoClient (uri: string, options?: MongoClientOptions): Mong
  *
  * Construct MongoDB table from workspace.
  */
-export function getWorkspaceDB (client: MongoClient, workspaceId: WorkspaceId): Db {
+export function getWorkspaceMongoDB (client: MongoClient, workspaceId: WorkspaceId): Db {
   return client.db(toWorkspaceString(workspaceId))
 }
 
@@ -176,6 +169,7 @@ export class DBCollectionHelper implements DomainHelperOperations {
   }
 
   async init (domain?: Domain): Promise<void> {
+    // Check and create DB if missin
     if (domain === undefined) {
       // Init existing collecfions
       for (const c of (await this.db.listCollections({}, { nameOnly: true }).toArray()).map((it) => it.name)) {
@@ -214,7 +208,7 @@ export class DBCollectionHelper implements DomainHelperOperations {
     }
   }
 
-  exists (domain: Domain): boolean {
+  async exists (domain: Domain): Promise<boolean> {
     return this.collections.has(domain)
   }
 
@@ -242,7 +236,7 @@ export class DBCollectionHelper implements DomainHelperOperations {
   }
 
   async estimatedCount (domain: Domain): Promise<number> {
-    if (this.exists(domain)) {
+    if (await this.exists(domain)) {
       const c = this.collection(domain)
       return await c.estimatedDocumentCount()
     }

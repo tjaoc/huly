@@ -1,6 +1,6 @@
 import { MeasureContext, WorkspaceId } from '@hcengineering/core'
 import { StorageAdapter } from '@hcengineering/server-core'
-import { createReadStream, createWriteStream, existsSync } from 'fs'
+import { createReadStream, createWriteStream, existsSync, statSync } from 'fs'
 import { mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { PassThrough, Readable, Writable } from 'stream'
@@ -12,8 +12,11 @@ export interface BackupStorage {
   loadFile: (name: string) => Promise<Buffer>
   load: (name: string) => Promise<Readable>
   write: (name: string) => Promise<Writable>
-  writeFile: (name: string, data: string | Buffer) => Promise<void>
+
+  writeFile: (name: string, data: string | Buffer | Readable) => Promise<void>
   exists: (name: string) => Promise<boolean>
+
+  stat: (name: string) => Promise<number>
   delete: (name: string) => Promise<void>
 }
 
@@ -41,18 +44,22 @@ class FileStorage implements BackupStorage {
     return existsSync(join(this.root, name))
   }
 
+  async stat (name: string): Promise<number> {
+    return statSync(join(this.root, name)).size
+  }
+
   async delete (name: string): Promise<void> {
     await rm(join(this.root, name))
   }
 
-  async writeFile (name: string, data: string | Buffer): Promise<void> {
+  async writeFile (name: string, data: string | Buffer | Readable): Promise<void> {
     const fileName = join(this.root, name)
     const dir = dirname(fileName)
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true })
     }
 
-    await writeFile(fileName, data)
+    await writeFile(fileName, data as any)
   }
 }
 
@@ -66,7 +73,7 @@ class AdapterStorage implements BackupStorage {
 
   async loadFile (name: string): Promise<Buffer> {
     const data = await this.client.read(this.ctx, this.workspaceId, join(this.root, name))
-    return Buffer.concat(data)
+    return Buffer.concat(data as any)
   }
 
   async write (name: string): Promise<Writable> {
@@ -82,8 +89,17 @@ class AdapterStorage implements BackupStorage {
   async exists (name: string): Promise<boolean> {
     try {
       return (await this.client.stat(this.ctx, this.workspaceId, join(this.root, name))) !== undefined
-    } catch (err) {
+    } catch (err: any) {
       return false
+    }
+  }
+
+  async stat (name: string): Promise<number> {
+    try {
+      const st = await this.client.stat(this.ctx, this.workspaceId, join(this.root, name))
+      return st?.size ?? 0
+    } catch (err: any) {
+      return 0
     }
   }
 
@@ -91,16 +107,9 @@ class AdapterStorage implements BackupStorage {
     await this.client.remove(this.ctx, this.workspaceId, [join(this.root, name)])
   }
 
-  async writeFile (name: string, data: string | Buffer): Promise<void> {
+  async writeFile (name: string, data: string | Buffer | Readable): Promise<void> {
     // TODO: add mime type detection here.
-    await this.client.put(
-      this.ctx,
-      this.workspaceId,
-      join(this.root, name),
-      data,
-      'application/octet-stream',
-      data.length
-    )
+    await this.client.put(this.ctx, this.workspaceId, join(this.root, name), data, 'application/octet-stream')
   }
 }
 

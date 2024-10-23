@@ -73,6 +73,7 @@
     "YYYY": "年",
     "HH": "小时",
     "GettingWorkDone": "完成工作",
+    "ExpressYourself": "表达自己",
     "Smileys": "表情符号",
     "Nature": "自然",
     "Symbols": "符号",
@@ -89,6 +90,9 @@
     "Selected": "已选：",
     "Submit": "提交",
     "NextStep": "下一步",
-    "TypeHere": "在此输入..."
+    "TypeHere": "在此输入...",
+    "FullSize": "全尺寸",
+    "UseMaxWidth": "使用最大宽度",
+    "Sidebar": "侧边栏"
   }
 }

@@ -32,7 +32,6 @@ import ChatMessagePresenter from './components/chat-message/ChatMessagePresenter
 import ChatMessagePreview from './components/chat-message/ChatMessagePreview.svelte'
 import ChatMessagesPresenter from './components/chat-message/ChatMessagesPresenter.svelte'
 import Chat from './components/chat/Chat.svelte'
-import ChatAside from './components/chat/ChatAside.svelte'
 import CreateChannel from './components/chat/create/CreateChannel.svelte'
 import CreateDirectChat from './components/chat/create/CreateDirectChat.svelte'
 import ChunterBrowser from './components/chat/specials/ChunterBrowser.svelte'
@@ -51,12 +50,22 @@ import ThreadParentPresenter from './components/threads/ThreadParentPresenter.sv
 import Threads from './components/threads/Threads.svelte'
 import ThreadView from './components/threads/ThreadView.svelte'
 import ThreadViewPanel from './components/threads/ThreadViewPanel.svelte'
+import ChatWidget from './components/ChatWidget.svelte'
+import ChatWidgetTab from './components/ChatWidgetTab.svelte'
+import WorkbenchTabExtension from './components/WorkbenchTabExtension.svelte'
+import DirectMessageButton from './components/DirectMessageButton.svelte'
+import EmployeePresenter from './components/ChunterEmployeePresenter.svelte'
 
 import {
   chunterSpaceLinkFragmentProvider,
+  closeChatWidgetTab,
   getMessageLink,
   getMessageLocation,
   getThreadLink,
+  locationDataResolver,
+  openChannelInSidebar,
+  openChannelInSidebarAction,
+  openThreadInSidebar,
   replyToThread
 } from './navigation'
 import {
@@ -70,7 +79,11 @@ import {
   getTitle,
   getUnreadThreadsCount,
   leaveChannelAction,
-  removeChannelAction
+  removeChannelAction,
+  translateMessage,
+  showOriginalMessage,
+  canTranslateMessage,
+  startConversationAction
 } from './utils'
 
 export { default as ChatMessageInput } from './components/chat-message/ChatMessageInput.svelte'
@@ -79,16 +92,17 @@ export { default as ChatMessagesPresenter } from './components/chat-message/Chat
 export { default as Header } from './components/Header.svelte'
 export { default as ThreadView } from './components/threads/ThreadView.svelte'
 
-export async function ArchiveChannel (channel: Channel, evt: any, afterArchive?: () => void): Promise<void> {
+export async function ArchiveChannel (channel: Channel, evt: any, props?: { afterArchive?: () => void }): Promise<void> {
   showPopup(MessageBox, {
     label: chunter.string.ArchiveChannel,
     message: chunter.string.ArchiveConfirm,
+    richMessage: true,
     action: async () => {
       const client = getClient()
 
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
       await client.update(channel, { archived: true })
-      if (afterArchive != null) afterArchive()
+      if (props?.afterArchive != null) props.afterArchive()
 
       const loc = getLocation()
       if (loc.path[3] === channel._id) {
@@ -164,10 +178,14 @@ export default async (): Promise<Resources> => ({
     ChannelIcon,
     ChatMessageNotificationLabel,
     ThreadNotificationPresenter,
-    ChatAside,
     ThreadMessagePreview,
     ChatMessagePreview,
-    JoinChannelNotificationPresenter
+    JoinChannelNotificationPresenter,
+    ChatWidget,
+    ChatWidgetTab,
+    WorkbenchTabExtension,
+    DirectMessageButton,
+    EmployeePresenter
   },
   activity: {
     ChannelCreatedMessage,
@@ -188,7 +206,12 @@ export default async (): Promise<Resources> => ({
     GetThreadLink: getThreadLink,
     ReplyToThread: replyToThread,
     CanReplyToThread: canReplyToThread,
-    GetMessageLink: getMessageLocation
+    GetMessageLink: getMessageLocation,
+    CloseChatWidgetTab: closeChatWidgetTab,
+    OpenChannelInSidebar: openChannelInSidebar,
+    CanTranslateMessage: canTranslateMessage,
+    OpenThreadInSidebar: openThreadInSidebar,
+    LocationDataResolver: locationDataResolver
   },
   actionImpl: {
     ArchiveChannel,
@@ -197,6 +220,10 @@ export default async (): Promise<Resources> => ({
     DeleteChatMessage: deleteChatMessage,
     LeaveChannel: leaveChannelAction,
     RemoveChannel: removeChannelAction,
-    ReplyToThread: replyToThread
+    ReplyToThread: replyToThread,
+    OpenInSidebar: openChannelInSidebarAction,
+    TranslateMessage: translateMessage,
+    ShowOriginalMessage: showOriginalMessage,
+    StartConversation: startConversationAction
   }
 })

@@ -16,15 +16,15 @@ import core, {
   Type,
   toIdMap
 } from '@hcengineering/core'
-import { PlatformError, unknownStatus } from '@hcengineering/platform'
-import task, { TaskType, calculateStatuses, createState, findStatusAttr } from '@hcengineering/task'
-import tracker, { IssueStatus } from '@hcengineering/tracker'
 import github, {
   DocSyncInfo,
   GithubIntegrationRepository,
   GithubIssueStateReason,
   GithubProject
 } from '@hcengineering/github'
+import { PlatformError, unknownStatus } from '@hcengineering/platform'
+import task, { TaskType, calculateStatuses, createState, findStatusAttr } from '@hcengineering/task'
+import tracker, { IssueStatus } from '@hcengineering/tracker'
 import { deepEqual } from 'fast-equals'
 import { IntegrationManager, githubExternalSyncVersion } from '../types'
 import { GithubDataType } from './githubTypes'
@@ -299,7 +299,7 @@ export async function deleteObjects (
   objects: Doc[],
   account: Ref<Account>
 ): Promise<void> {
-  const ops = client.apply('delete' + account)
+  const ops = client.apply()
   for (const object of objects) {
     if (client.getHierarchy().isDerived(object._class, core.class.AttachedDoc)) {
       const adoc = object as AttachedDoc
@@ -340,19 +340,20 @@ export async function syncDerivedDocuments<T extends { url: string }> (
   extra?: any
 ): Promise<void> {
   const childDocsOfClass = await derivedClient.findAll(github.class.DocSyncInfo, {
+    space: prj._id,
     objectClass,
     parent: (parentDoc.url ?? '').toLowerCase(),
     ...query
   })
 
   const processed = new Set<Ref<DocSyncInfo>>()
-  const _docs = docs(ext)
+  const _docs = docs(ext).filter((it) => it != null)
   for (const r of _docs) {
     const existing = childDocsOfClass.find((it) => it.url.toLowerCase() === r.url.toLowerCase())
     if (existing === undefined) {
       await derivedClient.createDoc<DocSyncInfo>(github.class.DocSyncInfo, prj._id, {
         objectClass,
-        url: r.url.toLowerCase(),
+        url: (r.url ?? '').toLowerCase(),
         needSync: '', // we need to sync to retrieve patch in background
         githubNumber: 0,
         repository: repo._id,
@@ -360,7 +361,7 @@ export async function syncDerivedDocuments<T extends { url: string }> (
         externalVersion: githubExternalSyncVersion,
         derivedVersion: '',
         lastModified: new Date(r.updatedAt ?? r.createdAt).getTime(),
-        parent: ext.url,
+        parent: (ext.url ?? '').toLowerCase(),
         attachedTo: parentDoc._id,
         ...extra
       })
@@ -410,4 +411,15 @@ export function compareMarkdown (a: string, b: string): boolean {
     .join('\n')
 
   return na === nb
+}
+
+export async function syncChilds (info: DocSyncInfo, client: TxOperations, derivedClient: TxOperations): Promise<void> {
+  const childInfos = await client.findAll(github.class.DocSyncInfo, { parent: info.url.toLowerCase() })
+  if (childInfos.length > 0) {
+    const ops = derivedClient.apply()
+    for (const child of childInfos) {
+      await ops?.update(child, { needSync: '' })
+    }
+    await ops.commit()
+  }
 }

@@ -27,6 +27,7 @@
     NavGroup,
     ButtonIcon
   } from '@hcengineering/ui'
+  import view from '@hcengineering/view'
 
   export let _id: Ref<Doc> | string | undefined = undefined
   export let icon: Asset | AnySvelteComponent | undefined = undefined
@@ -54,6 +55,7 @@
   export let showNotify: boolean = false
   export let forciblyСollapsed: boolean = false
   export let actions: (originalEvent?: MouseEvent) => Promise<Action[]> = async () => []
+  export let draggable: boolean = false
 
   let pressed: boolean = false
   let inlineActions: Action[] = []
@@ -102,7 +104,11 @@
     {shouldTooltip}
     showMenu={showMenu || pressed}
     {noDivider}
+    {draggable}
     on:click
+    on:dragstart
+    on:dragover
+    on:drop
     on:toggle={(ev) => {
       if (ev.detail !== undefined) collapsed = !ev.detail
     }}
@@ -115,6 +121,7 @@
             icon={action.icon ?? ActionIcon}
             size={'extra-small'}
             kind={'tertiary'}
+            tooltip={{ label: action.label, direction: 'top' }}
             on:click={(ev) => onInlineClick(ev, action)}
           />
         {/each}
@@ -131,7 +138,14 @@
           }}
         />
       {:else if popupMenuActions.length > 0}
-        <ButtonIcon icon={IconMoreH} size={'extra-small'} kind={'tertiary'} {pressed} on:click={onMenuClick} />
+        <ButtonIcon
+          icon={IconMoreH}
+          size={'extra-small'}
+          kind={'tertiary'}
+          tooltip={{ label: view.string.MoreActions, direction: 'top' }}
+          {pressed}
+          on:click={onMenuClick}
+        />
       {/if}
     </svelte:fragment>
     <svelte:fragment slot="visible"><slot name="visible" /></svelte:fragment>
@@ -157,8 +171,12 @@
     {forciblyСollapsed}
     {level}
     {shouldTooltip}
+    {draggable}
     showMenu={showMenu || pressed}
     on:click
+    on:dragstart
+    on:dragover
+    on:drop
   >
     <slot />
     <svelte:fragment slot="extra"><slot name="extra" /></svelte:fragment>
@@ -170,6 +188,7 @@
             icon={action.icon ?? ActionIcon}
             size={'extra-small'}
             kind={'tertiary'}
+            tooltip={{ label: action.label, direction: 'bottom' }}
             on:click={(ev) => onInlineClick(ev, action)}
           />
         {/each}

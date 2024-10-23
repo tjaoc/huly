@@ -381,8 +381,24 @@ export const notificationOperation: MigrateOperation = {
         }
       },
       {
-        state: 'migrate-duplicated-contexts-v1',
+        state: 'migrate-duplicated-contexts-v3',
         func: migrateDuplicateContexts
+      },
+      {
+        state: 'set-default-hidden',
+        func: async () => {
+          await client.update(
+            DOMAIN_DOC_NOTIFY,
+            { _class: notification.class.DocNotifyContext, hidden: { $exists: false } },
+            { hidden: false }
+          )
+        }
+      },
+      {
+        state: 'fix-rename-backups',
+        func: async (client: MigrationClient): Promise<void> => {
+          await client.update(DOMAIN_DOC_NOTIFY, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
+        }
       }
     ])
 

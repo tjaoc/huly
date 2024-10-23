@@ -15,19 +15,21 @@
 import { type Class, type Doc, type Ref, type Space } from '@hcengineering/core'
 import { getResource } from '@hcengineering/platform'
 import { getBlobRef, getClient } from '@hcengineering/presentation'
-import { CodeBlockExtension, codeBlockOptions, CodeExtension, codeOptions } from '@hcengineering/text'
+import { CodeExtension, codeOptions } from '@hcengineering/text'
 import textEditor, { type ActionContext, type ExtensionCreator, type TextEditorMode } from '@hcengineering/text-editor'
 import { type AnyExtension, type Editor, Extension } from '@tiptap/core'
 import { type Level } from '@tiptap/extension-heading'
-import ListKeymap from '@tiptap/extension-list-keymap'
 import TableHeader from '@tiptap/extension-table-header'
 import 'prosemirror-codemark/dist/codemark.css'
 
+import { EditableExtension } from '../components/extension/editable'
+import { CodeBlockHighlighExtension, codeBlockHighlightOptions } from '../components/extension/codeblock'
 import { NoteExtension, type NoteOptions } from '../components/extension/note'
 import { FileExtension, type FileOptions } from '../components/extension/fileExt'
 import { HardBreakExtension } from '../components/extension/hardBreak'
 import { ImageExtension, type ImageOptions } from '../components/extension/imageExt'
 import { InlineToolbarExtension } from '../components/extension/inlineToolbar'
+import { ListKeymapExtension } from '../components/extension/listkeymap'
 import { NodeUuidExtension } from '../components/extension/nodeUuid'
 import { ParagraphExtension } from '../components/extension/paragraph'
 import { SubmitExtension, type SubmitOptions } from '../components/extension/submit'
@@ -171,7 +173,8 @@ async function buildEditorKit (): Promise<Extension<EditorKitOptions, any>> {
                     }
                   })
                 ],
-                [200, CodeBlockExtension.configure(codeBlockOptions)],
+                [110, EditableExtension],
+                [200, CodeBlockHighlighExtension.configure(codeBlockHighlightOptions)],
                 [210, CodeExtension.configure(codeOptions)],
                 [220, HardBreakExtension.configure({ shortcuts: mode })]
               ]
@@ -192,7 +195,7 @@ async function buildEditorKit (): Promise<Extension<EditorKitOptions, any>> {
 
               staticKitExtensions.push([
                 500,
-                ListKeymap.configure({
+                ListKeymapExtension.configure({
                   listTypes: [
                     {
                       itemName: 'listItem',

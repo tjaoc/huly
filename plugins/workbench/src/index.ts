@@ -13,17 +13,32 @@
 // limitations under the License.
 //
 
-import type { AccountRole, Class, Doc, Mixin, Obj, Ref, Space } from '@hcengineering/core'
+import type { AccountRole, Class, Doc, Mixin, Obj, Ref, Space, Tx } from '@hcengineering/core'
 import { DocNotifyContext, InboxNotification } from '@hcengineering/notification'
 import type { Asset, IntlString, Metadata, Plugin, Resource } from '@hcengineering/platform'
 import { plugin } from '@hcengineering/platform'
 import type { Preference } from '@hcengineering/preference'
-import { AnyComponent, ComponentExtensionId, Location, ResolvedLocation } from '@hcengineering/ui'
+import {
+  AnyComponent,
+  type AnySvelteComponent,
+  ComponentExtensionId,
+  Location,
+  ResolvedLocation
+} from '@hcengineering/ui'
 import { ViewAction } from '@hcengineering/view'
 
 /**
  * @public
  */
+
+export interface LocationData {
+  name?: string
+  nameIntl?: IntlString
+  icon?: Asset
+  iconComponent?: AnyComponent
+  iconProps?: Record<string, any>
+}
+
 export interface Application extends Doc {
   label: IntlString
   alias: string
@@ -36,6 +51,7 @@ export interface Application extends Doc {
   aside?: AnyComponent
 
   locationResolver?: Resource<(loc: Location) => Promise<ResolvedLocation | undefined>>
+  locationDataResolver?: Resource<(loc: Location) => Promise<LocationData>>
 
   // Component will be displayed in case navigator model is not defined, or nothing is selected in navigator model
   component?: AnyComponent
@@ -43,6 +59,61 @@ export interface Application extends Doc {
   navHeaderComponent?: AnyComponent
   accessLevel?: AccountRole
   navFooterComponent?: AnyComponent
+}
+
+export enum WidgetType {
+  Fixed = 'fixed', // Fixed sidebar are always visible
+  Flexible = 'flexible', // Flexible sidebar are visible only in special cases (during the meeting, etc.)
+  Configurable = 'configurable ' // Configurable might be fixed in sidebar by user in preferences
+}
+
+export interface Widget extends Doc {
+  label: IntlString
+  icon: Asset
+  type: WidgetType
+
+  component: AnyComponent
+  tabComponent?: AnyComponent
+  headerLabel?: IntlString
+
+  closeIfNoTabs?: boolean
+  onTabClose?: Resource<(tab: WidgetTab) => Promise<void>>
+}
+
+export interface WidgetPreference extends Preference {
+  enabled: boolean
+}
+
+export interface WidgetTab {
+  id: string
+  name?: string
+  icon?: Asset | AnySvelteComponent
+  iconComponent?: AnyComponent
+  iconProps?: Record<string, any>
+  widget?: Ref<Widget>
+  isPinned?: boolean
+  allowedPath?: string
+  data?: Record<string, any>
+}
+
+export enum SidebarEvent {
+  OpenWidget = 'openWidget'
+}
+
+export interface OpenSidebarWidgetParams {
+  widget: Ref<Widget>
+  tab?: WidgetTab
+}
+
+export interface TxSidebarEvent<T extends Record<string, any> = Record<string, any>> extends Tx {
+  event: SidebarEvent
+  params: T
+}
+
+export interface WorkbenchTab extends Preference {
+  location: string
+  isPinned: boolean
+  name?: string
 }
 
 /**
@@ -141,7 +212,11 @@ export default plugin(workbenchId, {
   class: {
     Application: '' as Ref<Class<Application>>,
     ApplicationNavModel: '' as Ref<Class<ApplicationNavModel>>,
-    HiddenApplication: '' as Ref<Class<HiddenApplication>>
+    HiddenApplication: '' as Ref<Class<HiddenApplication>>,
+    Widget: '' as Ref<Class<Widget>>,
+    WidgetPreference: '' as Ref<Class<WidgetPreference>>,
+    TxSidebarEvent: '' as Ref<Class<TxSidebarEvent<Record<string, any>>>>,
+    WorkbenchTab: '' as Ref<Class<WorkbenchTab>>
   },
   mixin: {
     SpaceView: '' as Ref<Mixin<SpaceView>>
@@ -156,7 +231,10 @@ export default plugin(workbenchId, {
     Archive: '' as IntlString,
     View: '' as IntlString,
     ServerUnderMaintenance: '' as IntlString,
-    UpgradeDownloadProgress: '' as IntlString
+    UpgradeDownloadProgress: '' as IntlString,
+    OpenInSidebar: '' as IntlString,
+    OpenInSidebarNewTab: '' as IntlString,
+    ConfigureWidgets: '' as IntlString
   },
   icon: {
     Search: '' as Asset
@@ -175,7 +253,12 @@ export default plugin(workbenchId, {
     NavigationExpandedDefault: '' as Metadata<boolean>
   },
   extensions: {
-    WorkbenchExtensions: '' as ComponentExtensionId
+    WorkbenchExtensions: '' as ComponentExtensionId,
+    WorkbenchTabExtensions: '' as ComponentExtensionId
+  },
+  function: {
+    CreateWidgetTab: '' as Resource<(widget: Widget, tab: WidgetTab, newTab: boolean) => Promise<void>>,
+    CloseWidgetTab: '' as Resource<(widget: Widget, tab: string) => Promise<void>>
   },
   actionImpl: {
     Navigate: '' as ViewAction<{

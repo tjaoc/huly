@@ -73,6 +73,7 @@
     "YYYY": "AAAA",
     "HH": "HH",
     "GettingWorkDone": "Faire le travail",
+    "ExpressYourself": "Exprime-toi",
     "Smileys": "Émoticônes",
     "Nature": "Nature",
     "Symbols": "Symboles",
@@ -89,6 +90,9 @@
     "Selected": "Sélectionné :",
     "Submit": "Soumettre",
     "NextStep": "Étape suivante",
-    "TypeHere": "Tapez ici..."
+    "TypeHere": "Tapez ici...",
+    "FullSize": "Taille réelle",
+    "UseMaxWidth": "Largeur maximale",
+    "Sidebar": "Barre latérale"
   }
 }

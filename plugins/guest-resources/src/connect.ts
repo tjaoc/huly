@@ -16,10 +16,18 @@ import presentation, {
   loadServerConfig,
   refreshClient,
   setClient,
-  setPresentationCookie
+  setPresentationCookie,
+  upgradeDownloadProgress
 } from '@hcengineering/presentation'
-import { fetchMetadataLocalStorage, getCurrentLocation, navigate, setMetadataLocalStorage } from '@hcengineering/ui'
-import { writable } from 'svelte/store'
+import {
+  desktopPlatform,
+  fetchMetadataLocalStorage,
+  getCurrentLocation,
+  navigate,
+  setMetadataLocalStorage
+} from '@hcengineering/ui'
+import { writable, get } from 'svelte/store'
+
 export const versionError = writable<string | undefined>(undefined)
 const versionStorageKey = 'last_server_version'
 
@@ -52,6 +60,7 @@ export async function connect (title: string): Promise<Client | undefined> {
 
   setMetadata(presentation.metadata.Token, token)
   setMetadata(presentation.metadata.Workspace, workspaceLoginInfo.workspace)
+  setMetadata(presentation.metadata.WorkspaceId, workspaceLoginInfo.workspaceId)
   setMetadata(presentation.metadata.Endpoint, workspaceLoginInfo.endpoint)
 
   if (_token !== token && _client !== undefined) {
@@ -66,6 +75,45 @@ export async function connect (title: string): Promise<Client | undefined> {
   let version: Version | undefined
   const clientFactory = await getResource(client.function.GetClient)
   _client = await clientFactory(token, workspaceLoginInfo.endpoint, {
+    onHello: (serverVersion?: string) => {
+      const frontVersion = getMetadata(presentation.metadata.FrontVersion)
+      if (
+        serverVersion !== undefined &&
+        serverVersion !== '' &&
+        frontVersion !== undefined &&
+        frontVersion !== serverVersion
+      ) {
+        const reloaded = localStorage.getItem(`versionUpgrade:s${serverVersion}:f${frontVersion}`)
+        const isUpgrading = get(upgradeDownloadProgress) >= 0
+
+        if (reloaded === null) {
+          localStorage.setItem(`versionUpgrade:s${serverVersion}:f${frontVersion}`, 't')
+          // It might have been refreshed manually and download has started - do not reload
+          if (!isUpgrading) {
+            location.reload()
+          }
+
+          return false
+        } else {
+          versionError.set(`Front version ${frontVersion} is not in sync with server version ${serverVersion}`)
+
+          if (!desktopPlatform || !isUpgrading) {
+            setTimeout(() => {
+              // It might be possible that this callback will fire after the user has spent some time
+              // in the upgrade !modal! dialog and clicked upgrade - check again and do not reload
+              if (get(upgradeDownloadProgress) < 0) {
+                location.reload()
+              }
+            }, 10000)
+          }
+          // For embedded if the download has started it should download the upgrade and restart the app
+
+          return false
+        }
+      }
+
+      return true
+    },
     onUpgrade: () => {
       location.reload()
     },
@@ -112,7 +160,7 @@ export async function connect (title: string): Promise<Client | undefined> {
                   location.reload()
                 }
               }
-              versionError.set(`${currentVersionStr} => ${reconnectVersionStr}`)
+              versionError.set(`${reconnectVersionStr} => ${currentVersionStr}`)
             }
 
             const frontUrl = getMetadata(presentation.metadata.FrontUrl) ?? ''
@@ -183,7 +231,7 @@ function clearMetadata (ws: string): void {
     delete tokens[loc.path[1]]
     setMetadataLocalStorage(login.metadata.LoginTokens, tokens)
   }
-  const currentWorkspace = getMetadata(presentation.metadata.Workspace)
+  const currentWorkspace = getMetadata(presentation.metadata.WorkspaceId)
   if (currentWorkspace !== undefined) {
     setPresentationCookie('', currentWorkspace)
   }

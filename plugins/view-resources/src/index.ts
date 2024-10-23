@@ -99,6 +99,7 @@ import AudioViewer from './components/viewer/AudioViewer.svelte'
 import ImageViewer from './components/viewer/ImageViewer.svelte'
 import VideoViewer from './components/viewer/VideoViewer.svelte'
 import PDFViewer from './components/viewer/PDFViewer.svelte'
+import TextViewer from './components/viewer/TextViewer.svelte'
 
 import { blobImageMetadata, blobVideoMetadata } from './blob'
 
@@ -134,7 +135,8 @@ import {
   canDeleteSpace,
   canEditSpace,
   canJoinSpace,
-  canLeaveSpace
+  canLeaveSpace,
+  isClipboardAvailable
 } from './visibilityTester'
 export { canArchiveSpace, canDeleteObject, canDeleteSpace, canEditSpace } from './visibilityTester'
 export { getActions, getContextActions, invokeAction, showMenu } from './actions'
@@ -295,7 +297,8 @@ export default async (): Promise<Resources> => ({
     AudioViewer,
     ImageViewer,
     VideoViewer,
-    PDFViewer
+    PDFViewer,
+    TextViewer
   },
   popup: {
     PositionElementAlignment
@@ -332,6 +335,7 @@ export default async (): Promise<Resources> => ({
     CanDeleteSpace: canDeleteSpace,
     CanJoinSpace: canJoinSpace,
     CanLeaveSpace: canLeaveSpace,
+    IsClipboardAvailable: isClipboardAvailable,
     BlobImageMetadata: blobImageMetadata,
     BlobVideoMetadata: blobVideoMetadata
   }

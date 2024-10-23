@@ -15,10 +15,10 @@
 //
 -->
 <script lang="ts">
-  import { type DocumentId, type PlatformDocumentId } from '@hcengineering/collaborator-client'
-  import { type Space, type Class, type CollaborativeDoc, type Doc, type Ref } from '@hcengineering/core'
-  import { IntlString, getMetadata, translate } from '@hcengineering/platform'
-  import presentation, { getFileUrl, getImageSize } from '@hcengineering/presentation'
+  import { Analytics } from '@hcengineering/analytics'
+  import { type Space, type Class, type CollaborativeDoc, type Doc, type Ref, generateId } from '@hcengineering/core'
+  import { IntlString, translate } from '@hcengineering/platform'
+  import { getFileUrl, getImageSize, imageSizeToRatio } from '@hcengineering/presentation'
   import { markupToJSON } from '@hcengineering/text'
   import {
     AnySvelteComponent,
@@ -43,9 +43,8 @@
   import { deleteAttachment } from '../command/deleteAttachment'
   import { textEditorCommandHandler } from '../commands'
   import { EditorKitOptions, getEditorKit } from '../../src/kits/editor-kit'
-  import { IndexeddbProvider } from '../provider/indexeddb'
-  import { TiptapCollabProvider } from '../provider/tiptap'
-  import { formatCollaborativeDocumentId, formatPlatformDocumentId } from '../provider/utils'
+  import { Provider } from '../provider/types'
+  import { createLocalProvider, createRemoteProvider } from '../provider/utils'
   import textEditor, {
     CollaborationIds,
     CollaborationUser,
@@ -103,44 +102,27 @@
 
   const dispatch = createEventDispatcher()
 
-  const token = getMetadata(presentation.metadata.Token) ?? ''
-  const collaboratorURL = getMetadata(textEditor.metadata.CollaboratorUrl) ?? ''
+  const ydoc = getContext<YDoc>(CollaborationIds.Doc) ?? new YDoc({ guid: generateId() })
+  const contextProvider = getContext<Provider>(CollaborationIds.Provider)
 
-  const documentId = formatCollaborativeDocumentId(collaborativeDoc)
+  const localProvider = createLocalProvider(ydoc, collaborativeDoc)
 
-  let initialContentId: DocumentId | undefined
-  if (initialCollaborativeDoc !== undefined) {
-    initialContentId = formatCollaborativeDocumentId(collaborativeDoc)
-  }
-
-  let platformDocumentId: PlatformDocumentId | undefined
-  if (objectClass !== undefined && objectId !== undefined && objectAttr !== undefined) {
-    platformDocumentId = formatPlatformDocumentId(objectClass, objectId, objectAttr)
-  }
-
-  const ydoc = getContext<YDoc>(CollaborationIds.Doc) ?? new YDoc()
-  const contextProvider = getContext<TiptapCollabProvider>(CollaborationIds.Provider)
-
-  const localProvider = new IndexeddbProvider(collaborativeDoc, ydoc)
-
-  const remoteProvider: TiptapCollabProvider =
+  const remoteProvider =
     contextProvider ??
-    new TiptapCollabProvider({
-      url: collaboratorURL,
-      name: documentId,
-      document: ydoc,
-      token,
-      parameters: {
-        initialContentId,
-        platformDocumentId
-      }
+    createRemoteProvider(ydoc, {
+      document: collaborativeDoc,
+      initialDocument: initialCollaborativeDoc,
+      objectClass,
+      objectId,
+      objectAttr
     })
 
+  let contentError = false
   let localSynced = false
   let remoteSynced = false
 
   $: loading = !localSynced && !remoteSynced
-  $: editable = !readonly && remoteSynced
+  $: editable = !readonly && !contentError && remoteSynced
 
   void localProvider.loaded.then(() => (localSynced = true))
   void remoteProvider.loaded.then(() => (remoteSynced = true))
@@ -181,15 +163,7 @@
       editor?.commands.insertTable(options)
     },
     insertCodeBlock: () => {
-      editor?.commands.insertContent(
-        {
-          type: 'codeBlock',
-          content: [{ type: 'text', text: ' ' }]
-        },
-        {
-          updateSelection: false
-        }
-      )
+      editor?.commands.setCodeBlock()
     },
     insertContent: (content) => {
       editor?.commands.insertContent(content)
@@ -246,7 +220,10 @@
   }
 
   $: if (editor !== undefined) {
-    editor.setEditable(editable, true)
+    // When the content is invalid, we don't want to emit an update
+    // Preventing synchronization of the invalid content
+    const emitUpdate = !contentError
+    editor.setEditable(editable, emitUpdate)
   }
 
   // TODO: should be inside the editor
@@ -325,7 +302,7 @@
         type: 'image',
         attrs: {
           'file-id': attached.file,
-          width: Math.round(size.width / size.pixelRatio)
+          width: imageSizeToRatio(size.width, size.pixelRatio)
         }
       },
       {
@@ -364,25 +341,18 @@
         // We need to trigger it asynchronously in order for the editor to finish its focus event
         // Otherwise, it hoggs the focus from the popup and keyboard navigation doesn't work
         setTimeout(() => {
-          addTableHandler(editor.commands.insertTable, position)
-        })
+          // addTableHandler opens popup so the editor loses focus so in the callback we need to refocus again
+          void addTableHandler((options: { rows?: number, cols?: number, withHeaderRow?: boolean }) => {
+            editor.chain().focus(pos).insertTable(options).run()
+          }, position)
+        }, 0)
         break
       }
       case 'code-block':
-        // For some reason .setCodeBlock doesnt work in our case
-        editor.commands.insertContent(
-          {
-            type: 'codeBlock',
-            content: [{ type: 'text', text: ' ' }]
-          },
-          {
-            updateSelection: false
-          }
-        )
-        editor.commands.focus(pos, { scrollIntoView: false })
+        editor.commands.insertContentAt(pos, { type: 'codeBlock' })
         break
       case 'todo-list':
-        editor.commands.toggleTaskList()
+        editor.chain().insertContentAt(pos, { type: 'paragraph' }).toggleTaskList().run()
         break
       case 'separator-line':
         editor.commands.setHorizontalRule()
@@ -399,6 +369,7 @@
     await ph
 
     editor = new Editor({
+      enableContentCheck: true,
       element,
       editorProps: { attributes: mergeAttributes(defaultEditorAttributes, editorAttributes, { class: 'flex-grow' }) },
       extensions: [
@@ -467,6 +438,11 @@
 
         throttle.call(updateLastUpdateTime)
         dispatch('update')
+      },
+      onContentError: ({ error, disableCollaboration }) => {
+        disableCollaboration()
+        contentError = true
+        Analytics.handleError(error)
       }
     })
   })
@@ -478,7 +454,7 @@
       } catch (err: any) {}
     }
     if (contextProvider === undefined) {
-      remoteProvider.destroy()
+      void remoteProvider.destroy()
     }
     void localProvider.destroy()
   })

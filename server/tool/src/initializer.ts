@@ -15,8 +15,8 @@ import core, {
 } from '@hcengineering/core'
 import { ModelLogger } from '@hcengineering/model'
 import { makeRank } from '@hcengineering/rank'
-import { AggregatorStorageAdapter } from '@hcengineering/server-core'
-import { parseMessageMarkdown, YDocFromContent } from '@hcengineering/text'
+import type { StorageAdapter } from '@hcengineering/server-core'
+import { jsonToYDocNoSchema, parseMessageMarkdown } from '@hcengineering/text'
 import { v4 as uuid } from 'uuid'
 
 const fieldRegexp = /\${\S+?}/
@@ -91,7 +91,7 @@ export class WorkspaceInitializer {
 
   constructor (
     private readonly ctx: MeasureContext,
-    private readonly storageAdapter: AggregatorStorageAdapter,
+    private readonly storageAdapter: StorageAdapter,
     private readonly wsUrl: WorkspaceIdWithUrl,
     private readonly client: TxOperations
   ) {}
@@ -266,10 +266,11 @@ export class WorkspaceInitializer {
   }
 
   private async createCollab (data: string, field: string, _id: Ref<Doc>): Promise<string> {
-    const json = parseMessageMarkdown(data ?? '', this.imageUrl)
     const id = `${_id}%${field}`
     const collabId = `${id}:HEAD:0` as CollaborativeDoc
-    const yDoc = YDocFromContent(json, field)
+
+    const json = parseMessageMarkdown(data ?? '', this.imageUrl)
+    const yDoc = jsonToYDocNoSchema(json, field)
 
     await saveCollaborativeDoc(this.storageAdapter, this.wsUrl, collabId, yDoc, this.ctx)
     return collabId

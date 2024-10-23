@@ -15,7 +15,6 @@
 //
 
 import activity, { type ActivityMessage } from '@hcengineering/activity'
-import chunter from '@hcengineering/chunter'
 import { type PersonSpace } from '@hcengineering/contact'
 import {
   AccountRole,
@@ -28,7 +27,6 @@ import {
   type Data,
   type Doc,
   type DocumentQuery,
-  type Domain,
   type IndexingConfiguration,
   type Markup,
   type Ref,
@@ -57,6 +55,9 @@ import view, { createAction, template } from '@hcengineering/model-view'
 import workbench from '@hcengineering/model-workbench'
 import {
   notificationId,
+  DOMAIN_USER_NOTIFY,
+  DOMAIN_NOTIFICATION,
+  DOMAIN_DOC_NOTIFY,
   type ActivityInboxNotification,
   type ActivityNotificationViewlet,
   type BaseNotificationType,
@@ -87,15 +88,9 @@ import { type AnyComponent, type Location } from '@hcengineering/ui/src/types'
 
 import notification from './plugin'
 
-export { notificationId } from '@hcengineering/notification'
+export { notificationId, DOMAIN_USER_NOTIFY, DOMAIN_NOTIFICATION, DOMAIN_DOC_NOTIFY } from '@hcengineering/notification'
 export { notificationOperation } from './migration'
 export { notification as default }
-
-export const DOMAIN_NOTIFICATION = 'notification' as Domain
-
-export const DOMAIN_DOC_NOTIFY = 'notification-dnc' as Domain
-
-export const DOMAIN_USER_NOTIFY = 'notification-user' as Domain
 
 @Model(notification.class.BrowserNotification, core.class.Doc, DOMAIN_USER_NOTIFY)
 export class TBrowserNotification extends TDoc implements BrowserNotification {
@@ -106,6 +101,10 @@ export class TBrowserNotification extends TDoc implements BrowserNotification {
   onClickLocation?: Location | undefined
   user!: Ref<Account>
   status!: NotificationStatus
+  messageId?: Ref<ActivityMessage>
+  messageClass?: Ref<Class<ActivityMessage>>
+  objectId!: Ref<Doc>
+  objectClass!: Ref<Class<Doc>>
 }
 
 @Model(notification.class.PushSubscription, core.class.Doc, DOMAIN_USER_NOTIFY)
@@ -217,6 +216,9 @@ export class TDocNotifyContext extends TDoc implements DocNotifyContext {
 
   @Prop(TypeBoolean(), notification.string.Pinned)
     isPinned!: boolean
+
+  @Prop(TypeBoolean(), view.string.Hide)
+    hidden!: boolean
 
   tx?: Ref<TxCUD<Doc>>
 }
@@ -386,12 +388,11 @@ export function createModel (builder: Builder): void {
     core.space.Model,
     {
       label: notification.string.Inbox,
-      icon: notification.icon.Inbox,
+      icon: notification.icon.Notifications,
       alias: notificationId,
       hidden: true,
       locationResolver: notification.resolver.Location,
-      component: notification.component.Inbox,
-      aside: chunter.component.ThreadView
+      component: notification.component.Inbox
     },
     notification.app.Inbox
   )

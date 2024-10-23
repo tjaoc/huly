@@ -135,7 +135,12 @@ async function getFileRange (
           })
         })
       } catch (err: any) {
-        if (err?.code === 'NoSuchKey' || err?.code === 'NotFound') {
+        if (
+          err?.code === 'NoSuchKey' ||
+          err?.code === 'NotFound' ||
+          err?.message === 'No such key' ||
+          err?.Code === 'NoSuchKey'
+        ) {
           ctx.info('No such key', { workspace: workspace.name, uuid })
           res.status(404).send()
           return
@@ -247,10 +252,13 @@ export function start (
     telegramUrl: string
     gmailUrl: string
     calendarUrl: string
+    collaborator?: string
     collaboratorUrl: string
     brandingUrl?: string
     previewConfig: string
+    uploadConfig: string
     pushPublicKey?: string
+    disableSignUp?: string
   },
   port: number,
   extraConfig?: Record<string, string | undefined>
@@ -297,10 +305,13 @@ export function start (
       TELEGRAM_URL: config.telegramUrl,
       GMAIL_URL: config.gmailUrl,
       CALENDAR_URL: config.calendarUrl,
+      COLLABORATOR: config.collaborator,
       COLLABORATOR_URL: config.collaboratorUrl,
       BRANDING_URL: config.brandingUrl,
       PREVIEW_CONFIG: config.previewConfig,
+      UPLOAD_CONFIG: config.uploadConfig,
       PUSH_PUBLIC_KEY: config.pushPublicKey,
+      DISABLE_SIGNUP: config.disableSignUp,
       ...(extraConfig ?? {})
     }
     res.status(200)
@@ -457,7 +468,12 @@ export function start (
             )
           }
         } catch (error: any) {
-          if (error?.code === 'NoSuchKey' || error?.code === 'NotFound' || error?.message === 'No such key') {
+          if (
+            error?.code === 'NoSuchKey' ||
+            error?.code === 'NotFound' ||
+            error?.message === 'No such key' ||
+            error?.Code === 'NoSuchKey'
+          ) {
             ctx.error('No such storage key', {
               file: req.query.file,
               workspace: payload?.workspace,
@@ -487,8 +503,15 @@ export function start (
     void filesHandler(req, res)
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  app.post('/files', async (req, res) => {
+  app.post('/files', (req, res) => {
+    void handleUpload(req, res)
+  })
+
+  app.post('/files/*', (req, res) => {
+    void handleUpload(req, res)
+  })
+
+  const handleUpload = async (req: Request, res: Response): Promise<void> => {
     await ctx.with(
       'post-file',
       {},
@@ -524,7 +547,7 @@ export function start (
       },
       { url: req.path, query: req.query }
     )
-  })
+  }
 
   const handleDelete = async (req: Request, res: Response): Promise<void> => {
     try {

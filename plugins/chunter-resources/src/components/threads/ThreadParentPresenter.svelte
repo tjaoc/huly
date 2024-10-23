@@ -17,6 +17,15 @@
   import { ActivityMessage } from '@hcengineering/activity'
 
   export let message: ActivityMessage
+  export let readonly = false
 </script>
 
-<ActivityMessagePresenter value={message} hideFooter hoverStyles="filledHover" withShowMore={false} skipLabel />
+<ActivityMessagePresenter
+  value={message}
+  hideFooter
+  hoverStyles="filledHover"
+  withShowMore={false}
+  attachmentImageSize="x-large"
+  skipLabel
+  {readonly}
+/>

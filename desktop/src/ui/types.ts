@@ -5,6 +5,7 @@ import { ScreenSource } from '@hcengineering/love'
  */
 export interface Config {
   ACCOUNTS_URL: string
+  COLLABORATOR?: string
   COLLABORATOR_URL: string
   FRONT_URL: string
   FILES_URL: string
@@ -26,8 +27,10 @@ export interface Config {
   PRINT_URL?: string
   PUSH_PUBLIC_KEY: string
   ANALYTICS_COLLECTOR_URL?: string
+  AI_URL?:string
   BRANDING_URL?: string
   PREVIEW_CONFIG: string
+  UPLOAD_CONFIG: string
   DESKTOP_UPDATES_URL?: string
   DESKTOP_UPDATES_CHANNEL?: string
   TELEGRAM_BOT_URL?: string
@@ -78,4 +81,8 @@ export interface IPCMainExposed {
   sendNotification: (notififationParams: NotificationParams) => void
   getScreenAccess: () => Promise<boolean>
   getScreenSources: () => Promise<ScreenSource[]>
+  handleAuth: (callback: (token: string) => void) => void
+
+  cancelBackup: () => void
+  startBackup: (token: string, endpoint: string, workspace: string) => void
 }

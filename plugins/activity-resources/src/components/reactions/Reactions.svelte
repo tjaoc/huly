@@ -27,7 +27,6 @@
   export let readonly: boolean = false
 
   const dispatch = createEventDispatcher()
-  const client = getClient()
   const me = getCurrentAccount()
 
   let reactionsAccounts = new Map<string, Ref<Account>[]>()
@@ -55,7 +54,7 @@
     ev.preventDefault()
     ev.stopPropagation()
     showPopup(EmojiPopup, {}, ev.target as HTMLElement, async (emoji: string) => {
-      await updateDocReactions(client, reactions, object, emoji)
+      await updateDocReactions(reactions, object, emoji)
     })
   }
 </script>

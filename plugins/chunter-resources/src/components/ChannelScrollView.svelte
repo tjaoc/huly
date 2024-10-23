@@ -13,29 +13,24 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import activity, {
-    ActivityExtension,
-    ActivityMessage,
-    ActivityMessagesFilter,
-    DisplayActivityMessage
-  } from '@hcengineering/activity'
+  import activity, { ActivityMessage, ActivityMessagesFilter, DisplayActivityMessage } from '@hcengineering/activity'
   import {
-    ActivityExtension as ActivityExtensionComponent,
     ActivityMessagePresenter,
     canGroupMessages,
     messageInFocus,
     sortActivityMessages
   } from '@hcengineering/activity-resources'
-  import { Doc, generateId, getDay, Ref, Timestamp } from '@hcengineering/core'
+  import core, { Doc, getCurrentAccount, getDay, Ref, Space, Timestamp } from '@hcengineering/core'
+  import { DocNotifyContext } from '@hcengineering/notification'
   import { InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
   import { getResource } from '@hcengineering/platform'
   import { getClient } from '@hcengineering/presentation'
   import { Loading, ModernButton, Scroller, ScrollParams } from '@hcengineering/ui'
   import { afterUpdate, beforeUpdate, onDestroy, onMount, tick } from 'svelte'
   import { get } from 'svelte/store'
-  import { DocNotifyContext } from '@hcengineering/notification'
 
   import { ChannelDataProvider, MessageMetadata } from '../channelDataProvider'
+  import chunter from '../plugin'
   import {
     chatReadMessagesStore,
     filterChatMessages,
@@ -43,14 +38,16 @@
     readChannelMessages,
     recheckNotifications
   } from '../utils'
+  import BlankView from './BlankView.svelte'
   import ActivityMessagesSeparator from './ChannelMessagesSeparator.svelte'
   import JumpToDateSelector from './JumpToDateSelector.svelte'
   import HistoryLoading from './LoadingHistory.svelte'
-  import BlankView from './BlankView.svelte'
-  import chunter from '../plugin'
+  import ChannelInput from './ChannelInput.svelte'
+  import { messageInView } from '../scroll'
 
   export let provider: ChannelDataProvider
   export let object: Doc
+  export let channel: Doc
   export let selectedMessageId: Ref<ActivityMessage> | undefined = undefined
   export let scrollElement: HTMLDivElement | undefined | null = undefined
   export let startFromBottom = false
@@ -61,6 +58,9 @@
   export let skipLabels = false
   export let loadMoreAllowed = true
   export let isAsideOpened = false
+  export let fullHeight = true
+  export let fixedInput = true
+  export let freeze = false
 
   const doc = object
 
@@ -69,7 +69,9 @@
   const minMsgHeightRem = 2
   const loadMoreThreshold = 40
 
+  const me = getCurrentAccount()
   const client = getClient()
+  const hierarchy = client.getHierarchy()
   const inboxClient = InboxNotificationsClientImpl.getClient()
   const contextByDocStore = inboxClient.contextByDoc
   const notificationsByContextStore = inboxClient.inboxNotificationsByContext
@@ -90,7 +92,6 @@
 
   let messages: ActivityMessage[] = []
   let displayMessages: DisplayActivityMessage[] = []
-  let extensions: ActivityExtension[] = []
 
   let scroller: Scroller | undefined | null = undefined
   let separatorElement: HTMLDivElement | undefined = undefined
@@ -114,9 +115,8 @@
   $: messages = $messagesStore
   $: isLoading = $isLoadingStore
 
-  $: extensions = client.getModel().findAllSync(activity.class.ActivityExtension, { ofClass: doc._class })
-
   $: notifyContext = $contextByDocStore.get(doc._id)
+  $: readonly = hierarchy.isDerived(channel._class, core.class.Space) ? (channel as Space).archived : false
 
   void client
     .getModel()
@@ -128,17 +128,36 @@
       }
     })
 
+  let isPageHidden = false
+  let lastMsgBeforeFreeze: Ref<ActivityMessage> | undefined = undefined
+
+  function handleVisibilityChange (): void {
+    if (document.hidden) {
+      isPageHidden = true
+      lastMsgBeforeFreeze = shouldScrollToNew ? displayMessages[displayMessages.length - 1]?._id : undefined
+    } else {
+      if (isPageHidden) {
+        isPageHidden = false
+        void provider.updateNewTimestamp(notifyContext)
+      }
+    }
+  }
+
+  function isFreeze (): boolean {
+    return freeze || isPageHidden
+  }
+
   $: displayMessages = filterChatMessages(messages, filters, filterResources, doc._class, selectedFilters)
 
   const unsubscribe = inboxClient.inboxNotificationsByContext.subscribe(() => {
-    if (notifyContext !== undefined) {
+    if (notifyContext !== undefined && !isFreeze()) {
       recheckNotifications(notifyContext)
       readViewportMessages()
     }
   })
 
   function scrollToBottom (afterScrollFn?: () => void): void {
-    if (scroller != null && scrollElement != null) {
+    if (scroller != null && scrollElement != null && !isFreeze()) {
       scroller.scrollBy(scrollElement.scrollHeight)
       updateSelectedDate()
       afterScrollFn?.()
@@ -288,6 +307,38 @@
     }
   }
 
+  function scrollToStartOfNew (): void {
+    if (!scrollElement || !lastMsgBeforeFreeze) {
+      return
+    }
+
+    const lastIndex = displayMessages.findIndex(({ _id }) => _id === lastMsgBeforeFreeze)
+    if (lastIndex === -1) return
+    const firstNewMessage = displayMessages.find(({ createdBy }, index) => index > lastIndex && createdBy !== me._id)
+
+    if (firstNewMessage === undefined) {
+      scrollToBottom()
+      return
+    }
+
+    const messagesElements = scrollContentBox?.getElementsByClassName('activityMessage')
+    const msgElement = messagesElements?.[firstNewMessage._id as any]
+
+    if (!msgElement) {
+      return
+    }
+
+    const messageRect = msgElement.getBoundingClientRect()
+
+    const topOffset = messageRect.top - 150
+
+    if (topOffset < 0) {
+      scroller?.scrollBy(topOffset)
+    } else if (topOffset > 0) {
+      scroller?.scrollBy(topOffset)
+    }
+  }
+
   async function handleScroll ({ autoScrolling }: ScrollParams): Promise<void> {
     saveScrollPosition()
     updateDownButtonVisibility($metadataStore, displayMessages, scrollElement)
@@ -326,17 +377,11 @@
     return messageInView(msgElement, containerRect)
   }
 
-  function messageInView (msgElement: Element, containerRect: DOMRect): boolean {
-    const messageRect = msgElement.getBoundingClientRect()
-
-    return messageRect.top >= containerRect.top && messageRect.bottom - messageRect.height / 2 <= containerRect.bottom
-  }
-
-  const messagesToReadAccumulator: DisplayActivityMessage[] = []
+  const messagesToReadAccumulator: Set<DisplayActivityMessage> = new Set<DisplayActivityMessage>()
   let messagesToReadAccumulatorTimer: any
 
   function readViewportMessages (): void {
-    if (!scrollElement || !scrollContentBox) {
+    if (!scrollElement || !scrollContentBox || isFreeze()) {
       return
     }
 
@@ -352,13 +397,14 @@
       }
 
       if (messageInView(msgElement, containerRect)) {
-        messagesToReadAccumulator.push(message)
+        messagesToReadAccumulator.add(message)
       }
     }
 
     clearTimeout(messagesToReadAccumulatorTimer)
     messagesToReadAccumulatorTimer = setTimeout(() => {
       const messagesToRead = [...messagesToReadAccumulator]
+      messagesToReadAccumulator.clear()
       void readChannelMessages(sortActivityMessages(messagesToRead), notifyContext)
     }, 500)
   }
@@ -444,9 +490,9 @@
     updateSelectedDate()
 
     if (selectedMessageId !== undefined && messages.some(({ _id }) => _id === selectedMessageId)) {
-      isScrollInitialized = true
       await wait()
       scrollToMessage()
+      isScrollInitialized = true
       isInitialScrolling = false
     } else if (separatorIndex === -1) {
       await wait()
@@ -509,6 +555,7 @@
 
   function scrollToNewMessages (): void {
     if (!scrollElement || !shouldScrollToNew) {
+      readViewportMessages()
       return
     }
 
@@ -525,12 +572,12 @@
   }
 
   async function restoreScroll () {
-    if (!scrollElement || !scroller) {
+    await wait()
+
+    if (!scrollElement || !scroller || scrollToRestore === 0) {
       scrollToRestore = 0
       return
     }
-
-    await wait()
 
     const delta = scrollElement.scrollHeight - scrollToRestore
 
@@ -547,17 +594,27 @@
       return
     }
 
+    const prevCount = messagesCount
+    messagesCount = newCount
+
+    if (isFreeze()) {
+      await wait()
+      scrollToStartOfNew()
+      return
+    }
+
     if (scrollToRestore > 0) {
       void restoreScroll()
     } else if (dateToJump !== undefined) {
       await wait()
       scrollToDate(dateToJump)
-    } else if (newCount > messagesCount) {
+    } else if (shouldScrollToNew && prevCount > 0 && newCount > prevCount) {
       await wait()
       scrollToNewMessages()
+    } else {
+      await wait()
+      readViewportMessages()
     }
-
-    messagesCount = newCount
   }
 
   $: void handleMessagesUpdated(displayMessages.length)
@@ -573,15 +630,23 @@
     loadMore()
   }
 
+  let timer: any
+
   function saveScrollPosition (): void {
     if (!scrollElement) {
       return
     }
 
-    const { offsetHeight, scrollHeight, scrollTop } = scrollElement
+    prevScrollHeight = scrollElement.scrollHeight
 
-    prevScrollHeight = scrollHeight
-    isScrollAtBottom = scrollHeight <= Math.ceil(scrollTop + offsetHeight)
+    clearTimeout(timer)
+    setTimeout(() => {
+      if (!scrollElement) {
+        return
+      }
+      const { offsetHeight, scrollHeight, scrollTop } = scrollElement
+      isScrollAtBottom = scrollHeight <= Math.ceil(scrollTop + offsetHeight)
+    }, 15)
   }
 
   beforeUpdate(() => {
@@ -594,10 +659,12 @@
 
   afterUpdate(() => {
     if (!scrollElement) return
-    const { scrollHeight } = scrollElement
+    const { offsetHeight, scrollHeight, scrollTop } = scrollElement
 
-    if (!isInitialScrolling && prevScrollHeight < scrollHeight && isScrollAtBottom) {
+    if (!isInitialScrolling && !isFreeze() && prevScrollHeight < scrollHeight && isScrollAtBottom) {
       scrollToBottom()
+    } else if (isFreeze()) {
+      isScrollAtBottom = scrollHeight <= Math.ceil(scrollTop + offsetHeight)
     }
   })
 
@@ -625,10 +692,12 @@
 
   onMount(() => {
     chatReadMessagesStore.update(() => new Set())
+    document.addEventListener('visibilitychange', handleVisibilityChange)
   })
 
   onDestroy(() => {
     unsubscribe()
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   })
 
   let showScrollDownButton = false
@@ -650,7 +719,7 @@
     } else if (element != null) {
       const { scrollHeight, scrollTop, offsetHeight } = element
 
-      showScrollDownButton = scrollHeight > offsetHeight + scrollTop + 300
+      showScrollDownButton = scrollHeight > offsetHeight + scrollTop + 50
     } else {
       showScrollDownButton = false
     }
@@ -672,7 +741,7 @@
       scrollToBottom()
     }
 
-    const op = client.apply(generateId(), 'chunter.scrollDown')
+    const op = client.apply(undefined, 'chunter.scrollDown')
     await inboxClient.readDoc(op, doc._id)
     await op.commit()
   }
@@ -681,7 +750,7 @@
   $: void forceReadContext(isScrollAtBottom, notifyContext)
 
   async function forceReadContext (isScrollAtBottom: boolean, context?: DocNotifyContext): Promise<void> {
-    if (context === undefined || !isScrollAtBottom || forceRead || !separatorElement) return
+    if (context === undefined || !isScrollAtBottom || forceRead || isFreeze()) return
     const { lastUpdateTimestamp = 0, lastViewedTimestamp = 0 } = context
 
     if (lastViewedTimestamp >= lastUpdateTimestamp) return
@@ -691,19 +760,23 @@
 
     if (unViewed.length === 0) {
       forceRead = true
-      const op = client.apply(generateId(), 'chunter.forceReadContext')
+      const op = client.apply(undefined, 'chunter.forceReadContext')
       await inboxClient.readDoc(op, object._id)
       await op.commit()
     }
   }
 
   const canLoadNextForwardStore = provider.canLoadNextForwardStore
+
+  $: if (!freeze && !isPageHidden && isScrollInitialized) {
+    readViewportMessages()
+  }
 </script>
 
 {#if isLoading}
   <Loading />
 {:else}
-  <div class="flex-col h-full relative">
+  <div class="flex-col relative" class:h-full={fullHeight}>
     {#if startFromBottom}
       <div class="grower" />
     {/if}
@@ -725,6 +798,7 @@
       bind:divBox={scrollContentBox}
       noStretch={false}
       disableOverscroll
+      horizontal={false}
       onScroll={handleScroll}
       onResize={handleResize}
     >
@@ -733,7 +807,7 @@
       {/if}
       <slot name="header" />
 
-      {#if displayMessages.length === 0 && !embedded}
+      {#if displayMessages.length === 0 && !embedded && !readonly}
         <BlankView
           icon={chunter.icon.Thread}
           header={chunter.string.NoMessagesInChannel}
@@ -764,8 +838,13 @@
           attachmentImageSize="x-large"
           type={canGroup ? 'short' : 'default'}
           hideLink
+          {readonly}
         />
       {/each}
+
+      {#if !fixedInput}
+        <ChannelInput {object} {readonly} boundary={scrollElement} {collection} isThread={embedded} />
+      {/if}
 
       {#if loadMoreAllowed && $canLoadNextForwardStore}
         <HistoryLoading isLoading={$isLoadingMoreStore} />
@@ -773,7 +852,7 @@
     </Scroller>
 
     {#if !embedded && showScrollDownButton}
-      <div class="down-button absolute">
+      <div class="down-button absolute" class:readonly>
         <ModernButton
           label={chunter.string.LatestMessages}
           shape="round"
@@ -784,14 +863,8 @@
       </div>
     {/if}
   </div>
-  {#if object}
-    <div class="ref-input flex-col">
-      <ActivityExtensionComponent
-        kind="input"
-        {extensions}
-        props={{ object, boundary: scrollElement, collection, autofocus: true, withTypingInfo: true }}
-      />
-    </div>
+  {#if fixedInput}
+    <ChannelInput {object} {readonly} boundary={scrollElement} {collection} isThread={embedded} />
   {/if}
 {/if}
 
@@ -799,13 +872,6 @@
   .grower {
     flex-grow: 10;
     flex-shrink: 5;
-  }
-
-  .ref-input {
-    flex-shrink: 0;
-    margin: 1.25rem 1rem 1rem;
-    margin-bottom: 0;
-    max-height: 18.75rem;
   }
 
   .overlay {
@@ -831,9 +897,13 @@
     display: flex;
     justify-content: center;
     bottom: -0.75rem;
-    animation: 1s fadeIn;
+    animation: 0.5s fadeIn;
     animation-fill-mode: forwards;
     visibility: hidden;
+
+    &.readonly {
+      bottom: 0.25rem;
+    }
   }
 
   @keyframes fadeIn {

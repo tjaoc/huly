@@ -203,6 +203,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
       }
       case 'deleted': {
         const syncData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: (event.issue.html_url ?? '').toLowerCase()
         })
         if (syncData !== undefined) {
@@ -291,6 +292,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     repo: GithubIntegrationRepository
   ): Promise<void> {
     const issueSyncData = await this.client.findOne(github.class.DocSyncInfo, {
+      space: repo.githubProject as Ref<GithubProject>,
       url: (issueExternal.url ?? '').toLowerCase()
     })
     if (issueSyncData === undefined) {
@@ -325,11 +327,13 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     derivedClient: TxOperations
   ): Promise<DocumentUpdate<DocSyncInfo> | undefined> {
     const container = await this.provider.getContainer(info.space)
+    if (container?.container === undefined) {
+      return { needSync: githubSyncVersion }
+    }
     if (
-      container?.container === undefined ||
-      ((container.project.projectNodeId === undefined ||
+      (container.project.projectNodeId === undefined ||
         !container.container.projectStructure.has(container.project._id)) &&
-        syncConfig.MainProject)
+      syncConfig.MainProject
     ) {
       this.ctx.error('Not syncing no structure', { url: info.url })
       return { needSync: '' }
@@ -345,7 +349,9 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         }
         if (info.repository == null) {
           // No need to sync if component it not yet set
-          const repos = container.repository.map((it) => it.name).join(', ')
+          const repos = (await this.provider.getProjectRepositories(container.project._id))
+            .map((it) => it.name)
+            .join(', ')
           this.ctx.error('Not syncing repository === null', {
             url: info.url,
             identifier: (existing as Issue).identifier,
@@ -360,9 +366,11 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
 
     let issueExternal = info.external as IssueExternalData
     if (info.external === undefined && existing !== undefined) {
-      const repository = container.repository.find((it) => it._id === info.repository)
+      const repository = await this.provider.getRepositoryById(info.repository)
       if (repository === undefined) {
-        const repos = container.repository.map((it) => it.name).join(', ')
+        const repos = (await this.provider.getProjectRepositories(container.project._id))
+          .map((it) => it.name)
+          .join(', ')
         this.ctx.error('Not syncing repository === undefined', {
           url: info.url,
           identifier: (existing as Issue).identifier,
@@ -427,11 +435,6 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
       existing as Issue,
       issueExternal
     )
-    if (target === null) {
-      // We need to wait, no milestone data yet.
-      this.ctx.error('target === null', { url: info.url })
-      return { needSync: '' }
-    }
     if (target === undefined) {
       target = this.getProjectIssueTarget(container.project, issueExternal)
     }
@@ -451,7 +454,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
           break
         }
 
-        await this.provider.doSyncFor(attachedDocs)
+        await this.provider.doSyncFor(attachedDocs, container.project)
         for (const child of attachedDocs) {
           await derivedClient.update(child, { createId })
         }
@@ -573,6 +576,11 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
           container.container,
           issueExternal.body
         )
+        const repo = await this.provider.getRepositoryById(info.repository)
+        if (repo == null) {
+          // No repository, it probable deleted
+          return { needSync: githubSyncVersion }
+        }
         await this.ctx.withLog(
           'create platform issue',
           {},
@@ -590,7 +598,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
               info.repository as Ref<GithubIntegrationRepository>,
               container.project,
               taskTypes[0]._id,
-              container.repository.find((it) => it._id === info.repository) as GithubIntegrationRepository & {
+              repo as GithubIntegrationRepository & {
                 repository: IntegrationRepositoryData
               },
               !markdownCompatible
@@ -972,12 +980,16 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     // Wait global project sync
     await integration.syncLock.get(prj._id)
 
-    const ids = syncDocs.map((it) => (it.external as IssueExternalData).id).filter((it) => it !== undefined)
+    const allSyncDocs = [...syncDocs]
     //
     let partsize = 50
     try {
       while (true) {
-        const idsPart = ids.splice(0, partsize)
+        if (this.provider.isClosing()) {
+          break
+        }
+        const docsPart = allSyncDocs.splice(0, partsize)
+        const idsPart = docsPart.map((it) => (it.external as IssueExternalData).id).filter((it) => it !== undefined)
         if (idsPart.length === 0) {
           break
         }
@@ -1012,11 +1024,11 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
             })
           }
 
-          await this.syncIssues(tracker.class.Issue, repo, issues, derivedClient)
+          await this.syncIssues(tracker.class.Issue, repo, issues, derivedClient, docsPart)
         } catch (err: any) {
           if (partsize > 1) {
             partsize = 1
-            ids.push(...idsPart)
+            allSyncDocs.push(...docsPart)
             this.ctx.warn('issue external retrieval switch to one by one mode', {
               errors: err.errors,
               msg: err.message,
@@ -1072,6 +1084,9 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     repositories: GithubIntegrationRepository[]
   ): Promise<void> {
     for (const repo of repositories) {
+      if (this.provider.isClosing()) {
+        break
+      }
       const prj = projects.find((it) => repo.githubProject === it._id)
       if (prj === undefined) {
         continue
@@ -1120,6 +1135,9 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
       )
       try {
         for await (const data of i) {
+          if (this.provider.isClosing()) {
+            break
+          }
           const issues: IssueExternalData[] = data.repository.issues.nodes
           if (issues.some((issue) => issue.url === undefined && Object.keys(issue).length === 0)) {
             this.ctx.error('empty document content', {

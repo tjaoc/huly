@@ -14,16 +14,20 @@
 // limitations under the License.
 //
 
-import { type BrandingMap } from '@hcengineering/core'
-import { BackupClientSession, buildStorageFromConfig, getMetricsContext } from '@hcengineering/server'
+import { type Branding, type BrandingMap, type Tx, type WorkspaceIdWithUrl } from '@hcengineering/core'
+import { buildStorageFromConfig } from '@hcengineering/server-storage'
+import { getMetricsContext } from './metrics'
 
-import { type Pipeline, type StorageConfiguration } from '@hcengineering/server-core'
+import { ClientSession, startSessionManager } from '@hcengineering/server'
+import { type Pipeline, type ServerFactory, type Session, type StorageConfiguration } from '@hcengineering/server-core'
 import { type Token } from '@hcengineering/server-token'
-import { ClientSession, start as startJsonRpc, type ServerFactory, type Session } from '@hcengineering/server-ws'
 
-import { createServerPipeline, registerServerPlugins, registerStringLoaders } from '@hcengineering/server-pipeline'
 import { serverAiBotId } from '@hcengineering/server-ai-bot'
 import { createAIBotAdapter } from '@hcengineering/server-ai-bot-resources'
+import { createServerPipeline, registerServerPlugins, registerStringLoaders } from '@hcengineering/server-pipeline'
+
+import { readFileSync } from 'node:fs'
+const model = JSON.parse(readFileSync(process.env.MODEL_JSON ?? 'model.json').toString()) as Tx[]
 
 registerStringLoaders()
 
@@ -31,7 +35,7 @@ registerStringLoaders()
  * @public
  */
 export function start (
-  dbUrl: string,
+  dbUrls: string,
   opt: {
     fullTextUrl: string
     storageConfig: StorageConfiguration
@@ -46,36 +50,46 @@ export function start (
     enableCompression?: boolean
 
     accountsUrl: string
+
+    profiling?: {
+      start: () => void
+      stop: () => Promise<string | undefined>
+    }
   }
 ): () => Promise<void> {
   const metrics = getMetricsContext()
 
   registerServerPlugins()
 
-  const externalStorage = buildStorageFromConfig(opt.storageConfig, dbUrl)
+  const [mainDbUrl, rawDbUrl] = dbUrls.split(';')
+
+  const externalStorage = buildStorageFromConfig(opt.storageConfig, rawDbUrl ?? mainDbUrl)
 
   const pipelineFactory = createServerPipeline(
     metrics,
-    dbUrl,
-    { ...opt, externalStorage },
+    dbUrls,
+    model,
+    { ...opt, externalStorage, adapterSecurity: rawDbUrl !== undefined },
     {
       serviceAdapters: {
         [serverAiBotId]: {
           factory: createAIBotAdapter,
           db: '%ai-bot',
-          url: dbUrl
+          url: rawDbUrl ?? mainDbUrl
         }
       }
     }
   )
-  const sessionFactory = (token: Token, pipeline: Pipeline): Session => {
-    if (token.extra?.mode === 'backup') {
-      return new BackupClientSession(token, pipeline)
-    }
-    return new ClientSession(token, pipeline)
+  const sessionFactory = (
+    token: Token,
+    pipeline: Pipeline,
+    workspaceId: WorkspaceIdWithUrl,
+    branding: Branding | null
+  ): Session => {
+    return new ClientSession(token, pipeline, workspaceId, branding, token.extra?.mode === 'backup')
   }
 
-  const onClose = startJsonRpc(getMetricsContext(), {
+  const onClose = startSessionManager(getMetricsContext(), {
     pipelineFactory,
     sessionFactory,
     port: opt.port,
@@ -83,7 +97,8 @@ export function start (
     serverFactory: opt.serverFactory,
     enableCompression: opt.enableCompression,
     accountsUrl: opt.accountsUrl,
-    externalStorage
+    externalStorage,
+    profiling: opt.profiling
   })
   return async () => {
     await externalStorage.close()

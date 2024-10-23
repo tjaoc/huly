@@ -128,7 +128,7 @@ export async function readNotifyContext (doc: DocNotifyContext): Promise<void> {
   const inboxClient = InboxNotificationsClientImpl.getClient()
   const inboxNotifications = get(inboxClient.inboxNotificationsByContext).get(doc._id) ?? []
 
-  const ops = getClient().apply(doc._id, 'readNotifyContext')
+  const ops = getClient().apply(undefined, 'readNotifyContext')
   try {
     await inboxClient.readNotifications(
       ops,
@@ -152,7 +152,7 @@ export async function unReadNotifyContext (doc: DocNotifyContext): Promise<void>
     return
   }
 
-  const ops = getClient().apply(doc._id, 'unReadNotifyContext')
+  const ops = getClient().apply(undefined, 'unReadNotifyContext')
 
   try {
     await inboxClient.unreadNotifications(
@@ -183,7 +183,7 @@ export async function archiveContextNotifications (doc?: DocNotifyContext): Prom
     return
   }
 
-  const ops = getClient().apply(doc._id, 'archiveContextNotifications')
+  const ops = getClient().apply(undefined, 'archiveContextNotifications')
 
   try {
     const notifications = await ops.findAll(
@@ -209,7 +209,7 @@ export async function unarchiveContextNotifications (doc?: DocNotifyContext): Pr
     return
   }
 
-  const ops = getClient().apply(doc._id, 'unarchiveContextNotifications')
+  const ops = getClient().apply(undefined, 'unarchiveContextNotifications')
 
   try {
     const notifications = await ops.findAll(
@@ -531,6 +531,7 @@ async function generateLocation (
 
 async function navigateToInboxDoc (
   providers: LinkIdProvider[],
+  context: Ref<DocNotifyContext>,
   _id?: Ref<Doc>,
   _class?: Ref<Class<Doc>>,
   thread?: Ref<ActivityMessage>,
@@ -559,7 +560,7 @@ async function navigateToInboxDoc (
     loc.path.length = 4
   }
 
-  loc.query = { ...loc.query, message: message ?? null }
+  loc.query = { ...loc.query, context, message: message ?? null }
   messageInFocus.set(message)
   Analytics.handleEvent('inbox.ReadDoc', { objectId: id, objectClass: _class, thread, message })
   navigate(loc)
@@ -583,17 +584,20 @@ export function resetInboxContext (): void {
 export async function selectInboxContext (
   linkProviders: LinkIdProvider[],
   context: DocNotifyContext,
-  notification?: WithLookup<InboxNotification>
+  notification?: WithLookup<InboxNotification>,
+  object?: Doc
 ): Promise<void> {
   const client = getClient()
   const hierarchy = client.getHierarchy()
   const { objectId, objectClass } = context
+  const loc = getCurrentLocation()
 
   if (isMentionNotification(notification) && isActivityMessageClass(notification.mentionedInClass)) {
     const selectedMsg = notification.mentionedIn as Ref<ActivityMessage>
 
     void navigateToInboxDoc(
       linkProviders,
+      context._id,
       objectId,
       objectClass,
       isActivityMessageClass(objectClass) ? (objectId as Ref<ActivityMessage>) : undefined,
@@ -606,30 +610,61 @@ export async function selectInboxContext (
     const message = (notification as WithLookup<ActivityInboxNotification>)?.$lookup?.attachedTo
 
     if (objectClass === chunter.class.ThreadMessage) {
-      const thread = await client.findOne(
-        chunter.class.ThreadMessage,
-        {
-          _id: objectId as Ref<ThreadMessage>
-        },
-        { projection: { _id: 1, attachedTo: 1 } }
-      )
+      const thread =
+        object?._id === objectId
+          ? (object as ThreadMessage)
+          : await client.findOne(
+            chunter.class.ThreadMessage,
+            {
+              _id: objectId as Ref<ThreadMessage>
+            },
+            { projection: { _id: 1, attachedTo: 1 } }
+          )
 
-      void navigateToInboxDoc(linkProviders, objectId, objectClass, thread?.attachedTo, thread?._id)
+      void navigateToInboxDoc(
+        linkProviders,
+        context._id,
+        thread?.objectId ?? objectId,
+        thread?.objectClass ?? objectClass,
+        thread?.attachedTo,
+        thread?._id
+      )
       return
     }
 
     if (isReactionMessage(message)) {
-      void navigateToInboxDoc(linkProviders, objectId, objectClass, undefined, objectId as Ref<ActivityMessage>)
+      const thread = loc.path[4] === objectId ? objectId : undefined
+      const reactedTo =
+        (object as ActivityMessage) ??
+        (await client.findOne(activity.class.ActivityMessage, { _id: message.attachedTo as Ref<ActivityMessage> }))
+      const isThread = hierarchy.isDerived(reactedTo._class, chunter.class.ThreadMessage)
+      const channelId = isThread ? (reactedTo as ThreadMessage)?.objectId : reactedTo?.attachedTo ?? objectId
+      const channelClass = isThread
+        ? (reactedTo as ThreadMessage)?.objectClass
+        : reactedTo?.attachedToClass ?? objectClass
+
+      void navigateToInboxDoc(
+        linkProviders,
+        context._id,
+        channelId,
+        channelClass,
+        thread as Ref<ActivityMessage>,
+        objectId as Ref<ActivityMessage>
+      )
       return
     }
 
     const selectedMsg = (notification as ActivityInboxNotification)?.attachedTo
+    const thread = selectedMsg !== objectId ? objectId : loc.path[4] === objectId ? objectId : undefined
+    const channelId = (object as ActivityMessage)?.attachedTo ?? message?.attachedTo ?? objectId
+    const channelClass = (object as ActivityMessage)?.attachedToClass ?? message?.attachedToClass ?? objectClass
 
     void navigateToInboxDoc(
       linkProviders,
-      objectId,
-      objectClass,
-      selectedMsg !== undefined ? (objectId as Ref<ActivityMessage>) : undefined,
+      context._id,
+      channelId,
+      channelClass,
+      thread as Ref<ActivityMessage>,
       selectedMsg ?? (objectId as Ref<ActivityMessage>)
     )
     return
@@ -637,6 +672,7 @@ export async function selectInboxContext (
 
   void navigateToInboxDoc(
     linkProviders,
+    context._id,
     objectId,
     objectClass,
     undefined,

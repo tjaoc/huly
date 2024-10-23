@@ -18,11 +18,6 @@ import core, {
   generateId,
   makeCollaborativeDoc
 } from '@hcengineering/core'
-import task, { TaskType, calcRank, makeRank } from '@hcengineering/task'
-import time, { ToDo, ToDoPriority } from '@hcengineering/time'
-import tracker, { Issue, IssuePriority, IssueStatus, Project } from '@hcengineering/tracker'
-import { OctokitResponse } from '@octokit/types'
-import { ProjectsV2ItemEvent, PullRequestEvent } from '@octokit/webhooks-types'
 import github, {
   DocSyncInfo,
   GithubIntegrationRepository,
@@ -34,6 +29,10 @@ import github, {
   GithubTodo,
   LastReviewState
 } from '@hcengineering/github'
+import task, { TaskType, calcRank, makeRank } from '@hcengineering/task'
+import time, { ToDo, ToDoPriority } from '@hcengineering/time'
+import tracker, { Issue, IssuePriority, IssueStatus, Project } from '@hcengineering/tracker'
+import { ProjectsV2ItemEvent, PullRequestEvent } from '@octokit/webhooks-types'
 import { Octokit } from 'octokit'
 import config from '../config'
 import {
@@ -59,7 +58,16 @@ import {
 } from './githubTypes'
 import { GithubIssueData, IssueSyncManagerBase, IssueSyncTarget, WithMarkup } from './issueBase'
 import { syncConfig } from './syncConfig'
-import { errorToObj, getSinceRaw, gqlp, guessStatus, isGHWriteAllowed, syncDerivedDocuments, syncRunner } from './utils'
+import {
+  errorToObj,
+  getSinceRaw,
+  gqlp,
+  guessStatus,
+  isGHWriteAllowed,
+  syncChilds,
+  syncDerivedDocuments,
+  syncRunner
+} from './utils'
 
 type GithubPullRequestData = GithubIssueData &
 Omit<GithubPullRequest, keyof Issue | 'commits' | 'reviews' | 'reviewComments'>
@@ -294,6 +302,7 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
       }
       case 'synchronize': {
         const syncData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: (externalData.url ?? '').toLowerCase()
         })
         if (syncData !== undefined) {
@@ -487,8 +496,8 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
         await this.ctx.withLog(
           'retrieve pull request patch',
           {},
-          async () =>
-            await this.handlePatch(
+          () =>
+            this.handlePatch(
               info,
               container,
               pullRequestExternal,
@@ -507,7 +516,7 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
           pullRequestExternal.body
         )
 
-        const op = this.client.apply(generateId())
+        const op = this.client.apply()
         let createdPullRequest: GithubPullRequest | undefined
 
         await this.ctx.withLog(
@@ -526,7 +535,7 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
               info.repository as Ref<GithubIntegrationRepository>,
               container.project,
               taskTypes[0]._id,
-              container.repository.find((it) => it._id === info.repository) as GithubIntegrationRepository,
+              (await this.provider.getRepositoryById(info.repository)) as GithubIntegrationRepository,
               !markdownCompatible
             )
           },
@@ -543,6 +552,9 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
         }
 
         await op.commit()
+
+        // To sync reviews/review threads in case they are created before us.
+        await syncChilds(info, this.client, derivedClient)
 
         return {
           needSync: '',
@@ -563,7 +575,7 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
           await this.ctx.withLog(
             'update pull request patch',
             {},
-            async () =>
+            async () => {
               await this.handlePatch(
                 info,
                 container,
@@ -575,7 +587,8 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
                 },
                 lastModified,
                 accountGH
-              ),
+              )
+            },
             { url: pullRequestExternal.url }
           )
         }
@@ -688,10 +701,12 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
     const approvedOrChangesRequested = new Map<Ref<Person>, PullRequestReviewState>()
     const reviewStates = new Map<Ref<Person>, PullRequestReviewState[]>()
 
-    const sortedReviews: (Review & { date: number })[] = external.reviews.nodes.map((it) => ({
-      ...it,
-      date: new Date(it.updatedAt ?? it.submittedAt ?? it.createdAt).getTime()
-    }))
+    const sortedReviews: (Review & { date: number })[] = external.reviews.nodes
+      .filter((it) => it != null)
+      .map((it) => ({
+        ...it,
+        date: new Date(it.updatedAt ?? it.submittedAt ?? it.createdAt).getTime()
+      }))
 
     for (const it of external.latestReviews.nodes) {
       if (sortedReviews.some((qt) => it.id === qt.id)) {
@@ -945,13 +960,19 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
     derivedClient: TxOperations
   ): Promise<DocumentUpdate<DocSyncInfo> | undefined> {
     const container = await this.provider.getContainer(info.space)
+    if (container?.container === undefined) {
+      return { needSync: githubSyncVersion }
+    }
     if (
-      container?.container === undefined ||
-      ((container.project.projectNodeId === undefined ||
+      (container.project.projectNodeId === undefined ||
         !container.container.projectStructure.has(container.project._id)) &&
-        syncConfig.MainProject)
+      syncConfig.MainProject
     ) {
-      return { needSync: '' }
+      return { needSync: githubSyncVersion }
+    }
+
+    if (info.repository == null) {
+      return { needSync: githubSyncVersion }
     }
 
     const pullRequestExternal = info.external as unknown as PullRequestExternalData
@@ -966,10 +987,6 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
       existing as Issue,
       pullRequestExternal
     )
-    if (target === null) {
-      // We need to wait, no milestone data yet.
-      return { needSync: '' }
-    }
     if (target === undefined) {
       target = this.getProjectIssueTarget(container.project, pullRequestExternal)
     }
@@ -1085,18 +1102,17 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
     existingPR: Pick<GithubPullRequest, '_id' | 'space' | '_class'>,
     lastModified: number,
     account: Ref<Account>
-  ): Promise<string | null> {
-    let patch: string | null = null
-    const repo = container.repository.find((it) => it._id === info.repository)
+  ): Promise<void> {
+    const repo = await this.provider.getRepositoryById(info.repository)
     if (repo?.nodeId === undefined) {
-      return null
+      return
     }
     if (info.external?.patch !== true) {
-      patch = await this.fetchPatch(pullRequestExternal, container.container.octokit, repo)
+      const { patch, contentType } = await this.fetchPatch(pullRequestExternal, container.container.octokit, repo)
 
       // Update attached patch data.
       const patchAttachment = await this.client.findOne(github.class.GithubPatch, { attachedTo: existingPR._id })
-      const blob = await this.provider.uploadFile(patch, patchAttachment?.file)
+      const blob = await this.provider.uploadFile(patch, patchAttachment?.file, contentType)
       if (blob !== undefined) {
         if (patchAttachment === undefined) {
           await this.client.addCollection(
@@ -1131,7 +1147,6 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
         }
       }
     }
-    return patch
   }
 
   private async createPullRequest (
@@ -1302,7 +1317,7 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
       )
     }
 
-    const tx = derivedClient.apply('pullrequests_github' + prj._id)
+    const tx = derivedClient.apply()
     for (const d of syncDocs) {
       await tx.update(d, { derivedVersion: githubDerivedSyncVersion })
     }
@@ -1319,12 +1334,13 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
   ): Promise<void> {
     await integration.syncLock.get(prj._id)
 
-    const ids = syncDocs.map((it) => (it.external as IssueExternalData).id).filter((it) => it !== undefined)
+    const allSyncDocs = [...syncDocs]
 
     let partsize = 50
     try {
       while (true) {
-        const idsPart = ids.splice(0, partsize)
+        const docsPart = allSyncDocs.splice(0, partsize)
+        const idsPart = docsPart.map((it) => (it.external as IssueExternalData).id).filter((it) => it !== undefined)
         if (idsPart.length === 0) {
           break
         }
@@ -1358,11 +1374,11 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
               data: cutObjectArray(response)
             })
           }
-          await this.syncIssues(github.class.GithubPullRequest, repo, issues, derivedClient)
+          await this.syncIssues(github.class.GithubPullRequest, repo, issues, derivedClient, docsPart)
         } catch (err: any) {
           if (partsize > 1) {
             partsize = 1
-            ids.push(...idsPart)
+            allSyncDocs.push(...docsPart)
             this.ctx.warn('pull request external retrieval switch to one by one mode', {
               errors: err.errors,
               msg: err.message,
@@ -1418,6 +1434,9 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
     repositories: GithubIntegrationRepository[]
   ): Promise<void> {
     for (const repo of repositories) {
+      if (this.provider.isClosing()) {
+        break
+      }
       const prj = projects.find((it) => repo.githubProject === it._id)
       if (prj === undefined) {
         continue
@@ -1503,6 +1522,9 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
         }
       )
       for await (const data of pullRequestIterator) {
+        if (this.provider.isClosing()) {
+          break
+        }
         const issues: PullRequestExternalData[] = data.repository.pullRequests.nodes
         this.ctx.info('retrieve pull requests for', {
           repo: repo.name,
@@ -1544,8 +1566,9 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
     pullRequest: PullRequestExternalData,
     octokit: Octokit,
     repository: GithubIntegrationRepository
-  ): Promise<string> {
+  ): Promise<{ patch: string, contentType: string }> {
     let patch = ''
+    let contentType = 'application/vnd.github.VERSION.diff'
     try {
       const patchContent = await octokit.rest.pulls.get({
         owner: repository.owner?.login as string,
@@ -1556,12 +1579,13 @@ export class PullRequestSyncManager extends IssueSyncManagerBase implements DocS
           'X-GitHub-Api-Version': '2022-11-28'
         }
       })
-      patch = ((patchContent as unknown as OctokitResponse<string>).data ?? '').slice(0, 2 * 1024 * 1024)
+      patch = (patchContent.data as unknown as string) ?? ''
+      contentType = patchContent.headers['content-type'] ?? 'application/vnd.github.VERSION.diff'
     } catch (err: any) {
       this.ctx.error('Error', { err })
       Analytics.handleError(err)
     }
-    return patch
+    return { patch, contentType }
   }
 
   async deleteGithubDocument (container: ContainerFocus, account: Ref<Account>, id: string): Promise<void> {

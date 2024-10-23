@@ -154,7 +154,7 @@
       return
     }
 
-    const ops = client.apply(productId)
+    const ops = client.apply()
 
     await ops.createDoc(
       products.class.Product,
@@ -180,11 +180,8 @@
 
     // Create space type's mixin with roles assignments
     await ops.createMixin(productId, products.class.Product, core.space.Space, spaceType.targetClass, rolesAssignment)
-
+    await descriptionBox.createAttachments(undefined, ops)
     await ops.commit()
-
-    await descriptionBox.createAttachments()
-
     object = createDefaultObject()
     dispatch('close', productId)
   }

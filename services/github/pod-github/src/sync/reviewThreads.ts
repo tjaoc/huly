@@ -11,14 +11,14 @@ import core, {
   Ref,
   TxOperations
 } from '@hcengineering/core'
-import { EmptyMarkup } from '@hcengineering/text'
-import { LiveQuery } from '@hcengineering/query'
 import github, {
   DocSyncInfo,
   GithubIntegrationRepository,
   GithubProject,
   GithubReviewThread
 } from '@hcengineering/github'
+import { LiveQuery } from '@hcengineering/query'
+import { EmptyMarkup } from '@hcengineering/text'
 import {
   ContainerFocus,
   DocSyncManager,
@@ -35,7 +35,7 @@ import {
   getUpdatedAtReviewThread,
   reviewThreadDetails
 } from './githubTypes'
-import { collectUpdate, deleteObjects, errorToObj, isGHWriteAllowed, syncDerivedDocuments } from './utils'
+import { collectUpdate, deleteObjects, errorToObj, isGHWriteAllowed, syncChilds, syncDerivedDocuments } from './utils'
 
 import { Analytics } from '@hcengineering/analytics'
 import { PullRequestReviewThreadEvent } from '@octokit/webhooks-types'
@@ -205,6 +205,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
       case 'unresolved': {
         const isResolved = event.action === 'resolved'
         const reviewData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: event.thread.node_id.toLocaleLowerCase()
         })
 
@@ -241,6 +242,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
           }
 
           const reviewPR = await this.client.findOne(github.class.DocSyncInfo, {
+            space: repo.githubProject as Ref<GithubProject>,
             url: (reviewData.parent ?? '').toLowerCase()
           })
           if (reviewPR !== undefined) {
@@ -263,14 +265,14 @@ export class ReviewThreadSyncManager implements DocSyncManager {
   ): Promise<DocumentUpdate<DocSyncInfo> | undefined> {
     const container = await this.provider.getContainer(info.space)
     if (container?.container === undefined) {
-      return {}
+      return { needSync: githubSyncVersion }
     }
     if (parent === undefined) {
-      return { needSync: '' }
+      return { needSync: githubSyncVersion }
     }
     if (info.external === undefined) {
       // TODO: Use selected repository
-      const repo = container.repository.find((it) => it._id === parent?.repository)
+      const repo = await this.provider.getRepositoryById(parent?.repository)
       if (repo?.nodeId === undefined) {
         // No need to sync if parent repository is not defined.
         return { needSync: githubSyncVersion }
@@ -305,6 +307,9 @@ export class ReviewThreadSyncManager implements DocSyncManager {
     if (existing === undefined) {
       try {
         await this.createReviewThread(info, messageData, parent, review, account)
+
+        // We need trigger comments, if their sync data created before
+        await syncChilds(info, this.client, derivedClient)
         return { needSync: githubSyncVersion, current: messageData }
       } catch (err: any) {
         this.ctx.error('Error', { err })
@@ -327,7 +332,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
     account: Ref<Account>,
     derivedClient: TxOperations
   ): Promise<void> {
-    const repository = container.repository.find((it) => it._id === info.repository)
+    const repository = await this.provider.getRepositoryById(info.repository)
     if (repository === undefined) {
       return
     }
@@ -422,7 +427,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
     derivedClient: TxOperations
   ): Promise<DocumentUpdate<DocSyncInfo>> {
     // TODO: Use selected repository
-    const repo = container.repository.find((it) => it._id === parent?.repository)
+    const repo = await this.provider.getRepositoryById(parent?.repository)
     if (repo?.nodeId === undefined) {
       // No need to sync if parent repository is not defined.
       return { needSync: githubSyncVersion }
@@ -499,7 +504,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
   ): Promise<void> {
     if (kind === 'externalVersion') {
       // No need to perform external sync for review threads, so let's update marks
-      const tx = derivedClient.apply('review_threads_github' + prj._id)
+      const tx = derivedClient.apply()
       for (const d of syncDocs) {
         await tx.update(d, { externalVersion: githubExternalSyncVersion })
       }
@@ -513,6 +518,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
         .map((it) => (it.parent ?? '').toLowerCase())
         .filter((it, idx, arr) => it != null && arr.indexOf(it) === idx)
       const parents = await derivedClient.findAll(github.class.DocSyncInfo, {
+        space: repo.githubProject as Ref<GithubProject>,
         url: {
           $in: allParents
         }
@@ -545,7 +551,7 @@ export class ReviewThreadSyncManager implements DocSyncManager {
           { reviewThreadId: ext.id }
         )
       }
-      const tx = derivedClient.apply('reviewThread_github' + prj._id)
+      const tx = derivedClient.apply()
       for (const d of syncDocs) {
         await tx.update(d, { derivedVersion: githubDerivedSyncVersion })
       }

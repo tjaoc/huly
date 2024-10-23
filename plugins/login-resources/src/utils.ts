@@ -14,18 +14,18 @@
 //
 
 import { Analytics } from '@hcengineering/analytics'
-import { AccountRole, type Doc, type Ref, concatLink } from '@hcengineering/core'
+import { AccountRole, concatLink, type Doc, type Ref } from '@hcengineering/core'
 import { loginId, type LoginInfo, type OtpInfo, type Workspace, type WorkspaceLoginInfo } from '@hcengineering/login'
 import {
   OK,
   PlatformError,
+  Severity,
+  Status,
   getMetadata,
   setMetadata,
   translate,
   unknownError,
-  unknownStatus,
-  Status,
-  Severity
+  unknownStatus
 } from '@hcengineering/platform'
 import presentation from '@hcengineering/presentation'
 import {
@@ -39,9 +39,9 @@ import {
 } from '@hcengineering/ui'
 import { workbenchId } from '@hcengineering/workbench'
 
-import login from './plugin'
-import { type Pages } from './index'
 import { LoginEvents } from './analytics'
+import { type Pages } from './index'
+import login from './plugin'
 
 /**
  * Perform a login operation to required workspace with user credentials.
@@ -160,7 +160,8 @@ export async function signUpOtp (email: string): Promise<[Status, OtpInfo | unde
 }
 
 export async function createWorkspace (
-  workspaceName: string
+  workspaceName: string,
+  region?: string
 ): Promise<[Status, (LoginInfo & { workspace: string }) | undefined]> {
   const accountsUrl = getMetadata(login.metadata.AccountsUrl)
 
@@ -179,7 +180,7 @@ export async function createWorkspace (
 
   const request = {
     method: 'createWorkspace',
-    params: [workspaceName]
+    params: [workspaceName, region]
   }
 
   try {
@@ -205,6 +206,16 @@ export async function createWorkspace (
     Analytics.handleError(err)
     return [unknownError(err), undefined]
   }
+}
+
+function getLastVisitDays (it: Workspace): number {
+  return Math.floor((Date.now() - it.lastVisit) / (1000 * 3600 * 24))
+}
+function getWorkspaceSize (it: Workspace): number {
+  let sz = 0
+  sz += it.backupInfo?.dataSize ?? 0
+  sz += it.backupInfo?.blobsSize ?? 0
+  return sz
 }
 
 export async function getWorkspaces (): Promise<Workspace[]> {
@@ -241,7 +252,18 @@ export async function getWorkspaces (): Promise<Workspace[]> {
     if (result.error != null) {
       throw new PlatformError(result.error)
     }
-    return result.result
+    const workspaces: Workspace[] = result.result
+
+    workspaces.sort((a, b) => {
+      const adays = getLastVisitDays(a)
+      const bdays = getLastVisitDays(b)
+      if (adays === bdays) {
+        return getWorkspaceSize(b) - getWorkspaceSize(a)
+      }
+      return b.lastVisit - a.lastVisit
+    })
+
+    return workspaces
   } catch (err) {
     return []
   }
@@ -267,6 +289,53 @@ export async function getAccount (doNavigate: boolean = true): Promise<LoginInfo
 
   const request = {
     method: 'getAccountInfoByToken',
+    params: [] as any[]
+  }
+
+  try {
+    const response = await fetch(accountsUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(request)
+    })
+    const result = await response.json()
+    if (result.error != null) {
+      throw new PlatformError(result.error)
+    }
+    return result.result
+  } catch (err: any) {
+    Analytics.handleError(err)
+  }
+}
+
+export interface RegionInfo {
+  region: string
+  name: string
+}
+
+export async function getRegionInfo (doNavigate: boolean = true): Promise<RegionInfo[] | undefined> {
+  const accountsUrl = getMetadata(login.metadata.AccountsUrl)
+
+  if (accountsUrl === undefined) {
+    throw new Error('accounts url not specified')
+  }
+
+  const token = getMetadata(presentation.metadata.Token) ?? fetchMetadataLocalStorage(login.metadata.LastToken)
+  if (token === undefined) {
+    if (doNavigate) {
+      const loc = getCurrentLocation()
+      loc.path[1] = 'login'
+      loc.path.length = 2
+      navigate(loc)
+    }
+    return
+  }
+
+  const request = {
+    method: 'getRegionInfo',
     params: [] as any[]
   }
 
@@ -441,6 +510,7 @@ export function navigateToWorkspace (
   }
   setMetadata(presentation.metadata.Token, loginInfo.token)
   setMetadata(presentation.metadata.Workspace, loginInfo.workspace)
+  setMetadata(presentation.metadata.WorkspaceId, loginInfo.workspaceId)
   setLoginInfo(loginInfo)
 
   if (navigateUrl !== undefined) {
@@ -896,6 +966,7 @@ export async function afterConfirm (clearQuery = false): Promise<void> {
     if (result !== undefined) {
       setMetadata(presentation.metadata.Token, result.token)
       setMetadata(presentation.metadata.Workspace, result.workspace)
+      setMetadata(presentation.metadata.WorkspaceId, result.workspaceId)
       setMetadataLocalStorage(login.metadata.LastToken, result.token)
       setLoginInfo(result)
 

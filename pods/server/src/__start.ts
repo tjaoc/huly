@@ -4,22 +4,23 @@
 
 // Add this to the VERY top of the first file loaded in your app
 import { Analytics } from '@hcengineering/analytics'
+import { SplitLogger, configureAnalytics } from '@hcengineering/analytics-service'
 import contactPlugin from '@hcengineering/contact'
 import { MeasureMetricsContext, newMetrics, setOperationLogProfiling } from '@hcengineering/core'
 import notification from '@hcengineering/notification'
 import { setMetadata } from '@hcengineering/platform'
-import { getMetricsContext, serverConfigFromEnv } from '@hcengineering/server'
-import { storageConfigFromEnv } from '@hcengineering/server-storage'
+import { serverConfigFromEnv } from '@hcengineering/server'
+import serverAiBot from '@hcengineering/server-ai-bot'
 import serverCore, { type StorageConfiguration, loadBrandingMap } from '@hcengineering/server-core'
 import serverNotification from '@hcengineering/server-notification'
-import serverToken from '@hcengineering/server-token'
-import { serverFactories } from '@hcengineering/server-ws/src/factories'
-import { SplitLogger, configureAnalytics } from '@hcengineering/analytics-service'
+import { storageConfigFromEnv } from '@hcengineering/server-storage'
 import serverTelegram from '@hcengineering/server-telegram'
-import serverAiBot from '@hcengineering/server-ai-bot'
+import serverToken from '@hcengineering/server-token'
+import { startHttpServer } from '@hcengineering/server-ws'
 import { join } from 'path'
 import { start } from '.'
-const serverFactory = serverFactories[(process.env.SERVER_PROVIDER as string) ?? 'ws'] ?? serverFactories.ws
+import { profileStart, profileStop } from './inspector'
+import { getMetricsContext } from './metrics'
 
 configureAnalytics(process.env.SENTRY_DSN, {})
 Analytics.setTag('application', 'transactor')
@@ -63,12 +64,16 @@ const shutdown = start(config.url, {
   storageConfig,
   rekoniUrl: config.rekoniUrl,
   port: config.serverPort,
-  serverFactory,
+  serverFactory: startHttpServer,
   indexParallel: 2,
   indexProcessing: 500,
   brandingMap: loadBrandingMap(config.brandingPath),
   accountsUrl: config.accountsUrl,
-  enableCompression: config.enableCompression
+  enableCompression: config.enableCompression,
+  profiling: {
+    start: profileStart,
+    stop: profileStop
+  }
 })
 
 const close = (): void => {

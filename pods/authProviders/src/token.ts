@@ -1,29 +1,31 @@
-import { getAccountInfoByToken } from '@hcengineering/account'
-import { BrandingMap, concatLink, MeasureContext } from '@hcengineering/core'
+import { type AccountDB, getAccountInfoByToken } from '@hcengineering/account'
+import { BrandingMap, concatLink, MeasureContext, getBranding } from '@hcengineering/core'
 import Router from 'koa-router'
-import { Db } from 'mongodb'
 import qs from 'querystringify'
 import { Strategy as CustomStrategy } from 'passport-custom'
 import { Passport } from '.'
-import { getBranding, getHost, safeParseAuthState } from './utils'
+import { getHost, safeParseAuthState } from './utils'
 
 export function registerToken (
   measureCtx: MeasureContext,
   passport: Passport,
   router: Router<any, any>,
   accountsUrl: string,
-  db: Db,
+  dbPromise: Promise<AccountDB>,
   frontUrl: string,
-  brandings: BrandingMap
+  brandings: BrandingMap,
+  signUpDisabled?: boolean
 ): string | undefined {
   passport.use(
     'token',
     new CustomStrategy(function (req: any, done: any) {
       const token = req.body.token ?? req.query.token
 
-      getAccountInfoByToken(measureCtx, db, null, token)
-        .then((user: any) => done(null, user))
-        .catch((err: any) => done(err))
+      void dbPromise.then((db) => {
+        getAccountInfoByToken(measureCtx, db, null, token)
+          .then((user: any) => done(null, user))
+          .catch((err: any) => done(err))
+      })
     })
   )
 

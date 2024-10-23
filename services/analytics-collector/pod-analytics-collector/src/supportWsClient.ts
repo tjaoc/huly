@@ -13,35 +13,35 @@
 // limitations under the License.
 //
 
+import analyticsCollector, { AnalyticEvent, OnboardingChannel } from '@hcengineering/analytics-collector'
+import chunter, { Channel, ChatMessage } from '@hcengineering/chunter'
+import contact, { Person } from '@hcengineering/contact'
 import core, {
+  Doc,
   generateId,
   getWorkspaceId,
   RateLimiter,
   Ref,
   systemAccountEmail,
   toWorkspaceString,
-  TxOperations,
-  WorkspaceId,
   Tx,
-  Doc,
+  TxOperations,
+  TxProcessor,
   TxUpdateDoc,
-  TxProcessor
+  WorkspaceId
 } from '@hcengineering/core'
-import chunter, { Channel, ChatMessage } from '@hcengineering/chunter'
-import contact, { Person } from '@hcengineering/contact'
 import {
   createGeneralOnboardingChannel,
   getOrCreateOnboardingChannel
 } from '@hcengineering/server-analytics-collector-resources'
-import analyticsCollector, { AnalyticEvent, OnboardingChannel } from '@hcengineering/analytics-collector'
 import { generateToken } from '@hcengineering/server-token'
 
-import { eventToMarkup, getOnboardingMessage } from './format'
-import { WorkspaceClient } from './workspaceClient'
-import { getWorkspaceInfo } from './account'
-import { Action, MessageActions, OnboardingMessage } from './types'
 import { WorkspaceInfo } from '@hcengineering/account'
 import { Collection } from 'mongodb'
+import { getWorkspaceInfo } from './account'
+import { eventToMarkup, getOnboardingMessage } from './format'
+import { Action, MessageActions, OnboardingMessage } from './types'
+import { WorkspaceClient } from './workspaceClient'
 
 export class SupportWsClient extends WorkspaceClient {
   channelIdByKey = new Map<string, Ref<OnboardingChannel>>()
@@ -202,7 +202,7 @@ export class SupportWsClient extends WorkspaceClient {
     onboardingMessages: Collection<OnboardingMessage>
   ): Promise<void> {
     const client = await this.opClient
-    const op = client.apply(generateId(), 'processEvents')
+    const op = client.apply(undefined, 'processEvents')
     const wsString = toWorkspaceString(workspace)
     const {
       channelId,
@@ -245,7 +245,7 @@ export class SupportWsClient extends WorkspaceClient {
     const hierarchy = client.getHierarchy()
 
     for (const event of events) {
-      const markup = await eventToMarkup(event, hierarchy)
+      const markup = await eventToMarkup(event, hierarchy, client)
 
       if (markup === undefined) {
         continue

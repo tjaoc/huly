@@ -19,12 +19,13 @@ export class TalentDetailsPage extends CommonRecruitingPage {
   readonly buttonMergeContacts = (): Locator =>
     this.page.locator('button[class*="menuItem"] span', { hasText: 'Merge contacts' })
 
-  readonly buttonFinalContact = (): Locator =>
-    this.page.locator('form[id="contact:string:MergePersons"] button', { hasText: 'Final contact' })
+  readonly formMergeContacts = (): Locator => this.page.locator('form[id="contact:string:MergePersons"]')
 
-  readonly buttonMergeRow = (): Locator => this.page.locator('form[id="contact:string:MergePersons"] div.box')
+  readonly buttonFinalContact = (): Locator => this.formMergeContacts().locator('button', { hasText: 'Final contact' })
+
+  readonly buttonMergeRow = (): Locator => this.formMergeContacts().locator('div.box')
   readonly buttonPopupMergeContacts = (): Locator =>
-    this.page.locator('form[id="contact:string:MergePersons"] button > span', { hasText: 'Merge contacts' })
+    this.formMergeContacts().locator('button:has-text("Merge contacts")')
 
   readonly textAttachmentName = (): Locator => this.page.locator('div.name a')
   readonly titleAndSourceTalent = (title: string): Locator => this.page.locator('button > span', { hasText: title })
@@ -40,6 +41,12 @@ export class TalentDetailsPage extends CommonRecruitingPage {
 
   async checkSkill (skillTag: string): Promise<void> {
     await expect(this.textTagItem().first()).toContainText(skillTag)
+  }
+
+  async enterLocation (location: string): Promise<void> {
+    const input = this.inputLocation()
+    await input.click()
+    await input.fill(location)
   }
 
   async addTitle (title: string): Promise<void> {
@@ -58,6 +65,10 @@ export class TalentDetailsPage extends CommonRecruitingPage {
 
     await this.buttonFinalContact().click()
     await this.selectMenuItem(this.page, talentName.finalContactName)
+
+    await expect(
+      this.buttonMergeRow().locator('div.flex-center', { hasText: talentName.name }).locator('label.checkbox-container')
+    ).toBeVisible()
 
     await this.buttonMergeRow()
       .locator('div.flex-center', { hasText: talentName.name })
@@ -93,8 +104,8 @@ export class TalentDetailsPage extends CommonRecruitingPage {
     }
   }
 
-  async checkMergeContacts (talentName: string, title: string, source: string): Promise<void> {
-    await expect(this.page.locator('div.location input')).toHaveValue(talentName)
+  async checkMergeContacts (location: string, title: string, source: string): Promise<void> {
+    await expect(this.page.locator('div.location input')).toHaveValue(location)
     await expect(this.titleAndSourceTalent(title)).toBeVisible()
     await expect(this.titleAndSourceTalent(source)).toBeVisible()
   }

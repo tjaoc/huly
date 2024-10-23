@@ -13,14 +13,14 @@
 // limitations under the License.
 //
 
-import { ACCOUNT_DB, listWorkspacesRaw } from '@hcengineering/account'
-import attachment from '@hcengineering/attachment'
+import { getAccountDB, listWorkspacesRaw } from '@hcengineering/account'
 import calendar from '@hcengineering/calendar'
 import chunter, { type ChatMessage } from '@hcengineering/chunter'
 import { loadCollaborativeDoc, saveCollaborativeDoc, yDocToBuffer } from '@hcengineering/collaboration'
 import contact from '@hcengineering/contact'
 import core, {
   type ArrOf,
+  type AttachedDoc,
   type BackupClient,
   type Class,
   ClassifierKind,
@@ -45,11 +45,14 @@ import core, {
   SortingOrder,
   type Status,
   type StatusCategory,
+  type Tx,
   type TxCUD,
+  type TxCollectionCUD,
   type TxCreateDoc,
   type TxMixin,
   TxOperations,
   TxProcessor,
+  type TxRemoveDoc,
   type TxUpdateDoc,
   type WorkspaceId,
   generateId,
@@ -62,7 +65,7 @@ import core, {
 import activity, { DOMAIN_ACTIVITY } from '@hcengineering/model-activity'
 import { DOMAIN_SPACE } from '@hcengineering/model-core'
 import recruitModel, { defaultApplicantStatuses } from '@hcengineering/model-recruit'
-import { getMongoClient, getWorkspaceDB } from '@hcengineering/mongo'
+import { getMongoClient, getWorkspaceMongoDB } from '@hcengineering/mongo'
 import recruit, { type Applicant, type Vacancy } from '@hcengineering/recruit'
 import { getTransactorEndpoint } from '@hcengineering/server-client'
 import { type StorageAdapter } from '@hcengineering/server-core'
@@ -93,27 +96,6 @@ export async function cleanWorkspace (
 
     const hierarchy = ops.getHierarchy()
 
-    const attachments = await ops.findAll(attachment.class.Attachment, {})
-
-    const contacts = await ops.findAll(contact.class.Contact, {})
-
-    const files = new Set(
-      attachments.map((it) => it.file as string).concat(contacts.map((it) => it.avatar).filter((it) => it) as string[])
-    )
-
-    const minioList = await storageAdapter.listStream(ctx, workspaceId)
-    const toClean: string[] = []
-    while (true) {
-      const mv = await minioList.next()
-      if (mv === undefined) {
-        break
-      }
-      if (!files.has(mv._id)) {
-        toClean.push(mv._id)
-      }
-    }
-    await storageAdapter.remove(ctx, workspaceId, toClean)
-
     if (opt.recruit) {
       const contacts = await ops.findAll(recruit.mixin.Candidate, {})
       console.log('removing Talents', contacts.length)
@@ -121,7 +103,7 @@ export async function cleanWorkspace (
 
       while (filter.length > 0) {
         const part = filter.splice(0, 100)
-        const op = ops.apply('')
+        const op = ops.apply()
         for (const c of part) {
           await op.remove(c)
         }
@@ -131,13 +113,6 @@ export async function cleanWorkspace (
         const t2 = Date.now()
         console.log('remove time:', t2 - t, filter.length)
       }
-
-      // const vacancies = await ops.findAll(recruit.class.Vacancy, {})
-      // console.log('removing vacancies', vacancies.length)
-      // for (const c of vacancies) {
-      //   console.log('Remove', c.name)
-      //   await ops.remove(c)
-      // }
     }
 
     if (opt.tracker) {
@@ -146,7 +121,7 @@ export async function cleanWorkspace (
 
       while (issues.length > 0) {
         const part = issues.splice(0, 5)
-        const op = ops.apply('')
+        const op = ops.apply()
         for (const c of part) {
           await op.remove(c)
         }
@@ -160,15 +135,42 @@ export async function cleanWorkspace (
     const client = getMongoClient(mongoUrl)
     try {
       const _client = await client.getClient()
-      const db = getWorkspaceDB(_client, workspaceId)
+      const db = getWorkspaceMongoDB(_client, workspaceId)
 
       if (opt.removedTx) {
-        const txes = await db.collection(DOMAIN_TX).find({}).toArray()
+        let processed = 0
+        const iterator = db.collection(DOMAIN_TX).find({})
+        while (true) {
+          const txes: Tx[] = []
 
-        for (const tx of txes) {
-          if (tx._class === core.class.TxRemoveDoc) {
-            // We need to remove all update and create operations for document
-            await db.collection(DOMAIN_TX).deleteMany({ objectId: tx.objectId })
+          const doc = await iterator.next()
+          if (doc == null) {
+            break
+          }
+          txes.push(doc as unknown as Tx)
+          if (iterator.bufferedCount() > 0) {
+            txes.push(...(iterator.readBufferedDocuments() as unknown as Tx[]))
+          }
+
+          for (const tx of txes) {
+            if (tx._class === core.class.TxRemoveDoc) {
+              // We need to remove all update and create operations for document
+              await db.collection(DOMAIN_TX).deleteMany({ objectId: (tx as TxRemoveDoc<Doc>).objectId })
+              processed++
+            }
+            if (
+              tx._class === core.class.TxCollectionCUD &&
+              (tx as TxCollectionCUD<Doc, AttachedDoc>).tx._class === core.class.TxRemoveDoc
+            ) {
+              // We need to remove all update and create operations for document
+              await db.collection(DOMAIN_TX).deleteMany({
+                'tx.objectId': ((tx as TxCollectionCUD<Doc, AttachedDoc>).tx as TxRemoveDoc<Doc>).objectId
+              })
+              processed++
+            }
+          }
+          if (processed % 1000 === 0) {
+            console.log('processed', processed)
           }
         }
       }
@@ -192,16 +194,18 @@ export async function fixMinioBW (
   const list = await storageService.listStream(ctx, workspaceId)
   let removed = 0
   while (true) {
-    const obj = await list.next()
-    if (obj === undefined) {
+    const objs = await list.next()
+    if (objs.length === 0) {
       break
     }
-    if (obj.modifiedOn < from) continue
-    if ((obj._id as string).includes('%preview%')) {
-      await storageService.remove(ctx, workspaceId, [obj._id])
-      removed++
-      if (removed % 100 === 0) {
-        console.log('removed: ', removed)
+    for (const obj of objs) {
+      if (obj.modifiedOn < from) continue
+      if ((obj._id as string).includes('%preview%')) {
+        await storageService.remove(ctx, workspaceId, [obj._id])
+        removed++
+        if (removed % 100 === 0) {
+          console.log('removed: ', removed)
+        }
       }
     }
   }
@@ -423,7 +427,7 @@ export async function fixSkills (
   const client = getMongoClient(mongoUrl)
   try {
     const _client = await client.getClient()
-    const db = getWorkspaceDB(_client, workspaceId)
+    const db = getWorkspaceMongoDB(_client, workspaceId)
 
     async function fixCount (): Promise<void> {
       console.log('fixing ref-count...')
@@ -692,7 +696,7 @@ export async function restoreRecruitingTaskTypes (
   const client = getMongoClient(mongoUrl)
   try {
     const _client = await client.getClient()
-    const db = getWorkspaceDB(_client, workspaceId)
+    const db = getWorkspaceMongoDB(_client, workspaceId)
 
     // Query all vacancy project types creations (in Model)
     // We only update new project types in model here and not old ones in spaces
@@ -856,7 +860,7 @@ export async function restoreHrTaskTypesFromUpdates (
   const client = getMongoClient(mongoUrl)
   try {
     const _client = await client.getClient()
-    const db = getWorkspaceDB(_client, workspaceId)
+    const db = getWorkspaceMongoDB(_client, workspaceId)
     const hierarchy = connection.getHierarchy()
     const descr = connection.getModel().getObject(recruit.descriptors.VacancyType)
     const knownCategories = [
@@ -1060,19 +1064,20 @@ export async function removeDuplicateIds (
   initWorkspacesStr: string
 ): Promise<void> {
   const state = 'REMOVE_DUPLICATE_IDS'
+  const [accountsDb, closeAccountsDb] = await getAccountDB(mongodbUri)
   const mongoClient = getMongoClient(mongodbUri)
   const _client = await mongoClient.getClient()
   // disable spaces while change hardocded ids
   const skippedDomains: string[] = [DOMAIN_DOC_INDEX_STATE, DOMAIN_BENCHMARK, DOMAIN_TX, DOMAIN_SPACE]
   try {
-    const workspaces = await listWorkspacesRaw(_client.db(ACCOUNT_DB))
+    const workspaces = await listWorkspacesRaw(accountsDb)
     workspaces.sort((a, b) => b.lastVisit - a.lastVisit)
     const initWorkspaces = initWorkspacesStr.split(';')
     const initWS = workspaces.filter((p) => initWorkspaces.includes(p.workspace))
     const ids = new Map<string, RelatedDocument[]>()
     for (const workspace of initWS) {
       const workspaceId = getWorkspaceId(workspace.workspace)
-      const db = getWorkspaceDB(_client, workspaceId)
+      const db = getWorkspaceMongoDB(_client, workspaceId)
 
       const txex = await db.collection(DOMAIN_TX).find<TxCUD<Doc>>({}).toArray()
       const txesArr = []
@@ -1125,7 +1130,7 @@ export async function removeDuplicateIds (
 
       ctx.info(`Processing workspace ${workspace.workspaceName ?? workspace.workspace}`)
       const workspaceId = getWorkspaceId(workspace.workspace)
-      const db = getWorkspaceDB(_client, workspaceId)
+      const db = getWorkspaceMongoDB(_client, workspaceId)
       const check = await db.collection(DOMAIN_MIGRATION).findOne({ state, plugin: workspace.workspace })
       if (check != null) continue
 
@@ -1156,6 +1161,7 @@ export async function removeDuplicateIds (
     console.trace(err)
   } finally {
     mongoClient.close()
+    closeAccountsDb()
   }
 }
 

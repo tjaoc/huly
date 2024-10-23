@@ -13,10 +13,10 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import { type Doc, type DocumentQuery, type Ref, type WithLookup } from '@hcengineering/core'
+  import { type Doc, type DocumentQuery, type Space, type Ref, type WithLookup } from '@hcengineering/core'
   import drive, { type Drive, type Folder } from '@hcengineering/drive'
   import { Scroller, SearchInput, Panel, Button, IconMoreH } from '@hcengineering/ui'
-  import { Viewlet, ViewOptions } from '@hcengineering/view'
+  import view, { Viewlet, ViewOptions } from '@hcengineering/view'
   import {
     FilterBar,
     FilterButton,
@@ -83,6 +83,7 @@
         icon={IconMoreH}
         iconProps={{ size: 'medium' }}
         kind={'icon'}
+        showTooltip={{ label: view.string.MoreActions, direction: 'bottom' }}
         on:click={(ev) => {
           showMenu(ev, { object })
         }}

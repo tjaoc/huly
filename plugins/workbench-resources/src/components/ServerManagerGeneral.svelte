@@ -1,10 +1,11 @@
 <script lang="ts">
-  import core, { RateLimiter, concatLink } from '@hcengineering/core'
+  import core, { RateLimiter, concatLink, metricsAggregate, type Metrics } from '@hcengineering/core'
   import login from '@hcengineering/login'
   import { getEmbeddedLabel, getMetadata } from '@hcengineering/platform'
-  import presentation, { getClient, isAdminUser } from '@hcengineering/presentation'
-  import { Button, IconArrowLeft, IconArrowRight, fetchMetadataLocalStorage } from '@hcengineering/ui'
+  import presentation, { getClient, isAdminUser, uiContext } from '@hcengineering/presentation'
+  import { Button, IconArrowLeft, IconArrowRight, fetchMetadataLocalStorage, ticker } from '@hcengineering/ui'
   import EditBox from '@hcengineering/ui/src/components/EditBox.svelte'
+  import MetricsInfo from './statistics/MetricsInfo.svelte'
 
   const _endpoint: string = fetchMetadataLocalStorage(login.metadata.LoginEndpoint) ?? ''
   const token: string = getMetadata(presentation.metadata.Token) ?? ''
@@ -33,6 +34,22 @@
   let dataSize = 0
 
   let responseSize = 0
+
+  let profiling = false
+
+  async function fetchStats (time: number): Promise<void> {
+    await fetch(endpoint + `/api/v1/profiling?token=${token}`, {})
+      .then(async (json) => {
+        data = await json.json()
+        profiling = data?.profiling ?? false
+      })
+      .catch((err) => {
+        console.error(err)
+      })
+  }
+  let data: any
+
+  $: void fetchStats($ticker)
 
   function genData (dataSize: number): string {
     let result = ''
@@ -97,6 +114,34 @@
     running = false
     clearInterval(int)
   }
+
+  async function downloadProfile (): Promise<void> {
+    const link = document.createElement('a')
+    link.style.display = 'none'
+    link.setAttribute('target', '_blank')
+    const json = await (
+      await fetch(endpoint + `/api/v1/manage?token=${token}&operation=profile-stop`, {
+        method: 'PUT'
+      })
+    ).json()
+    link.setAttribute(
+      'href',
+      'data:application/json;charset=utf-8,%EF%BB%BF' + encodeURIComponent(JSON.stringify(json))
+    )
+    link.setAttribute('download', `profile-${Date.now()}.cpuprofile`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    fetchStats(0)
+  }
+
+  let metrics: Metrics | undefined
+
+  function update (tick: number) {
+    metrics = metricsAggregate(uiContext.metrics)
+  }
+
+  $: update($ticker)
 </script>
 
 {#if isAdminUser()}
@@ -176,7 +221,27 @@
         }}
       />
     </div>
+    <div class="flex-row-center p-1">
+      <div class="p-3">3.</div>
+      {#if !profiling}
+        <Button
+          label={getEmbeddedLabel('Profile server')}
+          on:click={() => {
+            void fetch(endpoint + `/api/v1/manage?token=${token}&operation=profile-start`, {
+              method: 'PUT'
+            })
+            fetchStats(0)
+          }}
+        />
+      {:else}
+        <Button label={getEmbeddedLabel('Profile Stop')} on:click={downloadProfile} />
+      {/if}
+    </div>
   </div>
+{/if}
+
+{#if metrics}
+  <MetricsInfo {metrics} />
 {/if}
 
 <style lang="scss">

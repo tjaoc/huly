@@ -108,7 +108,7 @@ li {
 }
 
 p {
-  user-select: text;
+  user-select:inherit;
   
   a {
     word-break: break-all;
@@ -316,6 +316,7 @@ input.search {
       border-radius: 50%;
     }
     &:not(.small-gap, .large-gap) { margin-right: .375rem; }
+    &.no-gap { margin-right: 0; }
     &.small-gap { margin-right: .25rem; }
     &.large-gap { margin-right: .5rem; }
     &.flow:last-child { margin-right: 0; }

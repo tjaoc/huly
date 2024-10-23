@@ -59,6 +59,7 @@ import { documentsId } from '@hcengineering/controlled-documents'
 import textEditor, { textEditorId } from '@hcengineering/text-editor'
 import analyticsCollector, {analyticsCollectorId} from '@hcengineering/analytics-collector'
 import { uploaderId } from '@hcengineering/uploader'
+import aiBot, { aiBotId } from '@hcengineering/ai-bot'
 
 import { bitrixId } from '@hcengineering/bitrix'
 
@@ -107,10 +108,15 @@ import github, { githubId } from '@hcengineering/github'
 import '@hcengineering/github-assets'
 
 import { coreId } from '@hcengineering/core'
-import presentation, { loadServerConfig, parsePreviewConfig, presentationId } from '@hcengineering/presentation'
+import presentation, {
+  loadServerConfig,
+  parsePreviewConfig,
+  parseUploadConfig,
+  presentationId
+} from '@hcengineering/presentation'
 
 import { setMetadata } from '@hcengineering/platform'
-import { setDefaultLanguage } from '@hcengineering/theme'
+import { setDefaultLanguage, initThemeStore } from '@hcengineering/theme'
 
 import { preferenceId } from '@hcengineering/preference'
 import { uiId } from '@hcengineering/ui/src/plugin'
@@ -124,6 +130,7 @@ export interface Config {
   MODEL_VERSION: string
   VERSION: string
   COLLABORATOR_URL: string
+  COLLABORATOR?: string
   REKONI_URL: string
   TELEGRAM_URL: string
   GMAIL_URL: string
@@ -143,10 +150,12 @@ export interface Config {
   ANALYTICS_COLLECTOR_URL?:string
   BRANDING_URL?: string
   TELEGRAM_BOT_URL?: string
+  AI_URL?:string
 
   // Could be defined for dev environment
   FRONT_URL?: string
   PREVIEW_CONFIG?: string
+  UPLOAD_CONFIG?: string
 }
 
 export interface Branding {
@@ -289,8 +298,9 @@ export async function configurePlatform() {
 
   setMetadata(presentation.metadata.FrontUrl, config.FRONT_URL)
   setMetadata(presentation.metadata.PreviewConfig, parsePreviewConfig(config.PREVIEW_CONFIG))
+  setMetadata(presentation.metadata.UploadConfig, parseUploadConfig(config.UPLOAD_CONFIG, config.UPLOAD_URL))
 
-  setMetadata(textEditor.metadata.CollaboratorUrl, config.COLLABORATOR_URL ?? 'ws://localhost:3078')
+  setMetadata(textEditor.metadata.Collaborator, config.COLLABORATOR)
 
   if (config.MODEL_VERSION != null) {
     console.log('Minimal Model version requirement', config.MODEL_VERSION)
@@ -306,6 +316,7 @@ export async function configurePlatform() {
   setMetadata(calendar.metadata.CalendarServiceURL, config.CALENDAR_URL ?? 'http://localhost:8095')
   setMetadata(notification.metadata.PushPublicKey, config.PUSH_PUBLIC_KEY)
   setMetadata(analyticsCollector.metadata.EndpointURL, config.ANALYTICS_COLLECTOR_URL)
+  setMetadata(aiBot.metadata.EndpointURL, config.AI_URL)
 
   setMetadata(github.metadata.GithubApplication, config.GITHUB_APP ?? '')
   setMetadata(github.metadata.GithubClientID, config.GITHUB_CLIENTID ?? '')
@@ -364,6 +375,7 @@ export async function configurePlatform() {
   addLocation(timeId, () => import(/* webpackChunkName: "time" */ '@hcengineering/time-resources'))
   addLocation(desktopPreferencesId, () => import(/* webpackChunkName: "desktop-preferences" */ '@hcengineering/desktop-preferences-resources'))
   addLocation(analyticsCollectorId, async () => await import('@hcengineering/analytics-collector-resources'))
+  addLocation(aiBotId, async () => await import('@hcengineering/ai-bot-resources'))
 
   addLocation(trackerId, () => import(/* webpackChunkName: "tracker" */ '@hcengineering/tracker-resources'))
   addLocation(boardId, () => import(/* webpackChunkName: "board" */ '@hcengineering/board-resources'))
@@ -385,7 +397,7 @@ export async function configurePlatform() {
   addLocation(textEditorId, () => import(/* webpackChunkName: "text-editor" */ '@hcengineering/text-editor-resources'))
   addLocation(uploaderId, () => import(/* webpackChunkName: "uploader" */ '@hcengineering/uploader-resources'))
 
-  setMetadata(client.metadata.FilterModel, true)
+  setMetadata(client.metadata.FilterModel, 'ui')
   setMetadata(client.metadata.ExtraPlugins, ['preference' as Plugin])
 
   // Use binary response transfer for faster performance and small transfer sizes.
@@ -399,4 +411,6 @@ export async function configurePlatform() {
   setMetadata(workbench.metadata.DefaultApplication, myBranding.defaultApplication ?? 'tracker')
   setMetadata(workbench.metadata.DefaultSpace, myBranding.defaultSpace ?? tracker.project.DefaultProject)
   setMetadata(workbench.metadata.DefaultSpecial, myBranding.defaultSpecial ?? 'issues')
+
+  initThemeStore()
 }

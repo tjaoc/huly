@@ -16,6 +16,7 @@
 
 import type { Asset, IntlString, Plugin } from '@hcengineering/platform'
 import type { DocumentQuery } from './storage'
+import { CollaborativeDoc } from './collaboration'
 
 /**
  * @public
@@ -71,6 +72,13 @@ export interface Doc<S extends Space = Space> extends Obj {
   modifiedBy: Ref<Account>
   createdBy?: Ref<Account> // Marked as optional since it will be filled by platform.
   createdOn?: Timestamp // Marked as optional since it will be filled by platform.
+}
+
+export interface Card extends Doc {
+  title: string
+  description?: CollaborativeDoc | null
+  identifier?: string
+  parent?: Ref<Card> | null
 }
 
 /**
@@ -321,6 +329,11 @@ export const DOMAIN_MODEL = 'model' as Domain
 /**
  * @public
  */
+export const DOMAIN_SPACE = 'space' as Domain
+
+/**
+ * @public
+ */
 export const DOMAIN_CONFIGURATION = '_configuration' as Domain
 
 /**
@@ -565,7 +578,8 @@ export interface BlobLookup extends Blob {
  *
  * If defined for class, this class will be enabled for embedding search like openai.
  */
-export interface FullTextSearchContext extends Class<Doc> {
+export interface FullTextSearchContext extends Doc {
+  toClass: Ref<Class<Doc>>
   fullTextSummary?: boolean
   forceIndex?: boolean
 
@@ -652,6 +666,18 @@ export interface DomainIndexConfiguration extends Doc {
   skip?: string[]
 }
 
+export type WorkspaceMode = 'pending-creation' | 'creating' | 'upgrading' | 'pending-deletion' | 'deleting' | 'active'
+
+export interface BackupStatus {
+  dataSize: number
+  blobsSize: number
+
+  backupSize: number
+
+  lastBackup: Timestamp
+  backups: number
+}
+
 export interface BaseWorkspaceInfo {
   workspace: string // An uniq workspace name, Database names
   disabled?: boolean
@@ -665,8 +691,10 @@ export interface BaseWorkspaceInfo {
 
   createdBy: string
 
-  creating?: boolean
-  createProgress?: number // Some progress
+  mode: WorkspaceMode
+  progress?: number // Some progress
 
   endpoint: string
+
+  backupInfo?: BackupStatus
 }

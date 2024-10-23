@@ -30,7 +30,7 @@ import {
 import type { Asset, IntlString, Plugin, Resource } from '@hcengineering/platform'
 import { plugin } from '@hcengineering/platform'
 import { Preference } from '@hcengineering/preference'
-import type { AnyComponent } from '@hcengineering/ui'
+import type { AnyComponent, ComponentExtensionId } from '@hcengineering/ui'
 
 /**
  * @public
@@ -46,6 +46,7 @@ export interface ActivityMessage extends AttachedDoc {
 
   replies?: number
   reactions?: number
+  editedOn?: Timestamp
 }
 
 export type DisplayActivityMessage = DisplayDocUpdateMessage | ActivityMessage
@@ -81,6 +82,7 @@ export interface ActivityInfoMessage extends ActivityMessage {
   props?: Record<string, any>
   icon?: Asset
   iconProps?: Record<string, any>
+  editedOn?: Timestamp
 
   // A possible set of links to some platform resources.
   links?: { _class: Ref<Class<Doc>>, _id: Ref<Doc> }[]
@@ -228,7 +230,7 @@ export interface SavedMessage extends Preference {
 }
 
 export interface ReplyProvider extends Doc {
-  function: Resource<(message: ActivityMessage) => Promise<void>>
+  function: Resource<(message: ActivityMessage, event: MouseEvent) => Promise<void>>
 }
 
 export interface UserMentionInfo extends AttachedDoc {
@@ -331,6 +333,9 @@ export default plugin(activityId, {
   ids: {
     AllFilter: '' as Ref<ActivityMessagesFilter>,
     MentionNotification: '' as Ref<Doc>
+  },
+  extension: {
+    ActivityEmployeePresenter: '' as ComponentExtensionId
   },
   function: {
     ShouldScrollToActivity: '' as Resource<() => boolean>

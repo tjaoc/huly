@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-import { withContext, type Blob, type MeasureContext, type WorkspaceId } from '@hcengineering/core'
+import core, { type Blob, type MeasureContext, type Ref, type WorkspaceId, withContext } from '@hcengineering/core'
 
 import {
   type BlobStorageIterator,
@@ -37,7 +37,7 @@ export class DatalakeService implements StorageAdapter {
   static config = 'datalake'
   client: Client
   constructor (readonly opt: DatalakeConfig) {
-    this.client = new Client(opt.endpoint)
+    this.client = new Client(opt.endpoint, opt.port)
   }
 
   async initialize (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {}
@@ -73,18 +73,37 @@ export class DatalakeService implements StorageAdapter {
   }
 
   @withContext('listStream')
-  async listStream (
-    ctx: MeasureContext,
-    workspaceId: WorkspaceId,
-    prefix?: string | undefined
-  ): Promise<BlobStorageIterator> {
-    throw new Error('not supported')
+  async listStream (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<BlobStorageIterator> {
+    return {
+      next: async () => [],
+      close: async () => {}
+    }
   }
 
   @withContext('stat')
   async stat (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<Blob | undefined> {
-    // not supported
-    return undefined
+    try {
+      const result = await this.client.statObject(ctx, workspaceId, objectName)
+      if (result !== undefined) {
+        return {
+          provider: '',
+          _class: core.class.Blob,
+          _id: objectName as Ref<Blob>,
+          storageId: objectName,
+          contentType: result.type,
+          size: result.size ?? 0,
+          etag: result.etag ?? '',
+          space: core.space.Configuration,
+          modifiedBy: core.account.System,
+          modifiedOn: result.lastModified,
+          version: null
+        }
+      } else {
+        ctx.error('no object found', { objectName, workspaceId: workspaceId.name })
+      }
+    } catch (err) {
+      ctx.error('failed to stat object', { error: err, objectName, workspaceId: workspaceId.name })
+    }
   }
 
   @withContext('get')
@@ -108,8 +127,10 @@ export class DatalakeService implements StorageAdapter {
       size
     }
 
-    await ctx.with('put', {}, async () => {
-      return await this.client.putObject(ctx, workspaceId, objectName, stream, metadata)
+    await ctx.with('put', {}, async (ctx) => {
+      await withRetry(ctx, 5, async () => {
+        await this.client.putObject(ctx, workspaceId, objectName, stream, metadata, size)
+      })
     })
 
     return {
@@ -138,7 +159,7 @@ export class DatalakeService implements StorageAdapter {
     offset: number,
     length?: number
   ): Promise<Readable> {
-    throw new Error('not implemented')
+    return await this.client.getPartialObject(ctx, workspaceId, objectName, offset, length)
   }
 
   async getUrl (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<string> {
@@ -167,4 +188,26 @@ export function processConfigFromEnv (storageConfig: StorageConfiguration): stri
   }
   storageConfig.storages.push(config)
   storageConfig.default = 'datalake'
+}
+
+async function withRetry<T> (
+  ctx: MeasureContext,
+  retries: number,
+  op: () => Promise<T>,
+  delay: number = 100
+): Promise<T> {
+  let error: any
+  while (retries > 0) {
+    retries--
+    try {
+      return await op()
+    } catch (err: any) {
+      error = err
+      ctx.error('error', { err })
+      if (retries !== 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+    }
+  }
+  throw error
 }

@@ -14,7 +14,7 @@
 //
 
 import { Attachment } from '@hcengineering/attachment'
-import { Account, AttachedDoc, Class, CollaborativeDoc, Ref, TypedSpace } from '@hcengineering/core'
+import { Account, Class, CollaborativeDoc, Doc, Rank, Ref, TypedSpace } from '@hcengineering/core'
 import { Preference } from '@hcengineering/preference'
 import { IconProps } from '@hcengineering/view'
 
@@ -22,28 +22,29 @@ import { IconProps } from '@hcengineering/view'
 export interface Teamspace extends TypedSpace, IconProps {}
 
 /** @public */
-export interface Document extends AttachedDoc<Document, 'children', Teamspace>, IconProps {
-  attachedTo: Ref<Document>
-
-  name: string
+export interface Document extends Doc, IconProps {
+  title: string
   content: CollaborativeDoc
+  parent: Ref<Document>
+  space: Ref<Teamspace>
 
   lockedBy?: Ref<Account> | null
 
   snapshots?: number
   attachments?: number
-  children?: number
   comments?: number
   embeddings?: number
   labels?: number
   references?: number
+
+  rank: Rank
 }
 
 /** @public */
-export interface DocumentSnapshot extends AttachedDoc<Document, 'snapshots', Teamspace> {
-  attachedTo: Ref<Document>
-  name: string
+export interface DocumentSnapshot extends Doc {
+  title: string
   content: CollaborativeDoc
+  parent: Ref<Document>
 }
 
 /** @public */
