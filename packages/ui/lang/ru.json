@@ -73,6 +73,7 @@
     "YYYY": "ГГГГ",
     "HH": "ЧЧ",
     "GettingWorkDone": "Для работы",
+    "ExpressYourself": "Вырази себя",
     "Smileys": "Смайлики",
     "Nature": "Природа",
     "Symbols": "Символы",
@@ -89,6 +90,9 @@
     "Selected": "Выбрано:",
     "Submit": "Отправить",
     "NextStep": "Следующий шаг",
-    "TypeHere": "Вводите здесь..."
+    "TypeHere": "Вводите здесь...",
+    "FullSize": "Полный размер",
+    "UseMaxWidth": "Максимальная ширина",
+    "Sidebar": "Боковая панель"
   }
 }

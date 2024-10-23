@@ -72,6 +72,8 @@ export interface ObjectSearchCategory extends Doc {
   // Query for documents with pattern
   query: Resource<ObjectSearchFactory>
   classToSearch?: Ref<Class<Doc>>
+
+  priority?: number
 }
 
 export interface ComponentExt {
@@ -106,6 +108,12 @@ export type DocCreateFunction = (
   phase: DocCreatePhase
 ) => Promise<void>
 
+export type DocCreateAnalyticsPropsFunction = (
+  space: Space,
+  document: DocData<Doc>,
+  extraData: Record<string, any>
+) => Record<string, any>
+
 /**
  * @public
  */
@@ -123,6 +131,7 @@ export interface DocCreateExtension extends Doc {
 
   components: Partial<Record<CreateExtensionKind, AnyComponent>>
   apply: Resource<DocCreateFunction>
+  getAnalyticsProps?: Resource<DocCreateAnalyticsPropsFunction>
 }
 
 export interface DocAttributeRule {

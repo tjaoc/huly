@@ -126,6 +126,7 @@ export default plugin(settingId, {
     Privacy: '' as Ref<Doc>,
     Terms: '' as Ref<Doc>,
     ClassSetting: '' as Ref<Doc>,
+    General: '' as Ref<Doc>,
     Owners: '' as Ref<Doc>,
     InviteSettings: '' as Ref<Doc>,
     WorkspaceSetting: '' as Ref<Doc>,
@@ -150,7 +151,6 @@ export default plugin(settingId, {
     Settings: '' as AnyComponent,
     Profile: '' as AnyComponent,
     Password: '' as AnyComponent,
-    WorkspaceSetting: '' as AnyComponent,
     WorkspaceSettings: '' as AnyComponent,
     Integrations: '' as AnyComponent,
     Support: '' as AnyComponent,
@@ -170,7 +170,6 @@ export default plugin(settingId, {
     Setting: '' as IntlString,
     Spaces: '' as IntlString,
     WorkspaceSettings: '' as IntlString,
-    Branding: '' as IntlString,
     Integrations: '' as IntlString,
     Support: '' as IntlString,
     Privacy: '' as IntlString,
@@ -203,7 +202,8 @@ export default plugin(settingId, {
     Automations: '' as IntlString,
     Collections: '' as IntlString,
     SpaceTypes: '' as IntlString,
-    Roles: '' as IntlString
+    Roles: '' as IntlString,
+    OwnerOrMainteinerRequired: '' as IntlString
   },
   icon: {
     AccountSettings: '' as Asset,

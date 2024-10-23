@@ -149,16 +149,13 @@ export function createModel (builder: Builder): void {
       attachTo: lead.class.Funnel,
       descriptor: view.viewlet.Table,
       configOptions: {
-        hiddenKeys: ['identifier', 'name', 'description'],
+        hiddenKeys: ['identifier', 'name', 'customerDescription'],
         sortable: true
       },
       config: ['', 'members', 'private', 'archived']
     },
     lead.viewlet.TableFunnel
   )
-
-  createAction(builder, { ...actionTemplates.archiveSpace, target: lead.class.Funnel })
-  createAction(builder, { ...actionTemplates.unarchiveSpace, target: lead.class.Funnel })
 
   createAction(builder, {
     ...viewTemplates.open,

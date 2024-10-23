@@ -15,10 +15,12 @@
 
 import { type Resources } from '@hcengineering/platform'
 import DiffView from './components/DiffView.svelte'
+import Highlight from './components/Highlight.svelte'
 import InlineDiffView from './components/InlineDiffView.svelte'
 export default async (): Promise<Resources> => ({
   component: {
     DiffView,
-    InlineDiffView
+    InlineDiffView,
+    Highlight
   }
 })

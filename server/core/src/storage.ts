@@ -3,12 +3,12 @@ import {
   type Doc,
   type DocInfo,
   type Domain,
+  type LowLevelStorage,
   type MeasureContext,
   type Ref,
   type StorageIterator,
   type WorkspaceId
 } from '@hcengineering/core'
-import type { Pipeline } from './types'
 import { estimateDocSize } from './utils'
 
 export * from '@hcengineering/storage'
@@ -20,7 +20,7 @@ export function getBucketId (workspaceId: WorkspaceId): string {
   return toWorkspaceString(workspaceId)
 }
 
-const chunkSize = 2 * 1024 * 1024
+const chunkSize = 512 * 1024
 
 /**
  * @public
@@ -36,7 +36,7 @@ export interface ChunkInfo {
  * @public
  */
 export class BackupClientOps {
-  constructor (protected readonly _pipeline: Pipeline) {}
+  constructor (protected readonly storage: LowLevelStorage) {}
 
   idIndex = 0
   chunkInfo = new Map<number, ChunkInfo>()
@@ -64,21 +64,22 @@ export class BackupClientOps {
           }
         }
       } else {
-        chunk = { idx, iterator: this._pipeline.storage.find(ctx, domain, recheck), finished: false, index: 0 }
+        chunk = { idx, iterator: this.storage.find(ctx, domain, recheck), finished: false, index: 0 }
         this.chunkInfo.set(idx, chunk)
       }
       let size = 0
       const docs: DocInfo[] = []
 
       while (size < chunkSize) {
-        const doc = await chunk.iterator.next(ctx)
-        if (doc === undefined) {
+        const _docs = await chunk.iterator.next(ctx)
+        if (_docs.length === 0) {
           chunk.finished = true
           break
         }
-
-        size += estimateDocSize(doc)
-        docs.push(doc)
+        for (const doc of _docs) {
+          size += estimateDocSize(doc)
+          docs.push(doc)
+        }
       }
 
       return {
@@ -99,15 +100,15 @@ export class BackupClientOps {
     })
   }
 
-  async loadDocs (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<Doc[]> {
-    return await this._pipeline.storage.load(ctx, domain, docs)
+  loadDocs (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<Doc[]> {
+    return this.storage.load(ctx, domain, docs)
   }
 
-  async upload (ctx: MeasureContext, domain: Domain, docs: Doc[]): Promise<void> {
-    await this._pipeline.storage.upload(ctx, domain, docs)
+  upload (ctx: MeasureContext, domain: Domain, docs: Doc[]): Promise<void> {
+    return this.storage.upload(ctx, domain, docs)
   }
 
-  async clean (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<void> {
-    await this._pipeline.storage.clean(ctx, domain, docs)
+  clean (ctx: MeasureContext, domain: Domain, docs: Ref<Doc>[]): Promise<void> {
+    return this.storage.clean(ctx, domain, docs)
   }
 }

@@ -55,5 +55,12 @@ loadMetadata(view.icon, {
   Circle: `${icons}#circle`,
   Join: `${icons}#join`,
   Leave: `${icons}#leave`,
-  Copy: `${icons}#copy`
+  Copy: `${icons}#copy`,
+  DetailsFilled: `${icons}#details-filled`,
+  Translate: `${icons}#translate`,
+  Undo: `${icons}#undo`,
+  Video: `${icons}#video`,
+  Audio: `${icons}#audio`,
+  File: `${icons}#file`,
+  PinTack: `${icons}#pin-tack`
 })

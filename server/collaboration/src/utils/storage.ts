@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-import { MeasureContext, WorkspaceId } from '@hcengineering/core'
+import { generateId, MeasureContext, WorkspaceId } from '@hcengineering/core'
 import { StorageAdapter } from '@hcengineering/server-core'
 import { Doc as YDoc } from 'yjs'
 
@@ -24,21 +24,21 @@ export async function yDocFromStorage (
   ctx: MeasureContext,
   storageAdapter: StorageAdapter,
   workspace: WorkspaceId,
-  minioDocumentId: string,
+  documentId: string,
   ydoc?: YDoc
 ): Promise<YDoc | undefined> {
   // stat the object to ensure it exists, because read will throw an error in this case
-  const blob = await storageAdapter.stat(ctx, workspace, minioDocumentId)
+  const blob = await storageAdapter.stat(ctx, workspace, documentId)
   if (blob === undefined) {
     return undefined
   }
 
   // no need to apply gc because we load existing document
   // it is either already gc-ed, or gc not needed and it is disabled
-  ydoc ??= new YDoc({ gc: false })
+  ydoc ??= new YDoc({ guid: generateId(), gc: false })
 
-  const buffer = await storageAdapter.read(ctx, workspace, minioDocumentId)
-  return yDocFromBuffer(Buffer.concat(buffer), ydoc)
+  const buffer = await storageAdapter.read(ctx, workspace, documentId)
+  return yDocFromBuffer(Buffer.concat(buffer as any), ydoc)
 }
 
 /** @public */
@@ -46,9 +46,9 @@ export async function yDocToStorage (
   ctx: MeasureContext,
   storageAdapter: StorageAdapter,
   workspace: WorkspaceId,
-  minioDocumentId: string,
+  documentId: string,
   ydoc: YDoc
 ): Promise<void> {
   const buffer = yDocToBuffer(ydoc)
-  await storageAdapter.put(ctx, workspace, minioDocumentId, buffer, 'application/ydoc', buffer.length)
+  await storageAdapter.put(ctx, workspace, documentId, buffer, 'application/ydoc', buffer.length)
 }

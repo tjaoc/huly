@@ -21,7 +21,8 @@
     ButtonIcon,
     deviceOptionsStore as deviceInfo,
     resizeObserver,
-    HeaderAdaptive
+    HeaderAdaptive,
+    popupstore
   } from '..'
 
   export let type: 'type-aside' | 'type-popup' | 'type-component' | 'type-panel' = 'type-component'
@@ -37,6 +38,8 @@
   export let overflowExtra: boolean = false
   export let noPrint: boolean = false
   export let freezeBefore: boolean = false
+  export let doubleRowWidth = 768
+  export let closeOnEscape: boolean = true
 
   const dispatch = createEventDispatcher()
 
@@ -59,9 +62,14 @@
   })
 
   function _close (ev: KeyboardEvent): void {
-    if (closeButton && ev.key === 'Escape') {
+    if (closeButton && ev.key === 'Escape' && closeOnEscape) {
       ev.preventDefault()
       ev.stopPropagation()
+
+      if (type === 'type-aside' && $popupstore.length > 0) {
+        return
+      }
+
       dispatch('close')
     }
   }
@@ -70,8 +78,8 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
   use:resizeObserver={(element) => {
-    if (!doubleRow && element.clientWidth <= 768) doubleRow = true
-    else if (doubleRow && element.clientWidth > 768) doubleRow = false
+    if (!doubleRow && element.clientWidth <= doubleRowWidth) doubleRow = true
+    else if (doubleRow && element.clientWidth > doubleRowWidth) doubleRow = false
   }}
   class="hulyHeader-container"
   class:doubleRow={_doubleRow}
@@ -131,7 +139,9 @@
       {/if}
       {#if closeButton}
         {#if type !== 'type-popup'}<div class="hulyHeader-divider no-print" />{/if}
-        <div class="hulyHotKey-item no-print">Esc</div>
+        {#if closeOnEscape}
+          <div class="hulyHotKey-item no-print">Esc</div>
+        {/if}
         <ButtonIcon icon={IconClose} kind={'tertiary'} size={'small'} noPrint on:click={() => dispatch('close')} />
       {/if}
     </div>
@@ -226,7 +236,9 @@
     {/if}
     {#if closeButton}
       {#if type !== 'type-popup'}<div class="hulyHeader-divider no-print" />{/if}
-      <div class="hulyHotKey-item no-print">Esc</div>
+      {#if closeOnEscape}
+        <div class="hulyHotKey-item no-print">Esc</div>
+      {/if}
       <ButtonIcon icon={IconClose} kind={'tertiary'} size={'small'} noPrint on:click={() => dispatch('close')} />
     {/if}
   {/if}

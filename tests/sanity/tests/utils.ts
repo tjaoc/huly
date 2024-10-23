@@ -1,13 +1,13 @@
-import { Browser, BrowserContext, Locator, Page, expect, APIRequestContext } from '@playwright/test'
-import { allure } from 'allure-playwright'
 import { faker } from '@faker-js/faker'
-import { TestData } from './chat/types'
+import { APIRequestContext, Browser, BrowserContext, Locator, Page, expect } from '@playwright/test'
+import { attachment } from 'allure-js-commons'
 import path from 'path'
-import { LeftSideMenuPage } from './model/left-side-menu-page'
-import { SignUpData } from './model/common-types'
 import { ApiEndpoint } from './API/Api'
-import { SelectWorkspacePage } from './model/select-workspace-page'
+import { TestData } from './chat/types'
+import { SignUpData } from './model/common-types'
+import { LeftSideMenuPage } from './model/left-side-menu-page'
 import { LoginPage } from './model/login-page'
+import { SelectWorkspacePage } from './model/select-workspace-page'
 import { SignInJoinPage } from './model/signin-page'
 
 export const PlatformURI = process.env.PLATFORM_URI as string
@@ -36,8 +36,18 @@ export function generateTestData (): TestData {
   }
 }
 
-export function getTimeForPlanner (): string {
+export function getTimeForPlanner (plusHours: number = 0, cropHours: number = 0): string {
   let hour = new Date().getHours()
+  hour = hour < 1 + cropHours ? 1 + cropHours : hour >= 22 - cropHours ? 22 - cropHours : hour
+  hour += plusHours
+  const ampm = hour < 12 || hour === 24 ? 'am' : 'pm'
+  hour -= hour > 12 ? 12 : 0
+
+  return `${hour}${ampm}`
+}
+
+export function getNextHourTimeForPlanner (): string {
+  let hour = new Date().getHours() + 1
   const ampm = hour < 13 ? 'am' : 'pm'
   hour = hour < 1 ? 1 : hour >= 11 && hour < 13 ? 11 : hour >= 22 ? 10 : hour > 12 ? hour - 12 : hour
 
@@ -106,21 +116,46 @@ export async function fillSearch (page: Page, search: string): Promise<Locator> 
   return searchBox
 }
 
-export async function getSecondPage (browser: Browser): Promise<{ page: Page, context: BrowserContext }> {
+export async function getSecondPage (browser: Browser): Promise<{ page: Page, context: BrowserContext } & Disposable> {
   const userSecondContext = await browser.newContext({ storageState: PlatformSettingSecond })
-  return { page: await userSecondContext.newPage(), context: userSecondContext }
+  const newPage = await userSecondContext.newPage()
+  return {
+    page: newPage,
+    context: userSecondContext,
+    [Symbol.dispose]: () => {
+      void newPage
+        .close()
+        .finally(() => {
+          void userSecondContext.close().catch(() => {})
+        })
+        .catch(() => {})
+    }
+  }
 }
 
 export async function getSecondPageByInvite (
   browser: Browser,
   linkText: string | null,
   newUser: SignUpData
-): Promise<Page> {
-  const page = await browser.newPage()
-  await page.goto(linkText ?? '')
-  const joinPage: SignInJoinPage = new SignInJoinPage(page)
+): Promise<{ page: Page, context: BrowserContext } & Disposable> {
+  const userSecondContext = await browser.newContext({ storageState: PlatformSettingSecond })
+  const newPage = await userSecondContext.newPage()
+  await newPage.goto(linkText ?? '')
+  const joinPage: SignInJoinPage = new SignInJoinPage(newPage)
   await joinPage.join(newUser)
-  return page
+
+  return {
+    page: newPage,
+    context: userSecondContext,
+    [Symbol.dispose]: () => {
+      void newPage
+        .close()
+        .finally(() => {
+          void userSecondContext.close().catch(() => {})
+        })
+        .catch(() => {})
+    }
+  }
 }
 
 export function expectToContainsOrdered (val: Locator, text: string[], timeout?: number): Promise<void> {
@@ -135,7 +170,7 @@ export async function * iterateLocator (locator: Locator): AsyncGenerator<Locato
 }
 
 export async function attachScreenshot (name: string, page: Page): Promise<void> {
-  await allure.attachment(name, await page.screenshot(), {
+  await attachment(name, await page.screenshot(), {
     contentType: 'image/png'
   })
   await page.screenshot({ path: `screenshots/${name}` })
@@ -226,4 +261,12 @@ export async function createAccountAndWorkspace (page: Page, request: APIRequest
   await api.createAccount(data.userName, '1234', data.firstName, data.lastName)
   await api.createWorkspaceWithLogin(data.workspaceName, data.userName, '1234')
   await reLogin(page, data)
+}
+
+export const convertDate = (date: Date): { day: string, month: string, year: string } => {
+  return {
+    day: date.getDate().toString(),
+    month: (date.getMonth() + 1).toString(),
+    year: date.getFullYear().toString()
+  }
 }

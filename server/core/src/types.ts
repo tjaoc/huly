@@ -33,9 +33,8 @@ import {
   type SearchOptions,
   type SearchQuery,
   type SearchResult,
-  type SessionOperationContext,
+  type SessionData,
   type Space,
-  type Storage,
   type Timestamp,
   type Tx,
   type TxFactory,
@@ -44,8 +43,11 @@ import {
   type WorkspaceIdWithUrl
 } from '@hcengineering/core'
 import type { Asset, Resource } from '@hcengineering/platform'
+import type { LiveQuery } from '@hcengineering/query'
+import type { Request, Response } from '@hcengineering/rpc'
+import type { Token } from '@hcengineering/server-token'
 import { type Readable } from 'stream'
-import { type ServiceAdaptersManager } from './service'
+import type { DbAdapter, DomainHelper } from './adapter'
 import { type StorageAdapter } from './storage'
 
 export interface ServerFindOptions<T extends Doc> extends FindOptions<T> {
@@ -58,92 +60,130 @@ export interface ServerFindOptions<T extends Doc> extends FindOptions<T> {
   // Optional measure context, for server side operations
   ctx?: MeasureContext
 }
-/**
- * @public
- */
-export interface ServerStorage extends LowLevelStorage {
-  hierarchy: Hierarchy
-  modelDb: ModelDb
-  findAll: <T extends Doc>(
-    ctx: MeasureContext,
-    _class: Ref<Class<T>>,
-    query: DocumentQuery<T>,
-    options?: ServerFindOptions<T>
-  ) => Promise<FindResult<T>>
-  searchFulltext: (ctx: MeasureContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
-  tx: (ctx: SessionOperationContext, tx: Tx) => Promise<TxResult>
-  apply: (ctx: SessionOperationContext, tx: Tx[], broadcast: boolean) => Promise<TxResult>
-  close: () => Promise<void>
-  loadModel: (last: Timestamp, hash?: string) => Promise<Tx[] | LoadModelResponse>
-  workspaceId: WorkspaceIdWithUrl
-  branding: Branding | null
-  storageAdapter: StorageAdapter
-}
 
-/**
- * @public
- */
-export interface SessionContext extends SessionOperationContext {
-  userEmail: string
-  sessionId: string
-  admin?: boolean
-
-  workspace: WorkspaceIdWithUrl
-  branding: Branding | null
-}
+export type SessionFindAll = <T extends Doc>(
+  ctx: MeasureContext<SessionData>,
+  _class: Ref<Class<T>>,
+  query: DocumentQuery<T>,
+  options?: ServerFindOptions<T>
+) => Promise<FindResult<T>>
 
 /**
  * @public
  */
 export interface Middleware {
-  tx: (ctx: SessionContext, tx: Tx) => Promise<TxMiddlewareResult>
   findAll: <T extends Doc>(
-    ctx: SessionContext,
+    ctx: MeasureContext<SessionData>,
     _class: Ref<Class<T>>,
     query: DocumentQuery<T>,
-    options?: FindOptions<T>
+    options?: ServerFindOptions<T>
   ) => Promise<FindResult<T>>
+  tx: (ctx: MeasureContext<SessionData>, tx: Tx[]) => Promise<TxResult>
 
-  groupBy: <T>(ctx: MeasureContext, domain: Domain, field: string) => Promise<Set<T>>
-  handleBroadcast: HandleBroadcastFunc
-  searchFulltext: (ctx: SessionContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
+  groupBy: <T>(ctx: MeasureContext<SessionData>, domain: Domain, field: string) => Promise<Set<T>>
+  searchFulltext: (
+    ctx: MeasureContext<SessionData>,
+    query: SearchQuery,
+    options: SearchOptions
+  ) => Promise<SearchResult>
+
+  handleBroadcast: (ctx: MeasureContext<SessionData>) => Promise<void>
+
+  loadModel: (
+    ctx: MeasureContext<SessionData>,
+    lastModelTx: Timestamp,
+    hash?: string
+  ) => Promise<Tx[] | LoadModelResponse>
+
+  close: () => Promise<void>
 }
 
 /**
  * @public
  */
-export type BroadcastFunc = (tx: Tx[], targets?: string | string[], exclude?: string[]) => void
+export type BroadcastFunc = (
+  ctx: MeasureContext<SessionData>,
+  tx: Tx[],
+  targets?: string | string[],
+  exclude?: string[]
+) => void
 
 /**
  * @public
  */
-export type HandleBroadcastFunc = (tx: Tx[], targets?: string | string[], exclude?: string[]) => Promise<void>
+export type MiddlewareCreator = (
+  ctx: MeasureContext,
+  context: PipelineContext,
+  next?: Middleware
+) => Promise<Middleware | undefined>
 
-/**
- * @public
- */
-export type MiddlewareCreator = (ctx: MeasureContext, storage: ServerStorage, next?: Middleware) => Promise<Middleware>
+export interface ServiceAdaptersManager {
+  getAdapter: (adapterId: string) => ServiceAdapter | undefined
+  close: () => Promise<void>
+  metrics: () => MeasureContext
+}
 
 /**
  * @public
  */
 export type TxMiddlewareResult = TxResult
 
+export interface DBAdapterManager {
+  getAdapter: (domain: Domain, requireExists: boolean) => DbAdapter
+
+  getDefaultAdapter: () => DbAdapter
+
+  close: () => Promise<void>
+
+  registerHelper: (helper: DomainHelper) => Promise<void>
+
+  initAdapters: (ctx: MeasureContext) => Promise<void>
+}
+
+export interface PipelineContext {
+  workspace: WorkspaceIdWithUrl
+  hierarchy: Hierarchy
+  modelDb: ModelDb
+  branding: Branding | null
+
+  adapterManager?: DBAdapterManager
+  storageAdapter?: StorageAdapter
+  serviceAdapterManager?: ServiceAdaptersManager
+  lowLevelStorage?: LowLevelStorage
+  liveQuery?: LiveQuery
+
+  // Entry point for derived data procvessing
+  derived?: Middleware
+  head?: Middleware
+
+  broadcastEvent?: (ctx: MeasureContext, tx: Tx[]) => Promise<void>
+}
 /**
  * @public
  */
-export interface Pipeline extends LowLevelStorage {
-  modelDb: ModelDb
-  storage: ServerStorage
+export interface Pipeline {
+  context: PipelineContext
   findAll: <T extends Doc>(
-    ctx: SessionContext,
+    ctx: MeasureContext<SessionData>,
     _class: Ref<Class<T>>,
     query: DocumentQuery<T>,
     options?: FindOptions<T>
   ) => Promise<FindResult<T>>
-  searchFulltext: (ctx: SessionContext, query: SearchQuery, options: SearchOptions) => Promise<SearchResult>
-  tx: (ctx: SessionContext, tx: Tx) => Promise<TxResult>
+  searchFulltext: (
+    ctx: MeasureContext<SessionData>,
+    query: SearchQuery,
+    options: SearchOptions
+  ) => Promise<SearchResult>
+  tx: (ctx: MeasureContext<SessionData>, tx: Tx[]) => Promise<TxResult>
   close: () => Promise<void>
+
+  loadModel: (
+    ctx: MeasureContext<SessionData>,
+    lastModelTx: Timestamp,
+    hash?: string
+  ) => Promise<Tx[] | LoadModelResponse>
+
+  handleBroadcast: (ctx: MeasureContext<SessionData>) => Promise<void>
 }
 
 /**
@@ -161,13 +201,11 @@ export type PipelineFactory = (
  * @public
  */
 export interface TriggerControl {
-  operationContext: SessionOperationContext
-  ctx: MeasureContext
+  ctx: MeasureContext<SessionData>
   workspace: WorkspaceIdWithUrl
   branding: Branding | null
   txFactory: TxFactory
-  findAll: Storage['findAll']
-  findAllCtx: <T extends Doc>(
+  findAll: <T extends Doc>(
     ctx: MeasureContext,
     _class: Ref<Class<T>>,
     query: DocumentQuery<T>,
@@ -177,6 +215,9 @@ export interface TriggerControl {
   modelDb: ModelDb
   removedMap: Map<Ref<Doc>, Doc>
 
+  // Cache per workspace
+  cache: Map<string, any>
+  // Cache per root tx
   contextCache: Map<string, any>
 
   // Since we don't have other storages let's consider adapter is MinioClient
@@ -184,8 +225,7 @@ export interface TriggerControl {
   storageAdapter: StorageAdapter
   serviceAdaptersManager: ServiceAdaptersManager
   // Bulk operations in case trigger require some
-  apply: (tx: Tx[], needResult?: boolean) => Promise<TxResult>
-  applyCtx: (ctx: SessionOperationContext, tx: Tx[], needResult?: boolean) => Promise<TxResult>
+  apply: (ctx: MeasureContext, tx: Tx[], needResult?: boolean) => Promise<TxResult>
 
   // Will create a live query if missing and return values immediately if already asked.
   queryFind: <T extends Doc>(
@@ -196,10 +236,7 @@ export interface TriggerControl {
   ) => Promise<FindResult<T>>
 
   // Current set of transactions to being processed for apply/bulks
-  txes: {
-    apply: Tx[]
-    result: Tx[]
-  }
+  txes: Tx[]
 }
 
 /**
@@ -362,7 +399,7 @@ export type FullTextAdapterFactory = (
  * @public
  */
 export interface ContentTextAdapter {
-  content: (name: string, type: string, doc: Readable | Buffer | string) => Promise<string>
+  content: (name: string, type: string, doc: Readable) => Promise<string>
   metrics: () => MeasureContext
 }
 
@@ -459,22 +496,6 @@ export interface SearchPresenter extends Class<Doc> {
   getSearchTitle?: SearchPresenterFunc
 }
 
-/**
- * @public
- */
-export interface ServerStorageOptions {
-  // If defined, will skip update of attached documents on document update.
-  skipUpdateAttached?: boolean
-
-  // Indexing is not required to be started for upgrade mode.
-  upgrade: boolean
-
-  broadcast: BroadcastFunc
-  branding: Branding | null
-
-  disableTriggers?: boolean
-}
-
 export interface ServiceAdapter {
   close: () => Promise<void>
   metrics: () => MeasureContext
@@ -499,3 +520,206 @@ export interface StorageConfiguration {
   default: string
   storages: StorageConfig[]
 }
+
+/**
+ * @public
+ */
+export interface SessionRequest {
+  id: string
+  params: any
+  start: number
+}
+
+/**
+ * @public
+ */
+export interface StatisticsElement {
+  find: number
+  tx: number
+}
+
+export interface ClientSessionCtx {
+  ctx: MeasureContext
+  sendResponse: (msg: any) => Promise<void>
+  sendError: (msg: any, error: any) => Promise<void>
+}
+
+/**
+ * @public
+ */
+export interface Session {
+  createTime: number
+  getUser: () => string
+  pipeline: () => Pipeline
+  ping: (ctx: ClientSessionCtx) => Promise<void>
+  findAll: <T extends Doc>(
+    ctx: ClientSessionCtx,
+    _class: Ref<Class<T>>,
+    query: DocumentQuery<T>,
+    options?: FindOptions<T>
+  ) => Promise<void>
+  findAllRaw: <T extends Doc>(
+    ctx: MeasureContext,
+    _class: Ref<Class<T>>,
+    query: DocumentQuery<T>,
+    options?: FindOptions<T>
+  ) => Promise<FindResult<T>>
+  tx: (ctx: ClientSessionCtx, tx: Tx) => Promise<void>
+
+  // Session restore information
+  sessionId: string
+  sessionInstanceId?: string
+  workspaceClosed?: boolean
+
+  requests: Map<string, SessionRequest>
+
+  binaryMode: boolean
+  useCompression: boolean
+  total: StatisticsElement
+  current: StatisticsElement
+  mins5: StatisticsElement
+
+  lastRequest: number
+  lastPing: number
+
+  isUpgradeClient: () => boolean
+
+  getMode: () => string
+
+  broadcast: (ctx: MeasureContext, socket: ConnectionSocket, tx: Tx[]) => void
+}
+
+/**
+ * @public
+ */
+export interface ConnectionSocket {
+  id: string
+  isClosed: boolean
+  close: () => void
+  send: (ctx: MeasureContext, msg: Response<any>, binary: boolean, compression: boolean) => void
+  data: () => Record<string, any>
+
+  readRequest: (buffer: Buffer, binary: boolean) => Request<any>
+
+  checkState: () => boolean
+}
+
+/**
+ * @public
+ */
+export let LOGGING_ENABLED = true
+
+/**
+ * @public
+ */
+export function disableLogging (): void {
+  LOGGING_ENABLED = false
+}
+
+/**
+ * @public
+ */
+export interface Workspace {
+  context: MeasureContext
+  id: string
+  pipeline: Promise<Pipeline>
+  sessions: Map<string, { session: Session, socket: ConnectionSocket, tickHash: number }>
+  upgrade: boolean
+
+  closing?: Promise<void>
+  softShutdown: number
+  workspaceInitCompleted: boolean
+
+  workspaceId: WorkspaceId
+  workspaceName: string
+  branding: Branding | null
+}
+
+export interface AddSessionActive {
+  session: Session
+  context: MeasureContext
+  workspaceId: string
+}
+export type AddSessionResponse = AddSessionActive | { upgrade: true } | { error: any, terminate?: boolean }
+
+/**
+ * @public
+ */
+export interface SessionManager {
+  workspaces: Map<string, Workspace>
+  sessions: Map<string, { session: Session, socket: ConnectionSocket }>
+
+  createSession: (
+    token: Token,
+    pipeline: Pipeline,
+    workspaceId: WorkspaceIdWithUrl,
+    branding: Branding | null
+  ) => Session
+
+  addSession: (
+    ctx: MeasureContext,
+    ws: ConnectionSocket,
+    token: Token,
+    rawToken: string,
+    pipelineFactory: PipelineFactory,
+    sessionId: string | undefined,
+    accountsUrl: string
+  ) => Promise<AddSessionResponse>
+
+  broadcastAll: (workspace: Workspace, tx: Tx[], targets?: string[]) => void
+
+  close: (ctx: MeasureContext, ws: ConnectionSocket, workspaceId: string) => Promise<void>
+
+  closeAll: (
+    wsId: string,
+    workspace: Workspace,
+    code: number,
+    reason: 'upgrade' | 'shutdown',
+    ignoreSocket?: ConnectionSocket
+  ) => Promise<void>
+
+  forceClose: (wsId: string, ignoreSocket?: ConnectionSocket) => Promise<void>
+
+  closeWorkspaces: (ctx: MeasureContext) => Promise<void>
+
+  scheduleMaintenance: (timeMinutes: number) => void
+
+  profiling?: {
+    start: () => void
+    stop: () => Promise<string | undefined>
+  }
+
+  handleRequest: <S extends Session>(
+    requestCtx: MeasureContext,
+    service: S,
+    ws: ConnectionSocket,
+    request: Request<any>,
+    workspace: string // wsId, toWorkspaceString()
+  ) => void
+}
+
+/**
+ * @public
+ */
+export type HandleRequestFunction = <S extends Session>(
+  rctx: MeasureContext,
+  service: S,
+  ws: ConnectionSocket,
+  msg: Request<any>,
+  workspaceId: string
+) => void
+
+/**
+ * @public
+ */
+
+export type ServerFactory = (
+  sessions: SessionManager,
+  handleRequest: HandleRequestFunction,
+  ctx: MeasureContext,
+  pipelineFactory: PipelineFactory,
+  port: number,
+  enableCompression: boolean,
+  accountsUrl: string,
+  externalStorage: StorageAdapter
+) => () => Promise<void>

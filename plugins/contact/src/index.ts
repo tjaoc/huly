@@ -31,7 +31,7 @@ import {
 import type { Asset, Metadata, Plugin, Resource } from '@hcengineering/platform'
 import { IntlString, plugin } from '@hcengineering/platform'
 import { TemplateField, TemplateFieldCategory } from '@hcengineering/templates'
-import type { AnyComponent, ColorDefinition, ResolvedLocation, Location } from '@hcengineering/ui'
+import type { AnyComponent, ColorDefinition, ResolvedLocation, Location, ComponentExtensionId } from '@hcengineering/ui'
 import { Action, FilterMode, Viewlet } from '@hcengineering/view'
 
 /**
@@ -299,7 +299,10 @@ export const contactPlugin = plugin(contactId, {
     SelectUsers: '' as IntlString,
     AddGuest: '' as IntlString,
     Members: '' as IntlString,
-    Contacts: '' as IntlString
+    Contacts: '' as IntlString,
+    Employees: '' as IntlString,
+    Persons: '' as IntlString,
+    ViewProfile: '' as IntlString
   },
   viewlet: {
     TableMember: '' as Ref<Viewlet>,
@@ -330,6 +333,9 @@ export const contactPlugin = plugin(contactId, {
   },
   ids: {
     MentionCommonNotificationType: '' as Ref<Doc>
+  },
+  extension: {
+    EmployeePopupActions: '' as ComponentExtensionId
   }
 })
 

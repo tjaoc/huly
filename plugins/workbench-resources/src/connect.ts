@@ -4,13 +4,15 @@ import core, {
   ClientConnectEvent,
   concatLink,
   getCurrentAccount,
-  MeasureMetricsContext,
+  isWorkspaceCreating,
   metricsToString,
   setCurrentAccount,
   versionToString,
   type Account,
   type AccountClient,
   type Client,
+  type MeasureContext,
+  type MeasureMetricsContext,
   type Version
 } from '@hcengineering/core'
 import login, { loginId } from '@hcengineering/login'
@@ -21,16 +23,20 @@ import presentation, {
   purgeClient,
   refreshClient,
   setClient,
-  setPresentationCookie
+  setPresentationCookie,
+  uiContext,
+  upgradeDownloadProgress
 } from '@hcengineering/presentation'
 import {
+  desktopPlatform,
   fetchMetadataLocalStorage,
   getCurrentLocation,
   locationStorageKeyId,
   navigate,
   setMetadataLocalStorage
 } from '@hcengineering/ui'
-import { writable } from 'svelte/store'
+import { writable, get } from 'svelte/store'
+
 import plugin from './plugin'
 import { workspaceCreating } from './utils'
 
@@ -50,7 +56,7 @@ export async function disconnect (): Promise<void> {
 }
 
 export async function connect (title: string): Promise<Client | undefined> {
-  const ctx = new MeasureMetricsContext('connect', {})
+  const ctx = uiContext.newChild('connect', {})
   const loc = getCurrentLocation()
   const ws = loc.path[1]
   if (ws === undefined) {
@@ -78,17 +84,19 @@ export async function connect (title: string): Promise<Client | undefined> {
     token = workspaceLoginInfo.token
     setMetadataLocalStorage(login.metadata.LoginTokens, tokens)
     setMetadata(presentation.metadata.Workspace, workspaceLoginInfo.workspace)
+    setMetadata(presentation.metadata.WorkspaceId, workspaceLoginInfo.workspaceId)
+    setMetadata(presentation.metadata.Endpoint, workspaceLoginInfo.endpoint)
   }
 
   setMetadata(presentation.metadata.Token, token)
 
-  if (workspaceLoginInfo?.creating === true) {
+  if (isWorkspaceCreating(workspaceLoginInfo?.mode)) {
     const fetchWorkspace = await getResource(login.function.FetchWorkspace)
     let loginInfo = await ctx.with('fetch-workspace', {}, async () => (await fetchWorkspace(ws))[1])
-    if (loginInfo?.creating === true) {
+    if (isWorkspaceCreating(loginInfo?.mode)) {
       while (true) {
         if (ws !== getCurrentLocation().path[1]) return
-        workspaceCreating.set(loginInfo?.createProgress ?? 0)
+        workspaceCreating.set(loginInfo?.progress ?? 0)
         loginInfo = await ctx.with('fetch-workspace', {}, async () => (await fetchWorkspace(ws))[1])
         if (loginInfo === undefined) {
           // something went wrong, workspace not exist, redirect to login
@@ -97,8 +105,8 @@ export async function connect (title: string): Promise<Client | undefined> {
           })
           return
         }
-        workspaceCreating.set(loginInfo?.createProgress)
-        if (loginInfo?.creating === false) {
+        workspaceCreating.set(loginInfo?.progress)
+        if (!isWorkspaceCreating(loginInfo?.mode)) {
           workspaceCreating.set(-1)
           break
         }
@@ -149,6 +157,45 @@ export async function connect (title: string): Promise<Client | undefined> {
     {},
     async (ctx) =>
       await clientFactory(token, endpoint, {
+        onHello: (serverVersion?: string) => {
+          const frontVersion = getMetadata(presentation.metadata.FrontVersion)
+          if (
+            serverVersion !== undefined &&
+            serverVersion !== '' &&
+            frontVersion !== undefined &&
+            frontVersion !== serverVersion
+          ) {
+            const reloaded = localStorage.getItem(`versionUpgrade:s${serverVersion}:f${frontVersion}`)
+            const isUpgrading = get(upgradeDownloadProgress) >= 0
+
+            if (reloaded === null) {
+              localStorage.setItem(`versionUpgrade:s${serverVersion}:f${frontVersion}`, 't')
+              // It might have been refreshed manually and download has started - do not reload
+              if (!isUpgrading) {
+                location.reload()
+              }
+
+              return false
+            } else {
+              versionError.set(`Front version ${frontVersion} is not in sync with server version ${serverVersion}`)
+
+              if (!desktopPlatform || !isUpgrading) {
+                setTimeout(() => {
+                  // It might be possible that this callback will fire after the user has spent some time
+                  // in the upgrade !modal! dialog and clicked upgrade - check again and do not reload
+                  if (get(upgradeDownloadProgress) < 0) {
+                    location.reload()
+                  }
+                }, 10000)
+              }
+              // For embedded if the download has started it should download the upgrade and restart the app
+
+              return false
+            }
+          }
+
+          return true
+        },
         onUpgrade: () => {
           location.reload()
         },
@@ -313,12 +360,12 @@ export async function connect (title: string): Promise<Client | undefined> {
   await ctx.with('broadcast-connected', {}, async () => {
     await broadcastEvent(plugin.event.NotifyConnection, getCurrentAccount())
   })
-  console.log(metricsToString(ctx.metrics, 'connect', 50))
+  console.log(metricsToString((ctx as MeasureMetricsContext).metrics, 'connect', 50))
   return newClient
 }
 
 async function createEmployee (
-  ctx: MeasureMetricsContext,
+  ctx: MeasureContext,
   ws: string,
   me: Account,
   newClient: AccountClient
@@ -347,13 +394,14 @@ function clearMetadata (ws: string): void {
     delete tokens[loc.path[1]]
     setMetadataLocalStorage(login.metadata.LoginTokens, tokens)
   }
-  const currentWorkspace = getMetadata(presentation.metadata.Workspace)
+  const currentWorkspace = getMetadata(presentation.metadata.WorkspaceId)
   if (currentWorkspace !== undefined) {
     setPresentationCookie('', currentWorkspace)
   }
 
   setMetadata(presentation.metadata.Token, null)
   setMetadata(presentation.metadata.Workspace, null)
+  setMetadata(presentation.metadata.WorkspaceId, null)
   setMetadataLocalStorage(login.metadata.LastToken, null)
   setMetadataLocalStorage(login.metadata.LoginEndpoint, null)
   setMetadataLocalStorage(login.metadata.LoginEmail, null)

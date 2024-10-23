@@ -77,7 +77,6 @@ export type UserInfo = Data<GithubUserInfo>
 
 export interface ContainerFocus {
   container: IntegrationContainer
-  repository: GithubIntegrationRepository[]
   project: GithubProject
 }
 
@@ -96,7 +95,7 @@ export interface IntegrationManager {
   sync: () => void
   getGithubLogin: (container: IntegrationContainer, account: Ref<Person>) => Promise<UserInfo | undefined>
 
-  uploadFile: (patch: string, file?: string) => Promise<Blob | undefined>
+  uploadFile: (patch: string, file?: string, contentType?: string) => Promise<Blob | undefined>
 
   getStatuses: (type: Ref<TaskType> | undefined) => Promise<Status[]>
   getProjectStatuses: (type: Ref<ProjectType> | undefined) => Promise<Status[]>
@@ -112,7 +111,7 @@ export interface IntegrationManager {
     event: T
   ) => Promise<void>
 
-  doSyncFor: (docs: DocSyncInfo[]) => Promise<void>
+  doSyncFor: (docs: DocSyncInfo[], project: GithubProject) => Promise<void>
   getWorkspaceId: () => WorkspaceIdWithUrl
   getBranding: () => Branding | null
 
@@ -126,6 +125,12 @@ export interface IntegrationManager {
   ) => Promise<{ markdownCompatible: boolean, markdown: string }>
 
   isPlatformUser: (account: Ref<PersonAccount>) => Promise<boolean>
+
+  getProjectRepositories: (space: Ref<Space>) => Promise<GithubIntegrationRepository[]>
+
+  getRepositoryById: (ref?: Ref<GithubIntegrationRepository> | null) => Promise<GithubIntegrationRepository | undefined>
+
+  isClosing: () => boolean
 }
 
 export type ExternalSyncField = 'externalVersion' | 'derivedVersion'

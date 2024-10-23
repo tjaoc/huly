@@ -1,13 +1,13 @@
 <script lang="ts">
   import { DocumentQuery, Ref, Space, WithLookup } from '@hcengineering/core'
-  import { IntlString, Asset, translate } from '@hcengineering/platform'
+  import { Asset, IntlString, translateCB } from '@hcengineering/platform'
+  import { ComponentExtensions } from '@hcengineering/presentation'
   import { Issue, TrackerEvents } from '@hcengineering/tracker'
   import { IModeSelector, themeStore } from '@hcengineering/ui'
   import { ViewOptions, Viewlet } from '@hcengineering/view'
   import { FilterBar, SpaceHeader, ViewletContentView, ViewletSettingButton } from '@hcengineering/view-resources'
   import tracker from '../../plugin'
   import CreateIssue from '../CreateIssue.svelte'
-  import { ComponentExtensions } from '@hcengineering/presentation'
 
   export let space: Ref<Space> | undefined = undefined
   export let query: DocumentQuery<Issue> = {}
@@ -28,8 +28,8 @@
   $: if (query) updateSearchQuery(search)
   let resultQuery: DocumentQuery<Issue> = { ...searchQuery }
 
-  $: if (!label && title) {
-    void translate(title, {}, $themeStore.language).then((res) => {
+  $: if (title) {
+    translateCB(title, {}, $themeStore.language, (res) => {
       label = res
     })
   }

@@ -213,6 +213,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
       }
       case 'deleted': {
         const reviewData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: (event.comment.html_url ?? '').toLowerCase()
         })
         if (reviewData !== undefined) {
@@ -232,6 +233,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
       }
       case 'edited': {
         const reviewData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: (event.comment.html_url ?? '').toLowerCase()
         })
 
@@ -280,6 +282,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
     externalData: ReviewCommentExternalData
   ): Promise<void> {
     const reviewData = await this.client.findOne(github.class.DocSyncInfo, {
+      space: repo.githubProject as Ref<GithubProject>,
       url: (createdEvent.comment.html_url ?? '').toLowerCase()
     })
 
@@ -292,7 +295,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
         objectClass: github.class.GithubReviewComment,
         external: externalData,
         externalVersion: githubExternalSyncVersion,
-        parent: createdEvent.pull_request.html_url,
+        parent: (createdEvent.pull_request.html_url ?? '').toLowerCase(),
         lastModified: new Date(createdEvent.comment.updated_at ?? Date.now()).getTime()
       })
       this.provider.sync()
@@ -307,14 +310,14 @@ export class ReviewCommentSyncManager implements DocSyncManager {
   ): Promise<DocumentUpdate<DocSyncInfo> | undefined> {
     const container = await this.provider.getContainer(info.space)
     if (container?.container === undefined) {
-      return {}
+      return { needSync: githubSyncVersion }
     }
     if (parent === undefined) {
-      return { needSync: '' }
+      return { needSync: githubSyncVersion }
     }
     if (info.external === undefined) {
       // TODO: Use selected repository
-      const repo = container.repository.find((it) => it._id === parent?.repository)
+      const repo = await this.provider.getRepositoryById(parent?.repository)
       if (repo?.nodeId === undefined) {
         // No need to sync if parent repository is not defined.
         return { needSync: githubSyncVersion }
@@ -331,9 +334,10 @@ export class ReviewCommentSyncManager implements DocSyncManager {
 
     if (info.reviewThreadId === undefined && reviewComment.replyTo?.url !== undefined) {
       const rthread = await derivedClient.findOne(github.class.GithubReviewComment, {
+        space: container.project._id,
         url: reviewComment.replyTo?.url?.toLowerCase()
       })
-      if (rthread !== undefined) {
+      if (rthread !== undefined && info.reviewThreadId !== rthread.reviewThreadId) {
         info.reviewThreadId = rthread.reviewThreadId
         await derivedClient.update(info, { reviewThreadId: info.reviewThreadId })
       }
@@ -381,7 +385,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
     account: Ref<Account>,
     derivedClient: TxOperations
   ): Promise<void> {
-    const repository = container.repository.find((it) => it._id === info.repository)
+    const repository = await this.provider.getRepositoryById(info.repository)
     if (repository === undefined) {
       return
     }
@@ -473,7 +477,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
     derivedClient: TxOperations
   ): Promise<DocumentUpdate<DocSyncInfo>> {
     // TODO: Use selected repository
-    const repo = container.repository.find((it) => it._id === parent?.repository)
+    const repo = await this.provider.getRepositoryById(parent?.repository)
     if (repo?.nodeId === undefined) {
       // No need to sync if parent repository is not defined.
       return { needSync: githubSyncVersion }
@@ -519,8 +523,10 @@ export class ReviewCommentSyncManager implements DocSyncManager {
             external: reviewExternal,
             current: existing,
             repository: repo._id,
+            parent: parent.url.toLocaleLowerCase(),
             needSync: githubSyncVersion,
-            externalVersion: githubExternalSyncVersion
+            externalVersion: githubExternalSyncVersion,
+            reviewThreadId: info.reviewThreadId ?? existingReview.reviewThreadId
           }
           // We need to update in current promise, to prevent event changes.
           await derivedClient.update(info, upd)
@@ -560,7 +566,7 @@ export class ReviewCommentSyncManager implements DocSyncManager {
     project: GithubProject
   ): Promise<void> {
     // No need to perform external sync for reviews, so let's update marks
-    const tx = derivedClient.apply('reviews_github' + project._id)
+    const tx = derivedClient.apply()
     for (const d of syncDocs) {
       await tx.update(d, { externalVersion: githubExternalSyncVersion })
     }

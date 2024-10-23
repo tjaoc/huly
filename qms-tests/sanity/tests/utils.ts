@@ -1,5 +1,5 @@
 import { Browser, Locator, Page } from '@playwright/test'
-import { allure } from 'allure-playwright'
+import { attachment } from 'allure-js-commons'
 
 export const PlatformURI = process.env.PLATFORM_URI as string
 export const PlatformTransactor = process.env.PLATFORM_TRANSACTOR as string
@@ -7,6 +7,7 @@ export const PlatformUser = process.env.PLATFORM_USER as string
 export const PlatformToken = process.env.PLATFORM_TOKEN as string
 export const PlatformSetting = process.env.SETTING as string
 export const PlatformSettingSecond = process.env.SETTING_SECOND as string
+export const PlatformSettingThird = process.env.SETTING_THIRD as string
 export const PlatformSettingQaraManager = process.env.SETTING_QARA_MANAGER as string
 export const PlatformPassword = process.env.PLATFORM_PASSWORD as string
 export const DefaultWorkspace = 'sanity-ws-qms'
@@ -57,7 +58,7 @@ export function randomString (): string {
 }
 
 export async function attachScreenshot (name: string, page: Page): Promise<void> {
-  await allure.attachment(name, await page.screenshot(), {
+  await attachment(name, await page.screenshot(), {
     contentType: 'image/png'
   })
   await page.screenshot({ path: `screenshots/${name}` })
@@ -72,4 +73,8 @@ export async function * iterateLocator (locator: Locator): AsyncGenerator<Locato
   for (let index = 0; index < (await locator.count()); index++) {
     yield locator.nth(index)
   }
+}
+
+export async function waitForNetworIdle (page: Page, timeout = 2000): Promise<void> {
+  await Promise.race([page.waitForLoadState('networkidle'), new Promise((resolve) => setTimeout(resolve, timeout))])
 }

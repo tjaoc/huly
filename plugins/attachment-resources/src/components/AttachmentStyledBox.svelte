@@ -13,14 +13,26 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import { Attachment } from '@hcengineering/attachment'
-  import { Account, Class, Doc, generateId, Markup, Ref, Space, toIdMap, type Blob } from '@hcengineering/core'
+  import { Attachment, BlobMetadata } from '@hcengineering/attachment'
+  import {
+    Account,
+    Class,
+    Doc,
+    generateId,
+    Markup,
+    Ref,
+    Space,
+    toIdMap,
+    type Blob,
+    TxOperations
+  } from '@hcengineering/core'
   import { IntlString, setPlatformStatus, unknownError } from '@hcengineering/platform'
   import {
     createQuery,
     deleteFile,
     DraftController,
     draftsStore,
+    FileOrBlob,
     getClient,
     getFileMetadata,
     uploadFile
@@ -29,6 +41,7 @@
   import textEditor, { type RefAction } from '@hcengineering/text-editor'
   import { AttachIcon, StyledTextBox } from '@hcengineering/text-editor-resources'
   import { ButtonSize } from '@hcengineering/ui'
+  import { type FileUploadCallbackParams, uploadFiles } from '@hcengineering/uploader'
   import { createEventDispatcher, onDestroy } from 'svelte'
 
   import attachment from '../plugin'
@@ -139,11 +152,29 @@
     }
   }
 
-  async function createAttachment (file: File): Promise<{ file: Ref<Blob>, type: string } | undefined> {
-    if (space === undefined || objectId === undefined || _class === undefined) return
+  async function attachFile (file: File): Promise<{ file: Ref<Blob>, type: string } | undefined> {
     try {
       const uuid = await uploadFile(file)
       const metadata = await getFileMetadata(file, uuid)
+      await createAttachment(uuid, file.name, file, metadata)
+      return { file: uuid, type: file.type }
+    } catch (err: any) {
+      await setPlatformStatus(unknownError(err))
+    }
+  }
+
+  async function onFileUploaded ({ uuid, name, file, metadata }: FileUploadCallbackParams): Promise<void> {
+    await createAttachment(uuid, name, file, metadata)
+  }
+
+  async function createAttachment (
+    uuid: Ref<Blob>,
+    name: string,
+    file: FileOrBlob,
+    metadata: BlobMetadata | undefined
+  ): Promise<void> {
+    if (space === undefined || objectId === undefined || _class === undefined) return
+    try {
       const _id: Ref<Attachment> = generateId()
 
       attachments.set(_id, {
@@ -155,13 +186,14 @@
         space,
         attachedTo: objectId,
         attachedToClass: _class,
-        name: file.name,
+        name,
         file: uuid,
         type: file.type,
         size: file.size,
-        lastModified: file.lastModified,
+        lastModified: file instanceof File ? file.lastModified : Date.now(),
         metadata
       })
+
       newAttachments.add(_id)
       attachments = attachments
       saved = false
@@ -172,28 +204,30 @@
       if (useDirectAttachDelete) {
         saveNewAttachment(_id)
       }
-      return { file: uuid, type: file.type }
     } catch (err: any) {
       setPlatformStatus(unknownError(err))
     }
   }
 
-  async function saveAttachment (doc: Attachment, objectId: Ref<Doc> | undefined): Promise<void> {
+  async function saveAttachment (doc: Attachment, objectId: Ref<Doc> | undefined, op?: TxOperations): Promise<void> {
     if (space === undefined || objectId === undefined || _class === undefined) return
     newAttachments.delete(doc._id)
-    await client.addCollection(attachment.class.Attachment, space, objectId, _class, 'attachments', doc, doc._id)
+    await (op ?? client).addCollection(
+      attachment.class.Attachment,
+      space,
+      objectId,
+      _class,
+      'attachments',
+      doc,
+      doc._id
+    )
   }
 
   async function fileSelected (): Promise<void> {
     progress = true
     const list = inputFile.files
     if (list === null || list.length === 0) return
-    for (let index = 0; index < list.length; index++) {
-      const file = list.item(index)
-      if (file !== null) {
-        await createAttachment(file)
-      }
-    }
+    await uploadFiles(list, { onFileUploaded })
     inputFile.value = ''
     progress = false
   }
@@ -201,14 +235,8 @@
   export async function fileDrop (e: DragEvent): Promise<void> {
     progress = true
     const list = e.dataTransfer?.files
-    if (list !== undefined && list.length !== 0) {
-      for (let index = 0; index < list.length; index++) {
-        const file = list.item(index)
-        if (file !== null) {
-          await createAttachment(file)
-        }
-      }
-    }
+    if (list === undefined || list.length === 0) return
+    await uploadFiles(list, { onFileUploaded })
     progress = false
   }
 
@@ -284,7 +312,7 @@
     }
   }
 
-  export async function createAttachments (_id: Ref<Doc> | undefined = objectId): Promise<void> {
+  export async function createAttachments (_id: Ref<Doc> | undefined = objectId, op?: TxOperations): Promise<void> {
     if (saved) {
       return
     }
@@ -293,7 +321,7 @@
     newAttachments.forEach((p) => {
       const attachment = attachments.get(p)
       if (attachment !== undefined) {
-        promises.push(saveAttachment(attachment, _id))
+        promises.push(saveAttachment(attachment, _id, op))
       }
     })
     removedAttachments.forEach((p) => {
@@ -328,14 +356,19 @@
     }
 
     const items = evt.clipboardData?.items ?? []
+    const files: File[] = []
     for (const index in items) {
       const item = items[index]
       if (item.kind === 'file') {
         const blob = item.getAsFile()
         if (blob !== null) {
-          await createAttachment(blob)
+          files.push(blob)
         }
       }
+    }
+
+    if (files.length > 0) {
+      await uploadFiles(files, { onFileUploaded })
     }
   }
 
@@ -401,9 +434,7 @@
     on:blur
     on:focus
     on:open-document
-    attachFile={async (file) => {
-      return await createAttachment(file)
-    }}
+    {attachFile}
   />
   {#if attachments.size > 0 && enableAttachments}
     <AttachmentsGrid

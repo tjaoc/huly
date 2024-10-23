@@ -15,7 +15,7 @@
 
 import { type MeasureContext, type WorkspaceId, concatLink } from '@hcengineering/core'
 import FormData from 'form-data'
-import fetch from 'node-fetch'
+import fetch, { type RequestInit, type Response } from 'node-fetch'
 import { Readable } from 'stream'
 
 /** @public */
@@ -27,8 +27,11 @@ export interface ObjectMetadata {
 }
 
 /** @public */
-export interface PutObjectOutput {
-  id: string
+export interface StatObjectOutput {
+  lastModified: number
+  type: string
+  etag?: string
+  size?: number
 }
 
 interface BlobUploadError {
@@ -46,20 +49,20 @@ type BlobUploadResult = BlobUploadSuccess | BlobUploadError
 
 /** @public */
 export class Client {
-  constructor (private readonly endpoint: string) {}
+  private readonly endpoint: string
+
+  constructor (host: string, port?: number) {
+    this.endpoint = port !== undefined ? `${host}:${port}` : host
+  }
 
   getObjectUrl (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): string {
-    const path = `/blob/${workspace.name}/${objectName}`
+    const path = `/blob/${workspace.name}/${encodeURIComponent(objectName)}`
     return concatLink(this.endpoint, path)
   }
 
   async getObject (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): Promise<Readable> {
     const url = this.getObjectUrl(ctx, workspace, objectName)
-    const response = await fetch(url)
-
-    if (!response.ok) {
-      throw new Error('HTTP error ' + response.status)
-    }
+    const response = await fetchSafe(ctx, url)
 
     if (response.body == null) {
       ctx.error('bad datalake response', { objectName })
@@ -69,14 +72,52 @@ export class Client {
     return Readable.from(response.body)
   }
 
-  async deleteObject (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): Promise<void> {
+  async getPartialObject (
+    ctx: MeasureContext,
+    workspace: WorkspaceId,
+    objectName: string,
+    offset: number,
+    length?: number
+  ): Promise<Readable> {
+    const url = this.getObjectUrl(ctx, workspace, objectName)
+    const headers = {
+      Range: `bytes=${offset}-${length ?? ''}`
+    }
+
+    const response = await fetchSafe(ctx, url, { headers })
+
+    if (response.body == null) {
+      ctx.error('bad datalake response', { objectName })
+      throw new Error('Missing response body')
+    }
+
+    return Readable.from(response.body)
+  }
+
+  async statObject (
+    ctx: MeasureContext,
+    workspace: WorkspaceId,
+    objectName: string
+  ): Promise<StatObjectOutput | undefined> {
     const url = this.getObjectUrl(ctx, workspace, objectName)
 
-    const response = await fetch(url, { method: 'DELETE' })
+    const response = await fetchSafe(ctx, url, { method: 'HEAD' })
 
-    if (!response.ok) {
-      throw new Error('HTTP error ' + response.status)
+    const headers = response.headers
+    const lastModified = Date.parse(headers.get('Last-Modified') ?? '')
+    const size = parseInt(headers.get('Content-Length') ?? '0', 10)
+
+    return {
+      lastModified: isNaN(lastModified) ? 0 : lastModified,
+      size: isNaN(size) ? 0 : size,
+      type: headers.get('Content-Type') ?? '',
+      etag: headers.get('ETag') ?? ''
     }
+  }
+
+  async deleteObject (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): Promise<void> {
+    const url = this.getObjectUrl(ctx, workspace, objectName)
+    await fetchSafe(ctx, url, { method: 'DELETE' })
   }
 
   async putObject (
@@ -84,14 +125,33 @@ export class Client {
     workspace: WorkspaceId,
     objectName: string,
     stream: Readable | Buffer | string,
+    metadata: ObjectMetadata,
+    size?: number
+  ): Promise<void> {
+    if (size === undefined || size < 64 * 1024 * 1024) {
+      await ctx.with('direct-upload', {}, async (ctx) => {
+        await this.uploadWithFormData(ctx, workspace, objectName, stream, metadata)
+      })
+    } else {
+      await ctx.with('signed-url-upload', {}, async (ctx) => {
+        await this.uploadWithSignedURL(ctx, workspace, objectName, stream, metadata)
+      })
+    }
+  }
+
+  private async uploadWithFormData (
+    ctx: MeasureContext,
+    workspace: WorkspaceId,
+    objectName: string,
+    stream: Readable | Buffer | string,
     metadata: ObjectMetadata
-  ): Promise<PutObjectOutput> {
+  ): Promise<void> {
     const path = `/upload/form-data/${workspace.name}`
     const url = concatLink(this.endpoint, path)
 
     const form = new FormData()
     const options: FormData.AppendOptions = {
-      filename: objectName,
+      filename: encodeURIComponent(objectName),
       contentType: metadata.type,
       knownLength: metadata.size,
       header: {
@@ -100,14 +160,7 @@ export class Client {
     }
     form.append('file', stream, options)
 
-    const response = await fetch(url, {
-      method: 'POST',
-      body: form
-    })
-
-    if (!response.ok) {
-      throw new Error('HTTP error ' + response.status)
-    }
+    const response = await fetchSafe(ctx, url, { method: 'POST', body: form })
 
     const result = (await response.json()) as BlobUploadResult[]
     if (result.length !== 1) {
@@ -120,8 +173,68 @@ export class Client {
     if ('error' in uploadResult) {
       ctx.error('error during blob upload', { objectName, error: uploadResult.error })
       throw new Error('Upload failed: ' + uploadResult.error)
-    } else {
-      return { id: uploadResult.id }
     }
   }
+
+  private async uploadWithSignedURL (
+    ctx: MeasureContext,
+    workspace: WorkspaceId,
+    objectName: string,
+    stream: Readable | Buffer | string,
+    metadata: ObjectMetadata
+  ): Promise<void> {
+    const url = await this.signObjectSign(ctx, workspace, objectName)
+
+    try {
+      await fetchSafe(ctx, url, {
+        body: stream,
+        method: 'PUT',
+        headers: {
+          'Content-Type': metadata.type,
+          'Content-Length': metadata.size?.toString() ?? '0',
+          'x-amz-meta-last-modified': metadata.lastModified.toString()
+        }
+      })
+      await this.signObjectComplete(ctx, workspace, objectName)
+    } catch {
+      await this.signObjectDelete(ctx, workspace, objectName)
+    }
+  }
+
+  private async signObjectSign (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): Promise<string> {
+    const url = this.getSignObjectUrl(workspace, objectName)
+    const response = await fetchSafe(ctx, url, { method: 'POST' })
+    return await response.text()
+  }
+
+  private async signObjectComplete (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): Promise<void> {
+    const url = this.getSignObjectUrl(workspace, objectName)
+    await fetchSafe(ctx, url, { method: 'PUT' })
+  }
+
+  private async signObjectDelete (ctx: MeasureContext, workspace: WorkspaceId, objectName: string): Promise<void> {
+    const url = this.getSignObjectUrl(workspace, objectName)
+    await fetchSafe(ctx, url, { method: 'DELETE' })
+  }
+
+  private getSignObjectUrl (workspace: WorkspaceId, objectName: string): string {
+    const path = `/upload/signed-url/${workspace.name}/${encodeURIComponent(objectName)}`
+    return concatLink(this.endpoint, path)
+  }
+}
+
+async function fetchSafe (ctx: MeasureContext, url: string, init?: RequestInit): Promise<Response> {
+  let response
+  try {
+    response = await fetch(url, init)
+  } catch (err: any) {
+    ctx.error('network error', { error: err })
+    throw new Error(`Network error ${err}`)
+  }
+
+  if (!response.ok) {
+    throw new Error(response.status === 404 ? 'Not Found' : 'HTTP error ' + response.status)
+  }
+
+  return response
 }

@@ -15,8 +15,8 @@
 
 import { saveCollaborativeDoc } from '@hcengineering/collaboration'
 import core, {
-  DOMAIN_BLOB,
   DOMAIN_DOC_INDEX_STATE,
+  DOMAIN_SPACE,
   DOMAIN_STATUS,
   DOMAIN_TX,
   MeasureMetricsContext,
@@ -27,11 +27,9 @@ import core, {
   isClassIndexable,
   makeCollaborativeDoc,
   type AnyAttribute,
-  type Blob,
   type Doc,
   type Domain,
   type MeasureContext,
-  type Ref,
   type Space,
   type Status,
   type TxCreateDoc
@@ -47,9 +45,8 @@ import {
   type MigrationIterator,
   type MigrationUpgradeClient
 } from '@hcengineering/model'
-import { type StorageAdapter, type StorageAdapterEx } from '@hcengineering/storage'
+import { type StorageAdapter } from '@hcengineering/storage'
 import { markupToYDoc } from '@hcengineering/text'
-import { DOMAIN_SPACE } from './security'
 
 async function migrateStatusesToModel (client: MigrationClient): Promise<void> {
   // Move statuses to model:
@@ -265,7 +262,11 @@ export const coreOperation: MigrateOperation = {
   async migrate (client: MigrationClient): Promise<void> {
     // We need to delete all documents in doc index state for missing classes
     const allClasses = client.hierarchy.getDescendants(core.class.Doc)
-    const allIndexed = allClasses.filter((it) => isClassIndexable(client.hierarchy, it))
+    const contexts = new Map(
+      client.model.findAllSync(core.class.FullTextSearchContext, {}).map((it) => [it.toClass, it])
+    )
+
+    const allIndexed = allClasses.filter((it) => isClassIndexable(client.hierarchy, it, contexts))
 
     // Next remove all non indexed classes and missing classes as well.
     await client.update(
@@ -278,7 +279,6 @@ export const coreOperation: MigrateOperation = {
         }
       }
     )
-    const exAdapter: StorageAdapterEx = client.storageAdapter as StorageAdapterEx
     await tryMigrate(client, coreId, [
       {
         state: 'statuses-to-model',
@@ -289,14 +289,8 @@ export const coreOperation: MigrateOperation = {
         func: migrateAllSpaceToTyped
       },
       {
-        state: 'add-spaces-owner',
+        state: 'add-spaces-owner-v1',
         func: migrateSpacesOwner
-      },
-      {
-        state: 'storage_blobs_v1',
-        func: async (client: MigrationClient) => {
-          await migrateBlobData(exAdapter, client)
-        }
       },
       {
         state: 'old-statuses-transactions',
@@ -311,6 +305,13 @@ export const coreOperation: MigrateOperation = {
       {
         state: 'collaborative-content-to-storage',
         func: migrateCollaborativeContentToStorage
+      },
+      {
+        state: 'fix-rename-backups',
+        func: async (client: MigrationClient): Promise<void> => {
+          await client.update(DOMAIN_TX, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
+          await client.update(DOMAIN_SPACE, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
+        }
       }
     ])
   },
@@ -326,47 +327,17 @@ export const coreOperation: MigrateOperation = {
             core.class.TypedSpace
           )
         }
+      },
+      {
+        state: 'default-space',
+        func: async (client) => {
+          await createDefaultSpace(client, core.space.Tx, { name: 'Space for all txes' })
+          await createDefaultSpace(client, core.space.DerivedTx, { name: 'Space for derived txes' })
+          await createDefaultSpace(client, core.space.Model, { name: 'Space for model' })
+          await createDefaultSpace(client, core.space.Configuration, { name: 'Space for config' })
+          await createDefaultSpace(client, core.space.Workspace, { name: 'Space for common things' })
+        }
       }
     ])
-  }
-}
-async function migrateBlobData (exAdapter: StorageAdapterEx, client: MigrationClient): Promise<void> {
-  const ctx = new MeasureMetricsContext('storage_upgrade', {})
-
-  for (const [provider, adapter] of exAdapter.adapters?.entries() ?? []) {
-    if (!(await adapter.exists(ctx, client.workspaceId))) {
-      continue
-    }
-    const blobs = await adapter.listStream(ctx, client.workspaceId, '')
-    const bulk = new Map<Ref<Blob>, Blob>()
-    try {
-      const push = async (force: boolean): Promise<void> => {
-        if (bulk.size > 1000 || force) {
-          await client.deleteMany(DOMAIN_BLOB, { _id: { $in: Array.from(bulk.keys()) } })
-          await client.create(DOMAIN_BLOB, Array.from(bulk.values()))
-          bulk.clear()
-        }
-      }
-      while (true) {
-        const blob = await blobs.next()
-        if (blob === undefined) {
-          break
-        }
-        // We need to state details for blob.
-        const blobData = await adapter.stat(ctx, client.workspaceId, blob._id)
-        if (blobData !== undefined) {
-          bulk.set(blobData._id, {
-            ...blobData,
-            provider
-          })
-        }
-        await push(false)
-      }
-      await push(true)
-    } catch (err: any) {
-      ctx.error('Error during blob migration', { error: err.message })
-    } finally {
-      await blobs.close()
-    }
   }
 }

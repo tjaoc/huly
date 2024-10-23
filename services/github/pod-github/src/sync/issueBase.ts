@@ -22,16 +22,8 @@ import core, {
   Ref,
   Space,
   Status,
-  TxOperations,
-  generateId
+  TxOperations
 } from '@hcengineering/core'
-import { IntlString } from '@hcengineering/platform'
-import { LiveQuery } from '@hcengineering/query'
-import task, { TaskType } from '@hcengineering/task'
-import { MarkupNode, MarkupNodeType, areEqualMarkups, markupToJSON, traverseNode } from '@hcengineering/text'
-import tracker, { Issue, IssuePriority } from '@hcengineering/tracker'
-import time, { type ToDo } from '@hcengineering/time'
-import { ProjectsV2ItemEvent } from '@octokit/webhooks-types'
 import github, {
   DocSyncInfo,
   GithubFieldMapping,
@@ -41,6 +33,13 @@ import github, {
   GithubMilestone,
   GithubProject
 } from '@hcengineering/github'
+import { IntlString } from '@hcengineering/platform'
+import { LiveQuery } from '@hcengineering/query'
+import task, { TaskType } from '@hcengineering/task'
+import { MarkupNode, MarkupNodeType, areEqualMarkups, markupToJSON, traverseNode } from '@hcengineering/text'
+import time, { type ToDo } from '@hcengineering/time'
+import tracker, { Issue, IssuePriority } from '@hcengineering/tracker'
+import { ProjectsV2ItemEvent } from '@octokit/webhooks-types'
 import { deepEqual } from 'fast-equals'
 import { Octokit } from 'octokit'
 import {
@@ -202,6 +201,7 @@ export abstract class IssueSyncManagerBase {
             }
           )) as any
           const syncData = await this.client.findOne(github.class.DocSyncInfo, {
+            space: prj._id,
             url: (actualContent.node.content.url ?? '').toLowerCase()
           })
 
@@ -303,8 +303,7 @@ export abstract class IssueSyncManagerBase {
                 const ff = await this.toPlatformField(
                   {
                     container: integration,
-                    project: prj,
-                    repository: repositories.filter((it) => it.githubProject === prj._id)
+                    project: prj
                   },
                   f,
                   target,
@@ -355,7 +354,8 @@ export abstract class IssueSyncManagerBase {
     }
 
     syncData =
-      syncData ?? (await this.client.findOne(github.class.DocSyncInfo, { url: (external.url ?? '').toLowerCase() }))
+      syncData ??
+      (await this.client.findOne(github.class.DocSyncInfo, { space: prj._id, url: (external.url ?? '').toLowerCase() }))
 
     if (syncData !== undefined) {
       const doc: Issue | undefined = await this.client.findOne<Issue>(syncData.objectClass, {
@@ -372,16 +372,7 @@ export abstract class IssueSyncManagerBase {
           !areEqualMarkups(update.description, syncData.current?.description ?? '')
         ) {
           try {
-            const versionId = `${Date.now()}`
-            issueData.description = await this.collaborator.updateContent(
-              doc.description,
-              { description: update.description },
-              {
-                versionId,
-                versionName: versionId,
-                createdBy: account
-              }
-            )
+            await this.collaborator.updateContent(doc.description, { description: update.description })
           } catch (err: any) {
             Analytics.handleError(err)
             this.ctx.error(err)
@@ -402,7 +393,7 @@ export abstract class IssueSyncManagerBase {
             return true
           })
 
-          const updateTodos = this.client.apply('todos' + account)
+          const updateTodos = this.client.apply()
           for (const [k, v] of Object.entries(todos)) {
             await updateTodos.updateDoc(time.class.ToDo, time.space.ToDos, k as Ref<ToDo>, {
               doneOn: v ? Date.now() : null
@@ -637,9 +628,17 @@ export abstract class IssueSyncManagerBase {
             itemId: target.prjData?.id as string
           })
         } catch (err: any) {
+          if (err.errors?.[0]?.type === 'NOT_FOUND') {
+            errors.push({ error: err, response })
+            return errors
+          }
           Analytics.handleError(err)
           // Failed to update one particular value, skip it.
-          this.ctx.error('error during field update', { error: err, response })
+          this.ctx.error('error during field update', {
+            error: err,
+            response,
+            workspace: this.provider.getWorkspaceId().name
+          })
           errors.push({ error: err, response })
         }
       }
@@ -816,7 +815,7 @@ export abstract class IssueSyncManagerBase {
 
       // Collect field update.
       for (const [k, v] of Object.entries(platformUpdate)) {
-        const mapping = target.mappings.find((it) => it.name === k)
+        const mapping = target.mappings.filter((it) => it != null).find((it) => it.name === k)
         if (mapping === undefined) {
           continue
         }
@@ -901,10 +900,9 @@ export abstract class IssueSyncManagerBase {
       }
       if (fieldsUpdate.length > 0 && syncToProject && target.prjData !== undefined) {
         const errors = await this.updateIssueValues(target, okit, fieldsUpdate)
-        if (errors.length > 0) {
-          return { externalVersion: '', needUpdate: githubSyncVersion, error: errors }
+        if (errors.length === 0) {
+          needExternalSync = true
         }
-        needExternalSync = true
       }
       // TODO: Add support for labels, milestone, assignees
     }
@@ -926,17 +924,8 @@ export abstract class IssueSyncManagerBase {
         workspace: this.provider.getWorkspaceId().name
       })
       try {
-        const versionId = `${Date.now()}`
         issueData.description = update.description
-        update.description = await this.collaborator.updateContent(
-          existingIssue.description,
-          { description: update.description },
-          {
-            versionId,
-            versionName: versionId,
-            createdBy: account
-          }
-        )
+        await this.collaborator.updateContent(existingIssue.description, { description: update.description })
       } catch (err: any) {
         Analytics.handleError(err)
         this.ctx.error('error during description update', err)
@@ -968,17 +957,19 @@ export abstract class IssueSyncManagerBase {
     existing: WithMarkup<Issue>,
     issueExternal: IssueExternalData
   ): Promise<void> {
-    const repo = container.repository.find((it) => it._id === info.repository) as GithubIntegrationRepository
-    await this.addConnectToMessage(
-      existing._class === github.class.GithubPullRequest
-        ? github.string.PullRequestConnectedActivityInfo
-        : github.string.IssueConnectedActivityInfo,
-      existing.space,
-      existing._id,
-      existing._class,
-      issueExternal,
-      repo
-    )
+    const repo = await this.provider.getRepositoryById(info.repository)
+    if (repo != null) {
+      await this.addConnectToMessage(
+        existing._class === github.class.GithubPullRequest
+          ? github.string.PullRequestConnectedActivityInfo
+          : github.string.IssueConnectedActivityInfo,
+        existing.space,
+        existing._id,
+        existing._class,
+        issueExternal,
+        repo
+      )
+    }
   }
 
   async collectIssueUpdate (
@@ -1077,19 +1068,22 @@ export abstract class IssueSyncManagerBase {
     _class: Ref<Class<Doc>>,
     repo: GithubIntegrationRepository,
     issues: IssueExternalData[],
-    derivedClient: TxOperations
+    derivedClient: TxOperations,
+    syncDocs?: DocSyncInfo[]
   ): Promise<void> {
     if (repo.githubProject == null) {
       return
     }
-    const syncInfo = await this.client.findAll<DocSyncInfo>(github.class.DocSyncInfo, {
-      space: repo.githubProject,
-      repository: repo._id,
-      objectClass: _class,
-      url: { $in: issues.map((it) => (it.url ?? '').toLowerCase()) }
-    })
+    const syncInfo =
+      syncDocs ??
+      (await this.client.findAll<DocSyncInfo>(github.class.DocSyncInfo, {
+        space: repo.githubProject,
+        repository: repo._id,
+        objectClass: _class,
+        url: { $in: issues.map((it) => (it.url ?? '').toLowerCase()) }
+      }))
 
-    const ops = derivedClient.apply('sync-issyes' + generateId())
+    const ops = derivedClient.apply()
 
     for (const issue of issues) {
       try {
@@ -1097,8 +1091,10 @@ export abstract class IssueSyncManagerBase {
           this.ctx.info('Retrieve empty document', { repo: repo.name, workspace: this.provider.getWorkspaceId().name })
           continue
         }
-        const existing = syncInfo.find((it) => it.url === issue.url.toLowerCase())
-        if (existing === undefined) {
+        const existing =
+          syncInfo.find((it) => it.url.toLowerCase() === issue.url.toLowerCase()) ??
+          syncInfo.find((it) => (it.external as IssueExternalData)?.id === issue.id)
+        if (existing === undefined && syncDocs === undefined) {
           this.ctx.info('Create sync doc', { url: issue.url, workspace: this.provider.getWorkspaceId().name })
           await ops.createDoc<DocSyncInfo>(github.class.DocSyncInfo, repo.githubProject, {
             url: issue.url.toLowerCase(),
@@ -1112,7 +1108,10 @@ export abstract class IssueSyncManagerBase {
             externalVersionSince: '',
             lastModified: new Date(issue.updatedAt).getTime()
           })
-        } else {
+        } else if (existing !== undefined) {
+          if (syncDocs !== undefined) {
+            syncDocs = syncDocs.filter((it) => it._id !== existing._id)
+          }
           const externalEqual = deepEqual(existing.external, issue)
           if (!externalEqual || existing.externalVersion !== githubExternalSyncVersion) {
             this.ctx.info('Update sync doc', { url: issue.url, workspace: this.provider.getWorkspaceId().name })
@@ -1135,6 +1134,14 @@ export abstract class IssueSyncManagerBase {
         this.ctx.error(err)
       }
     }
+    // if no sync doc, mark it as synchronized
+    for (const sd of syncDocs ?? []) {
+      await ops.update(sd, {
+        needSync: githubSyncVersion,
+        externalVersion: githubExternalSyncVersion,
+        error: 'not found external doc'
+      })
+    }
     await ops.commit(true)
     this.provider.sync()
   }
@@ -1144,7 +1151,7 @@ export abstract class IssueSyncManagerBase {
     container: IntegrationContainer,
     existingIssue: Issue | undefined,
     external: IssueExternalData
-  ): Promise<IssueSyncTarget | undefined | null> {
+  ): Promise<IssueSyncTarget | undefined> {
     if (existingIssue !== undefined) {
       // Select a milestone project
       if (existingIssue.milestone != null) {
@@ -1152,14 +1159,7 @@ export abstract class IssueSyncManagerBase {
           await this.provider.liveQuery.queryFind<GithubMilestone>(github.mixin.GithubMilestone, {})
         ).find((it) => it._id === existingIssue.milestone)
         if (milestone === undefined) {
-          // Let's search for milestone, and if it doesn't have mixin, return undefined.
-          const mstone = await this.client.findOne(github.mixin.GithubMilestone, {
-            _id: existingIssue.milestone as Ref<GithubMilestone>
-          })
-          if (mstone === undefined) {
-            return undefined
-          }
-          return null
+          return
         }
         return {
           project,
@@ -1287,7 +1287,10 @@ export abstract class IssueSyncManagerBase {
     err: any,
     _class: Ref<Class<Doc>> = tracker.class.Issue
   ): Promise<void> {
-    const syncData = await this.client.findOne(github.class.DocSyncInfo, { url: url.toLowerCase() })
+    const syncData = await this.client.findOne(github.class.DocSyncInfo, {
+      space: repo.githubProject as Ref<GithubProject>,
+      url: url.toLowerCase()
+    })
     if (syncData === undefined) {
       await derivedClient?.createDoc(github.class.DocSyncInfo, repo.githubProject as Ref<GithubProject>, {
         url,

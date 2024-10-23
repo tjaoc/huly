@@ -16,41 +16,42 @@
 
 import {
   AvatarType,
+  type Channel,
+  type ChannelProvider,
+  type Contact,
   contactId,
+  type Employee,
   formatName,
   getFirstName,
   getLastName,
   getName,
-  type Channel,
-  type ChannelProvider,
-  type Contact,
-  type Employee,
   type Person,
   type PersonAccount
 } from '@hcengineering/contact'
 import core, {
-  getCurrentAccount,
-  toIdMap,
   type Account,
+  AggregateValue,
+  AggregateValueData,
   type Class,
   type Client,
   type Doc,
+  type DocumentQuery,
+  getCurrentAccount,
+  groupByArray,
+  type Hierarchy,
   type IdMap,
+  matchQuery,
   type ObjQueryType,
   type Ref,
+  type Space,
   type Timestamp,
+  toIdMap,
   type TxOperations,
   type UserStatus,
-  type WithLookup,
-  AggregateValue,
-  type Space,
-  type Hierarchy,
-  type DocumentQuery,
-  AggregateValueData,
-  matchQuery
+  type WithLookup
 } from '@hcengineering/core'
 import notification, { type DocNotifyContext, type InboxNotification } from '@hcengineering/notification'
-import { getEmbeddedLabel, getResource, translate } from '@hcengineering/platform'
+import { type IntlString, getEmbeddedLabel, getResource, translate } from '@hcengineering/platform'
 import { createQuery, getClient } from '@hcengineering/presentation'
 import { type TemplateDataProvider } from '@hcengineering/templates'
 import {
@@ -61,9 +62,10 @@ import {
   type ResolvedLocation,
   type TabItem
 } from '@hcengineering/ui'
-import view, { type GrouppingManager, type Filter } from '@hcengineering/view'
-import { FilterQuery, accessDeniedStore } from '@hcengineering/view-resources'
+import view, { type Filter, type GrouppingManager } from '@hcengineering/view'
+import { accessDeniedStore, FilterQuery } from '@hcengineering/view-resources'
 import { derived, get, writable } from 'svelte/store'
+import { type LocationData } from '@hcengineering/workbench'
 
 import contact from './plugin'
 import { personStore } from '.'
@@ -305,6 +307,14 @@ export const channelProviders = writable<ChannelProvider[]>([])
 
 export const personAccountPersonByIdStore = writable<IdMap<WithLookup<Person>>>(new Map())
 
+export const personIdByAccountId = derived(personAccountByIdStore, (vals) => {
+  return new Map<Ref<PersonAccount>, Ref<Person>>(Array.from(vals.values()).map((it) => [it._id, it.person]))
+})
+
+export const personAccountByPersonId = derived(personAccountByIdStore, (vals) => {
+  return groupByArray(Array.from(vals.values()), (it) => it.person)
+})
+
 export const statusByUserStore = writable<Map<Ref<Account>, UserStatus>>(new Map())
 
 export const personByIdStore = derived([personAccountPersonByIdStore, employeeByIdStore], (vals) => {
@@ -531,4 +541,31 @@ export function groupPersonAccountValuesWithEmpty (
     >
   }
   return personAccountList.map((it) => it._id)
+}
+
+export async function resolveLocationData (loc: Location): Promise<LocationData> {
+  const special = loc.path[3]
+  const specialsData: Record<string, IntlString> = {
+    companies: contact.string.Organizations,
+    employees: contact.string.Employees,
+    persons: contact.string.Persons
+  }
+
+  if (special == null) {
+    return { nameIntl: contact.string.Contacts }
+  }
+
+  const specialLabel = specialsData[special]
+  if (specialLabel !== undefined) {
+    return { nameIntl: specialLabel }
+  }
+
+  const client = getClient()
+  const object = await client.findOne(contact.class.Contact, { _id: special as Ref<Contact> })
+
+  if (object === undefined) {
+    return { nameIntl: specialLabel }
+  }
+
+  return { name: getName(client.getHierarchy(), object) }
 }

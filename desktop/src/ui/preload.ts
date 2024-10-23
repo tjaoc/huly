@@ -1,7 +1,7 @@
 // preload.js
 
-import { BrandingMap, Config, IPCMainExposed, NotificationParams } from './types'
 import { contextBridge, ipcRenderer } from 'electron'
+import { BrandingMap, Config, IPCMainExposed, NotificationParams } from './types'
 
 /**
  * @public
@@ -130,11 +130,19 @@ const expose: IPCMainExposed = {
     })
   },
 
+  handleAuth: (callback) => {
+    ipcRenderer.on('handle-auth', (event, value) => {
+      callback(value)
+    })
+  },
+
   async setFrontCookie (host: string, name: string, value: string): Promise<void> {
     ipcRenderer.send('set-front-cookie', host, name, value)
   },
 
   getScreenAccess: () => ipcRenderer.invoke('get-screen-access'),
-  getScreenSources: () => ipcRenderer.invoke('get-screen-sources')
+  getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
+  cancelBackup: () => { ipcRenderer.send('cancel-backup') },
+  startBackup: (token, endpoint, workspace) => { ipcRenderer.send('start-backup', token, endpoint, workspace) }
 }
 contextBridge.exposeInMainWorld('electron', expose)

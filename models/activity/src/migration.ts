@@ -67,7 +67,6 @@ async function processMigrateMarkupFor (
   client: MigrationClient,
   iterator: MigrationIterator<DocUpdateMessage>
 ): Promise<void> {
-  let processed = 0
   while (true) {
     const docs = await iterator.next(1000)
     if (docs === null || docs.length === 0) {
@@ -104,9 +103,6 @@ async function processMigrateMarkupFor (
     if (ops.length > 0) {
       await client.bulk(DOMAIN_ACTIVITY, ops)
     }
-
-    processed += docs.length
-    console.log('...processed', processed)
   }
 }
 
@@ -221,6 +217,12 @@ export const activityOperation: MigrateOperation = {
       {
         state: 'migrate-activity-markup',
         func: migrateActivityMarkup
+      },
+      {
+        state: 'fix-rename-backups',
+        func: async (client: MigrationClient): Promise<void> => {
+          await client.update(DOMAIN_ACTIVITY, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
+        }
       }
     ])
   },

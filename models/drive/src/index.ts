@@ -54,7 +54,7 @@ import {
   TypeTimestamp,
   UX
 } from '@hcengineering/model'
-import { TAttachedDoc, TDoc, TType, TTypedSpace } from '@hcengineering/model-core'
+import { TAttachedDoc, TCard, TType, TTypedSpace } from '@hcengineering/model-core'
 import presentation from '@hcengineering/model-presentation'
 import print from '@hcengineering/model-print'
 import tracker from '@hcengineering/model-tracker'
@@ -84,19 +84,19 @@ export class TDefaultDriveTypeData extends TDrive implements RolesAssignment {
   [key: Ref<Role>]: Ref<Account>[]
 }
 
-@Model(drive.class.Resource, core.class.Doc, DOMAIN_DRIVE)
+@Model(drive.class.Resource, core.class.Card, DOMAIN_DRIVE)
 @UX(drive.string.Resource)
-export class TResource extends TDoc implements Resource {
+export class TResource extends TCard implements Resource {
   declare space: Ref<Drive>
 
   @Prop(TypeString(), drive.string.Name)
   @Index(IndexKind.FullText)
-    name!: string
+  declare title: string
 
   @Prop(TypeRef(drive.class.Resource), drive.string.Parent)
   @Index(IndexKind.Indexed)
   @ReadOnly()
-    parent!: Ref<Resource>
+  declare parent: Ref<Resource>
 
   @Prop(TypeRef(drive.class.Resource), drive.string.Path)
   @ReadOnly()
@@ -169,7 +169,7 @@ export class TFileVersion extends TAttachedDoc implements FileVersion {
 
   @Prop(TypeString(), drive.string.Name)
   @Index(IndexKind.FullText)
-    name!: string
+    title!: string
 
   @Prop(TypeRef(core.class.Blob), drive.string.File)
   @ReadOnly()
@@ -444,7 +444,8 @@ function defineFolder (builder: Builder): void {
       label: presentation.string.Search,
       query: drive.completion.FolderQuery,
       context: ['search', 'mention', 'spotlight'],
-      classToSearch: drive.class.Folder
+      classToSearch: drive.class.Folder,
+      priority: 700
     },
     drive.completion.FolderCategory
   )
@@ -594,7 +595,8 @@ function defineFile (builder: Builder): void {
       label: presentation.string.Search,
       query: drive.completion.FileQuery,
       context: ['search', 'mention', 'spotlight'],
-      classToSearch: drive.class.File
+      classToSearch: drive.class.File,
+      priority: 600
     },
     drive.completion.FileCategory
   )

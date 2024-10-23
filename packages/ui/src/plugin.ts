@@ -99,6 +99,7 @@ export const uis = plugin(uiId, {
     DueDatePopupOverdueDescription: '' as IntlString,
 
     GettingWorkDone: '' as IntlString,
+    ExpressYourself: '' as IntlString,
     Smileys: '' as IntlString,
     Nature: '' as IntlString,
     Symbols: '' as IntlString,
@@ -115,7 +116,11 @@ export const uis = plugin(uiId, {
     Selected: '' as IntlString,
     Submit: '' as IntlString,
     NextStep: '' as IntlString,
-    TypeHere: '' as IntlString
+    TypeHere: '' as IntlString,
+
+    FullSize: '' as IntlString,
+    UseMaxWidth: '' as IntlString,
+    Sidebar: '' as IntlString
   },
   metadata: {
     DefaultApplication: '' as Metadata<AnyComponent>,

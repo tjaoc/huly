@@ -19,24 +19,27 @@
   import { getClient, isSpace } from '@hcengineering/presentation'
   import { getMessageFromLoc, messageInFocus } from '@hcengineering/activity-resources'
   import { location as locationStore } from '@hcengineering/ui'
+  import { onDestroy } from 'svelte'
 
   import chunter from '../plugin'
-  import ChannelScrollView from './ChannelScrollView.svelte'
   import { ChannelDataProvider } from '../channelDataProvider'
-  import { onDestroy } from 'svelte'
+  import ReverseChannelScrollView from './ReverseChannelScrollView.svelte'
 
   export let object: Doc
   export let context: DocNotifyContext | undefined
   export let filters: Ref<ActivityMessagesFilter>[] = []
   export let isAsideOpened = false
+  export let syncLocation = true
+  export let freeze = false
+  export let selectedMessageId: Ref<ActivityMessage> | undefined = undefined
 
   const client = getClient()
   const hierarchy = client.getHierarchy()
 
   let dataProvider: ChannelDataProvider | undefined
-  let selectedMessageId: Ref<ActivityMessage> | undefined = undefined
 
   const unsubscribe = messageInFocus.subscribe((id) => {
+    if (!syncLocation) return
     if (id !== undefined && id !== selectedMessageId) {
       selectedMessageId = id
     }
@@ -45,6 +48,7 @@
   })
 
   const unsubscribeLocation = locationStore.subscribe((newLocation) => {
+    if (!syncLocation) return
     const id = getMessageFromLoc(newLocation)
     selectedMessageId = id
     messageInFocus.set(id)
@@ -97,15 +101,13 @@
 </script>
 
 {#if dataProvider}
-  <ChannelScrollView
-    {object}
-    skipLabels={!isDocChannel}
-    selectedFilters={filters}
-    startFromBottom
+  <ReverseChannelScrollView
+    channel={object}
     bind:selectedMessageId
+    {object}
     {collection}
     provider={dataProvider}
-    {isAsideOpened}
+    {freeze}
     loadMoreAllowed={!isDocChannel}
   />
 {/if}

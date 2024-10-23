@@ -19,11 +19,12 @@
     Breadcrumbs,
     Button,
     Icon,
-    IconDetails,
     Label,
     SearchInput,
     Header,
-    HeaderAdaptive
+    HeaderAdaptive,
+    IconSettings,
+    IconDetailsFilled
   } from '@hcengineering/ui'
   import { createEventDispatcher } from 'svelte'
   import view from '@hcengineering/view'
@@ -31,9 +32,11 @@
   import { getClient } from '@hcengineering/presentation'
   import { Doc, Ref } from '@hcengineering/core'
   import { ActivityMessagesFilter } from '@hcengineering/activity'
+  import workbench from '@hcengineering/workbench'
 
   import { userSearch } from '../index'
-  import { navigateToSpecial } from '../navigation'
+  import chunter from '../plugin'
+  import { navigateToSpecial, openChannelInSidebar } from '../navigation'
   import ChannelMessagesFilter from './ChannelMessagesFilter.svelte'
 
   export let object: Doc | undefined = undefined
@@ -49,9 +52,12 @@
   export let isAsideShown: boolean = false
   export let titleKind: 'default' | 'breadcrumbs' = 'default'
   export let withFilters: boolean = false
+  export let withSearch: boolean = true
   export let filters: Ref<ActivityMessagesFilter>[] = []
   export let adaptive: HeaderAdaptive = 'default'
   export let hideActions: boolean = false
+  export let canOpenInSidebar: boolean = false
+  export let closeOnEscape: boolean = true
 
   const client = getClient()
   const dispatch = createEventDispatcher()
@@ -64,9 +70,10 @@
   {allowFullsize}
   type={allowClose ? 'type-aside' : 'type-component'}
   hideBefore={false}
-  hideActions={!((canOpen && object) || withAside || $$slots.actions) || hideActions}
+  hideActions={!((canOpen && object) || withAside || $$slots.actions || canOpenInSidebar) || hideActions}
   hideDescription={!description}
   adaptive={adaptive !== 'default' ? adaptive : withFilters ? 'freezeActions' : 'disabled'}
+  {closeOnEscape}
   on:click
   on:close
 >
@@ -110,55 +117,63 @@
   </svelte:fragment>
 
   <svelte:fragment slot="search" let:doubleRow>
-    <SearchInput
-      collapsed
-      bind:value={searchValue}
-      on:change={(ev) => {
-        userSearch.set(ev.detail)
+    {#if withSearch}
+      <SearchInput
+        collapsed
+        bind:value={searchValue}
+        on:change={(ev) => {
+          userSearch.set(ev.detail)
 
-        if (ev.detail !== '') {
-          navigateToSpecial('chunterBrowser')
-        }
-      }}
-    />
-    {#if withFilters}
-      <ChannelMessagesFilter bind:selectedFilters={filters} />
+          if (ev.detail !== '') {
+            navigateToSpecial('chunterBrowser')
+          }
+        }}
+      />
+      {#if withFilters}
+        <ChannelMessagesFilter bind:selectedFilters={filters} />
+      {/if}
+      <slot name="search" {doubleRow} />
     {/if}
-    <slot name="search" {doubleRow} />
   </svelte:fragment>
   <svelte:fragment slot="actions" let:doubleRow>
     <slot name="actions" {doubleRow} />
+    {#if canOpenInSidebar}
+      <Button
+        icon={IconDetailsFilled}
+        iconProps={{ size: 'small' }}
+        kind={'icon'}
+        showTooltip={{ label: workbench.string.OpenInSidebar }}
+        dataId="open-in-sidebar"
+        on:click={() => {
+          if (object !== undefined) {
+            void openChannelInSidebar(object._id, object._class, object, undefined, true)
+          }
+        }}
+      />
+    {/if}
     {#if canOpen && object}
       <Button
         icon={view.icon.Open}
         iconProps={{ size: 'small' }}
         kind={'icon'}
+        showTooltip={{ label: view.string.Open }}
         on:click={() => {
-          if (object) {
-            openDoc(client.getHierarchy(), object)
+          if (object !== undefined) {
+            void openDoc(client.getHierarchy(), object)
           }
         }}
       />
     {/if}
     {#if withAside}
       <Button
-        icon={IconDetails}
-        iconProps={{ size: 'medium', filled: isAsideShown }}
+        icon={IconSettings}
+        iconProps={{ size: 'medium' }}
         kind={'icon'}
+        dataId="aside-toggle"
+        showTooltip={{ label: chunter.string.Settings }}
         selected={isAsideShown}
         on:click={() => dispatch('aside-toggled')}
       />
     {/if}
   </svelte:fragment>
 </Header>
-
-<style lang="scss">
-  .title {
-    cursor: pointer;
-    color: var(--global-secondary-TextColor);
-
-    &:hover {
-      color: var(--global-primary-LinkColor);
-    }
-  }
-</style>

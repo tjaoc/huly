@@ -71,7 +71,6 @@
   {title}
   {description}
   selected={isSelected}
-  {isSecondary}
   count={elementsCount > 0 ? elementsCount : null}
   {type}
   withBackground={withIconBackground}
@@ -98,11 +97,15 @@
   <svelte:fragment slot="notify">
     {#if count != null && count > 0}
       <div class="antiHSpacer" />
-      <NotifyMarker {count} />
+      <div class="notify">
+        <NotifyMarker {count} />
+      </div>
       <div class="antiHSpacer" />
     {:else if secondaryNotifyMarker}
       <div class="antiHSpacer" />
-      <NotifyMarker count={0} kind="secondary" size="x-small" />
+      <div class="notify">
+        <NotifyMarker count={0} kind="simple" size="xx-small" />
+      </div>
       <div class="antiHSpacer" />
     {/if}
   </svelte:fragment>
@@ -125,5 +128,13 @@
       color: var(--global-primary-TextColor);
       background-color: var(--global-ui-highlight-BackgroundColor);
     }
+  }
+
+  .notify {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
   }
 </style>

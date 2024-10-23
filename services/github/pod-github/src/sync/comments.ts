@@ -12,8 +12,8 @@ import core, {
   Ref,
   TxOperations
 } from '@hcengineering/core'
-import { LiveQuery } from '@hcengineering/query'
 import github, { DocSyncInfo, GithubIntegrationRepository, GithubProject } from '@hcengineering/github'
+import { LiveQuery } from '@hcengineering/query'
 import { deepEqual } from 'fast-equals'
 import {
   ContainerFocus,
@@ -156,8 +156,8 @@ export class CommentSyncManager implements DocSyncManager {
     derivedClient: TxOperations,
     integration: IntegrationContainer
   ): Promise<void> {
-    const { repository } = await this.provider.getProjectAndRepository(event.repository.node_id)
-    if (repository === undefined) {
+    const { repository: repo } = await this.provider.getProjectAndRepository(event.repository.node_id)
+    if (repo === undefined) {
       this.ctx.info('No project for repository', {
         repository: event.repository,
         workspace: this.provider.getWorkspaceId().name
@@ -168,11 +168,12 @@ export class CommentSyncManager implements DocSyncManager {
     const account = (await this.provider.getAccountU(event.sender))?._id ?? core.account.System
     switch (event.action) {
       case 'created': {
-        await this.createSyncData(event, derivedClient, repository)
+        await this.createSyncData(event, derivedClient, repo)
         break
       }
       case 'deleted': {
         const syncData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: (event.comment.url ?? '').toLowerCase()
         })
         if (syncData !== undefined) {
@@ -183,6 +184,7 @@ export class CommentSyncManager implements DocSyncManager {
       }
       case 'edited': {
         const commentData = await this.client.findOne(github.class.DocSyncInfo, {
+          space: repo.githubProject as Ref<GithubProject>,
           url: (event.comment.url ?? '').toLowerCase()
         })
 
@@ -221,6 +223,7 @@ export class CommentSyncManager implements DocSyncManager {
     repo: GithubIntegrationRepository
   ): Promise<void> {
     const commentData = await this.client.findOne(github.class.DocSyncInfo, {
+      space: repo.githubProject as Ref<GithubProject>,
       url: (createdEvent.comment.url ?? '').toLowerCase()
     })
 
@@ -233,7 +236,7 @@ export class CommentSyncManager implements DocSyncManager {
         objectClass: chunter.class.ChatMessage,
         external: createdEvent.comment as CommentExternalData,
         externalVersion: githubExternalSyncVersion,
-        parent: createdEvent.issue.url,
+        parent: (createdEvent.issue.url ?? '').toLocaleLowerCase(),
         lastModified: new Date(createdEvent.comment.updated_at).getTime()
       })
       this.provider.sync()
@@ -248,11 +251,11 @@ export class CommentSyncManager implements DocSyncManager {
   ): Promise<DocumentUpdate<DocSyncInfo> | undefined> {
     const container = await this.provider.getContainer(info.space)
     if (container?.container === undefined) {
-      return {}
+      return { needSync: githubSyncVersion }
     }
     if (info.external === undefined) {
       // TODO: Use selected repository
-      const repo = container.repository.find((it) => it._id === parent?.repository)
+      const repo = await this.provider.getRepositoryById(parent?.repository)
       if (repo?.nodeId === undefined) {
         // No need to sync if parent repository is not defined.
         return { needSync: githubSyncVersion }
@@ -266,6 +269,7 @@ export class CommentSyncManager implements DocSyncManager {
     if (parent === undefined) {
       // Find parent by issue url
       parent = await this.client.findOne(github.class.DocSyncInfo, {
+        space: container.project._id,
         url: (comment.html_url.split('#')?.[0] ?? '').toLowerCase()
       })
     }
@@ -303,7 +307,7 @@ export class CommentSyncManager implements DocSyncManager {
     comment: CommentExternalData,
     account: Ref<Account>
   ): Promise<void> {
-    const repository = container.repository.find((it) => it._id === info.repository)
+    const repository = await this.provider.getRepositoryById(info.repository)
     if (repository === undefined) {
       return
     }
@@ -384,7 +388,7 @@ export class CommentSyncManager implements DocSyncManager {
     derivedClient: TxOperations
   ): Promise<DocumentUpdate<DocSyncInfo>> {
     // TODO: Use selected repository
-    const repo = container.repository.find((it) => it._id === parent?.repository)
+    const repo = await this.provider.getRepositoryById(parent?.repository)
     if (repo?.nodeId === undefined) {
       // No need to sync if parent repository is not defined.
       return { needSync: githubSyncVersion }
@@ -409,7 +413,7 @@ export class CommentSyncManager implements DocSyncManager {
         }
       })
       const upd: DocumentUpdate<DocSyncInfo> = {
-        parent: result?.data.html_url?.split('#')?.[0] ?? '',
+        parent: (result?.data.html_url?.split('#')?.[0] ?? '').toLowerCase(),
         url: (result?.data.url ?? '').toLowerCase(),
         external: result?.data as CommentExternalData,
         current: result?.data,
@@ -434,7 +438,7 @@ export class CommentSyncManager implements DocSyncManager {
     project: GithubProject
   ): Promise<void> {
     // No need to perform external sync for comments, so let's update marks
-    const tx = derivedClient.apply('comments_github' + project._id)
+    const tx = derivedClient.apply()
     for (const d of syncDocs) {
       await tx.update(d, { externalVersion: githubExternalSyncVersion })
     }
@@ -453,6 +457,9 @@ export class CommentSyncManager implements DocSyncManager {
     repositories: GithubIntegrationRepository[]
   ): Promise<void> {
     for (const repo of repositories) {
+      if (this.provider.isClosing()) {
+        break
+      }
       const syncKey = `${repo._id}:comment`
       if (repo.githubProject === undefined || !repo.enabled || integration.synchronized.has(syncKey)) {
         if (!repo.enabled) {
@@ -483,6 +490,9 @@ export class CommentSyncManager implements DocSyncManager {
       })
       try {
         for await (const data of i) {
+          if (this.provider.isClosing()) {
+            break
+          }
           const comments: CommentExternalData[] = data.data as any
           this.ctx.info('retrieve comments for', {
             repo: repo.name,
@@ -529,7 +539,7 @@ export class CommentSyncManager implements DocSyncManager {
             objectClass: chunter.class.ChatMessage,
             external: comment,
             externalVersion: githubExternalSyncVersion,
-            parent: comment.html_url.split('#')?.[0],
+            parent: (comment.html_url.split('#')?.[0] ?? '').toLowerCase(),
             repository: repo._id,
             lastModified
           })

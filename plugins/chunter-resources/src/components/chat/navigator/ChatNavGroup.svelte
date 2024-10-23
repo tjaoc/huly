@@ -14,7 +14,7 @@
 -->
 <script lang="ts">
   import activity from '@hcengineering/activity'
-  import core, { Class, Doc, groupByArray, reduceCalls, Ref } from '@hcengineering/core'
+  import core, { Class, Doc, groupByArray, reduceCalls, Ref, Space } from '@hcengineering/core'
   import { DocNotifyContext } from '@hcengineering/notification'
   import { InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
   import { IntlString } from '@hcengineering/platform'
@@ -39,8 +39,8 @@
   const client = getClient()
   const hierarchy = client.getHierarchy()
   const inboxClient = InboxNotificationsClientImpl.getClient()
-  const contextByDocStore = inboxClient.contextByDoc
   const contextsStore = inboxClient.contexts
+  const contextByDocStore = inboxClient.contextByDoc
   const objectsQueryByClass = new Map<Ref<Class<Doc>>, { query: LiveQuery, limit: number }>()
 
   let contexts: DocNotifyContext[] = []
@@ -50,7 +50,9 @@
 
   let sections: Section[] = []
 
-  $: contexts = $contextsStore.filter(({ objectClass, isPinned }) => {
+  $: contexts = $contextsStore.filter((it) => {
+    const { objectClass, isPinned, hidden } = it
+    if (hidden) return false
     if (model.isPinned !== isPinned) return false
     if (model._class !== undefined && model._class !== objectClass) return false
     if (model.skipClasses !== undefined && model.skipClasses.includes(objectClass)) return false
@@ -69,17 +71,23 @@
   })
 
   $: shouldPushObject =
-    object !== undefined && getObjectGroup(object) === model.id && !$contextByDocStore.has(object._id)
+    object !== undefined &&
+    getObjectGroup(object) === model.id &&
+    (!$contextByDocStore.has(object._id) || isArchived(object))
+
+  function isArchived (object: Doc): boolean {
+    return hierarchy.isDerived(object._class, core.class.Space) ? (object as Space).archived : false
+  }
 
   function loadObjects (contexts: DocNotifyContext[]): void {
     const contextsByClass = groupByArray(contexts, ({ objectClass }) => objectClass)
 
     for (const [_class, ctx] of contextsByClass.entries()) {
-      const isChunterSpace = hierarchy.isDerived(_class, chunter.class.ChunterSpace)
+      const isSpace = hierarchy.isDerived(_class, core.class.Space)
       const ids = ctx.map(({ objectId }) => objectId)
       const { query, limit } = objectsQueryByClass.get(_class) ?? {
         query: createQuery(),
-        limit: isChunterSpace ? -1 : model.maxSectionItems ?? 5
+        limit: isSpace ? -1 : model.maxSectionItems ?? 5
       }
 
       objectsQueryByClass.set(_class, { query, limit: limit ?? model.maxSectionItems ?? 5 })
@@ -88,7 +96,7 @@
         _class,
         {
           _id: { $in: limit !== -1 ? ids.slice(0, limit) : ids },
-          ...(isChunterSpace ? { space: core.space.Space } : {})
+          ...(isSpace ? { space: core.space.Space, archived: false } : {})
         },
         (res) => {
           objectsByClass = objectsByClass.set(_class, { docs: res, total: res.total })

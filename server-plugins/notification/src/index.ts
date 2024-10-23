@@ -31,6 +31,7 @@ import type { TriggerControl, TriggerFunc } from '@hcengineering/server-core'
  * @public
  */
 export const serverNotificationId = 'server-notification' as Plugin
+export { DOMAIN_USER_NOTIFY, DOMAIN_NOTIFICATION, DOMAIN_DOC_NOTIFY } from '@hcengineering/notification'
 
 /**
  * @public
@@ -52,6 +53,7 @@ export function getPersonAccountById (_id: Ref<Account>, control: TriggerControl
 export async function getEmployee (employee: Ref<Employee>, control: TriggerControl): Promise<Employee | undefined> {
   const account = (
     await control.findAll(
+      control.ctx,
       contact.mixin.Employee,
       {
         _id: employee
@@ -150,7 +152,8 @@ export default plugin(serverNotificationId, {
   metadata: {
     SesUrl: '' as Metadata<string>,
     PushPrivateKey: '' as Metadata<string>,
-    PushSubject: '' as Metadata<string>
+    PushSubject: '' as Metadata<string>,
+    InboxOnlyNotifications: '' as Metadata<boolean>
   },
   class: {
     NotificationProviderResources: '' as Ref<Class<NotificationProviderResources>>

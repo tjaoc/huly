@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-import { AccountRole, Doc, Ref, Timestamp } from '@hcengineering/core'
+import { AccountRole, Doc, Ref, Timestamp, WorkspaceMode, type BackupStatus } from '@hcengineering/core'
 import type { Asset, IntlString, Metadata, Plugin, Resource, Status } from '@hcengineering/platform'
 import { plugin } from '@hcengineering/platform'
 import type { AnyComponent } from '@hcengineering/ui'
@@ -31,20 +31,24 @@ export interface Workspace {
   workspaceName?: string // A company name
   workspaceId: string // A unique identifier for the workspace
 
-  creating?: boolean
-  createProgress?: number
+  mode?: WorkspaceMode
+  progress?: number
 
   lastVisit: number
+
+  backupInfo?: BackupStatus
+
+  region?: string
 }
 
 /**
  * @public
  */
 export interface WorkspaceLoginInfo extends LoginInfo {
-  workspace: string
-  workspaceId: string
-  creating?: boolean
-  createProgress?: number
+  workspace: string // worspaceUrl in db
+  workspaceId: string // workspace in db (actual ID)
+  mode?: WorkspaceMode
+  progress?: number
 }
 
 /**
@@ -68,7 +72,8 @@ export default plugin(loginId, {
     LoginTokens: '' as Metadata<Record<string, string>>,
     LastToken: '' as Metadata<string>,
     LoginEndpoint: '' as Metadata<string>,
-    LoginEmail: '' as Metadata<string>
+    LoginEmail: '' as Metadata<string>,
+    DisableSignUp: '' as Metadata<boolean>
   },
   component: {
     LoginApp: '' as AnyComponent,

@@ -21,6 +21,7 @@ import type {
   ArrOf,
   AttachedDoc,
   Blob,
+  Card,
   Class,
   Collection,
   Configuration,
@@ -82,6 +83,7 @@ export default plugin(coreId, {
   class: {
     Obj: '' as Ref<Class<Obj>>,
     Doc: '' as Ref<Class<Doc>>,
+    Card: '' as Ref<Class<Card>>,
     Blob: '' as Ref<Class<Blob>>,
     AttachedDoc: '' as Ref<Class<AttachedDoc>>,
     Class: '' as Ref<Class<Class<Obj>>>,
@@ -140,10 +142,10 @@ export default plugin(coreId, {
     StatusCategory: '' as Ref<Class<StatusCategory>>,
     MigrationState: '' as Ref<Class<MigrationState>>,
 
-    BenchmarkDoc: '' as Ref<Class<BenchmarkDoc>>
+    BenchmarkDoc: '' as Ref<Class<BenchmarkDoc>>,
+    FullTextSearchContext: '' as Ref<Mixin<FullTextSearchContext>>
   },
   mixin: {
-    FullTextSearchContext: '' as Ref<Mixin<FullTextSearchContext>>,
     ConfigurationElement: '' as Ref<Mixin<ConfigurationElement>>,
     IndexConfiguration: '' as Ref<Mixin<IndexingConfiguration<Doc>>>,
     SpacesTypeData: '' as Ref<Mixin<Space>>

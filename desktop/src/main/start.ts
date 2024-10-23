@@ -13,20 +13,21 @@
 // limitations under the License.
 //
 
-import { BrowserWindow, CookiesSetDetails, Notification, app, ipcMain, nativeImage, shell, dialog, systemPreferences, desktopCapturer } from 'electron'
-import contextMenu from 'electron-context-menu'
-import WinBadge from 'electron-windows-badge'
-import Store from 'electron-store'
-import * as path from 'path'
 import { config as dotenvConfig } from 'dotenv'
+import { BrowserWindow, CookiesSetDetails, Notification, app, desktopCapturer, dialog, ipcMain, nativeImage, shell, systemPreferences } from 'electron'
+import contextMenu from 'electron-context-menu'
 import log from 'electron-log'
+import Store from 'electron-store'
 import { ProgressInfo, UpdateInfo } from 'electron-updater'
+import WinBadge from 'electron-windows-badge'
+import * as path from 'path'
 
-import autoUpdater from './updater'
-import { NotificationParams, Config } from '../ui/types'
-import { addMenus } from './menu'
+import { Config, NotificationParams } from '../ui/types'
 import { getOptions } from './args'
+import { cancelBackup, startBackup } from './backup'
+import { addMenus } from './menu'
 import { addPermissionHandlers } from './permissions'
+import autoUpdater from './updater'
 
 let mainWindow: BrowserWindow | undefined
 let winBadge: any
@@ -115,12 +116,26 @@ function hookOpenWindow (window: BrowserWindow): void {
             ]
           }
         })
-        // await childWindow.webContents.openDevTools()
         await childWindow.loadFile(path.join('dist', 'ui', 'index.html'))
         hookOpenWindow(childWindow)
       })()
     }
     return { action: 'deny' }
+  })
+}
+
+function handleAuthRedirects (window: BrowserWindow): void {
+  window.webContents.on('will-redirect', (event) => {
+    if (event?.url.startsWith(`${FRONT_URL}/login/auth`)) {
+      console.log('Auth happened, redirecting to local index')
+      const urlObj = new URL(decodeURIComponent(event.url))
+      event.preventDefault()
+
+      void (async (): Promise<void> => {
+        await window.loadFile(path.join('dist', 'ui', 'index.html'))
+        window.webContents.send('handle-auth', urlObj.searchParams.get('token'))
+      })()
+    }
   })
 }
 
@@ -146,6 +161,7 @@ const createWindow = async (): Promise<void> => {
   }
   await mainWindow.loadFile(path.join('dist', 'ui', 'index.html'))
   addPermissionHandlers(mainWindow.webContents.session)
+  handleAuthRedirects(mainWindow)
 
   // In this example, only windows with the `about:blank` url will be created.
   // All other urls will be blocked.
@@ -165,8 +181,8 @@ const createWindow = async (): Promise<void> => {
   }
 }
 
-addMenus((cmd: string, ...args: any[]) => {
-  mainWindow?.webContents.send(cmd, args)
+addMenus(() => mainWindow as BrowserWindow, (cmd: string, ...args: any[]) => {
+  mainWindow?.webContents.send(cmd, ...args)
 })
 
 contextMenu({
@@ -227,7 +243,7 @@ ipcMain.handle('get-main-config', (event, path) => {
     FRONT_URL,
     INITIAL_URL: process.env.INITIAL_URL ?? '',
     MODEL_VERSION: process.env.MODEL_VERSION ?? '',
-    VERSION: process.env.VERSION ?? '',
+    VERSION: process.env.VERSION ?? ''
   }
   return cfg
 })
@@ -365,7 +381,12 @@ if (isMac) {
   })
 }
 
+// Note: it is reset when the app is relaunched after update
+let isUpdating = false
+
 autoUpdater.on('update-available', (info: UpdateInfo) => {
+  if (isUpdating) return
+
   void dialog
     .showMessageBox({
       type: 'info',
@@ -379,15 +400,21 @@ autoUpdater.on('update-available', (info: UpdateInfo) => {
       if (response !== 0) {
         app.quit()
       }
+      isUpdating = true
+      setDownloadProgress(0)
     })
 })
 
 autoUpdater.on('download-progress', (progressObj: ProgressInfo) => {
+  setDownloadProgress(progressObj.percent)
+})
+
+function setDownloadProgress (percent: number): void {
   if (mainWindow === undefined) return
 
-  mainWindow.setProgressBar(progressObj.percent / 100)
-  mainWindow.webContents.send('handle-update-download-progress', progressObj.percent)
-})
+  mainWindow.setProgressBar(percent / 100)
+  mainWindow.webContents.send('handle-update-download-progress', percent)
+}
 
 autoUpdater.on('update-downloaded', (info) => {
   // We have listeners that prevents the app from being exited on mac
@@ -395,4 +422,17 @@ autoUpdater.on('update-downloaded', (info) => {
   mainWindow?.removeAllListeners('close')
 
   autoUpdater.quitAndInstall()
+})
+
+ipcMain.on('start-backup', (event, token, endpoint, workspace) => {
+  console.log('start backup', token, endpoint, workspace)
+  if (mainWindow != null) {
+    startBackup(mainWindow, token, endpoint, workspace, (cmd: string, ...args: any[]) => {
+      mainWindow?.webContents.send(cmd, ...args)
+    })
+  }
+})
+
+ipcMain.on('cancel-backup', (event) => {
+  cancelBackup()
 })

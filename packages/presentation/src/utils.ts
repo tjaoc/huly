@@ -16,6 +16,7 @@
 
 import { Analytics } from '@hcengineering/analytics'
 import core, {
+  MeasureMetricsContext,
   TxOperations,
   TxProcessor,
   getCurrentAccount,
@@ -53,9 +54,11 @@ import view, { type AttributeCategory, type AttributeEditor } from '@hcengineeri
 import { deepEqual } from 'fast-equals'
 import { onDestroy } from 'svelte'
 import { get, writable, type Writable } from 'svelte/store'
+
 import { type KeyedAttribute } from '..'
 import { OptimizeQueryMiddleware, PresentationPipelineImpl, type PresentationPipeline } from './pipeline'
 import plugin from './plugin'
+
 export { reduceCalls } from '@hcengineering/core'
 
 let liveQuery: LQ
@@ -89,6 +92,8 @@ export function removeTxListener (l: (tx: Tx) => void): void {
 export interface OptimisticTxes {
   pendingCreatedDocs: Writable<Record<Ref<Doc>, boolean>>
 }
+
+export const uiContext = new MeasureMetricsContext('client-ui', {})
 
 class UIClient extends TxOperations implements Client, OptimisticTxes {
   hook = getMetadata(plugin.metadata.ClientHook)
@@ -184,7 +189,7 @@ class UIClient extends TxOperations implements Client, OptimisticTxes {
     if (tx._class === core.class.TxApplyIf) {
       const applyTx = tx as TxApplyIf
 
-      if (applyTx.match.length !== 0 || applyTx.notMatch.length !== 0) {
+      if ((applyTx.match?.length ?? 0) !== 0 || (applyTx.notMatch?.length ?? 0) !== 0) {
         // Cannot early apply conditional transactions
         return
       }
@@ -684,7 +689,7 @@ export function setPresentationCookie (token: string, workspaceId: string): void
   setToken('/files/' + workspaceId)
 }
 
-export const upgradeDownloadProgress = writable(0)
+export const upgradeDownloadProgress = writable(-1)
 
 export function setDownloadProgress (percent: number): void {
   if (Number.isNaN(percent)) {

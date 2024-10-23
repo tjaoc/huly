@@ -13,6 +13,7 @@ on:
     branches: [develop]
     tags:
       - v*
+      - s*
   pull_request:
     branches: [develop, main]
 
@@ -33,12 +34,14 @@ env:
     server-plugins
     templates
     services
+    workers
     tests
     qms-tests
     rush.json
     .prettierrc
     tools
   PublishTempFolder: publish_artifacts
+  MODEL_VERSION_MODE: ${{ startsWith(github.ref, 'refs/tags/s') && 'tagTime' || 'file' }}
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -188,6 +191,7 @@ jobs:
       - name: Testing...
         run: node common/scripts/install-run-rush.js test
         env:
+          DB_URL: 'postgresql://postgres:example@localhost:5433'
           ELASTIC_URL: 'http://localhost:9201'
           MONGO_URL: 'mongodb://localhost:27018'
   uitest:
@@ -231,10 +235,26 @@ jobs:
         run: |
           cd ./tests/sanity
           node ../../common/scripts/install-run-rushx.js ci
+      - name: Start profiling
+        run: |
+          cd ./tests
+          ./profile-start.sh
       - name: Run UI tests
         run: |
-          cd ./tests/sanity
+          cd ./tests/sanity          
           node ../../common/scripts/install-run-rushx.js uitest
+      - name: Download profile
+        run: |
+          cd ./tests
+          ./profile-download.sh
+          npm install -g cpupro
+          ./profile-generate.sh
+      - name: Upload profiling results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profiling
+          path: ./tests/profiles
       - name: 'Store docker logs'
         if: always()
         run: |
@@ -291,6 +311,71 @@ jobs:
       #   with:
       #     name: db-snapshot
       #     path: ./tests/db_dump
+  uitest-pg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: tree:0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Cache node modules
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-node-platform
+        with:
+          path: |
+            common/temp
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+
+      - name: Checking for mis-matching dependencies...
+        run: node common/scripts/install-run-rush.js check
+
+      - name: Installing...
+        run: node common/scripts/install-run-rush.js install
+
+      - name: Docker Build
+        run: node common/scripts/install-run-rush.js docker:build  -p 20
+        env:
+          DOCKER_CLI_HINTS: false
+      - name: Prepare server
+        run: |
+          cd ./tests
+          export DO_CLEAN="true"
+          ./prepare-pg.sh
+      - name: Install Playwright
+        run: |
+          cd ./tests/sanity
+          node ../../common/scripts/install-run-rushx.js ci
+      - name: Run UI tests
+        run: |
+          cd ./tests/sanity
+          node ../../common/scripts/install-run-rushx.js uitest
+      - name: 'Store docker logs'
+        if: always()
+        run: |
+          cd ./tests/sanity
+          mkdir logs
+          docker logs $(docker ps | grep transactor | cut -f 1 -d ' ') > logs/transactor.log
+          docker logs $(docker ps | grep account | cut -f 1 -d ' ') > logs/account.log
+          docker logs $(docker ps | grep front | cut -f 1 -d ' ') > logs/front.log
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-pg
+          path: ./tests/sanity/playwright-report/
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs-pg
+          path: ./tests/sanity/logs
   uitest-qms:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -323,6 +408,9 @@ jobs:
         run: node common/scripts/install-run-rush.js docker:build  -p 20
         env:
           DOCKER_CLI_HINTS: false
+      - name: Configure /etc/hosts
+        run: |
+            sudo echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
       - name: Prepare server
         run: |
           cd ./qms-tests
@@ -385,79 +473,6 @@ jobs:
         with:
           name: docker-logs-qms
           path: ./qms-tests/sanity/logs
-  uitest-uweb:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          filter: tree:0
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-      - name: Cache node modules
-        uses: actions/cache@v4
-        env:
-          cache-name: cache-node-platform
-        with:
-          path: |
-            common/temp
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-
-      - name: Checking for mis-matching dependencies...
-        run: node common/scripts/install-run-rush.js check
-
-      - name: Installing...
-        run: node common/scripts/install-run-rush.js install
-
-      - name: Docker Build
-        run: node common/scripts/install-run-rush.js docker:build  -p 20
-        env:
-          DOCKER_CLI_HINTS: false
-      - name: Prepare server
-        env:
-          SERVER_PROVIDER: uweb
-        run: |
-          cd ./tests
-          ./prepare.sh
-      - name: Install Playwright
-        run: |
-          cd ./tests/sanity
-          node ../../common/scripts/install-run-rushx.js ci
-      - name: Run UI tests
-        run: |
-          cd ./tests/sanity
-          node ../../common/scripts/install-run-rushx.js uitest
-      - name: 'Store docker logs'
-        if: always()
-        run: |
-          cd ./tests/sanity
-          mkdir logs
-          docker logs $(docker ps | grep transactor | cut -f 1 -d ' ') > logs/uweb-transactor.log
-          docker logs $(docker ps | grep account | cut -f 1 -d ' ') > logs/uweb-account.log
-          docker logs $(docker ps | grep front | cut -f 1 -d ' ') > logs/uweb-front.log
-          docker logs $(docker ps | grep collaborator | cut -f 1 -d ' ') > logs/uweb-collaborator.log
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-results-uweb
-          path: ./tests/sanity/playwright-report/
-      - name: Upload Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-logs-uweb
-          path: ./tests/sanity/logs
-      # - name: Upload DB snapshot
-      #   if: always()
-      #   uses: actions/upload-artifact@v3
-      #   with:
-      #     name: db-snapshot
-      #     path: ./tests/db_dump
   docker-build:
     needs: [build, test, svelte-check, uitest]
     runs-on: ubuntu-latest
@@ -504,7 +519,7 @@ jobs:
           DOCKER_CLI_HINTS: false
           DOCKER_EXTRA: --platform=linux/amd64,linux/arm64
       - name: Login to Docker Hub
-        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/s') }}
         uses: docker/login-action@v3
         with:
           username: hardcoreeng
@@ -513,13 +528,13 @@ jobs:
       #   if: ${{ github.ref == 'refs/heads/main' }}
       #   run: node common/scripts/install-run-rush.js docker:staging -v
       - name: Docker push tag
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/s') }}
         run: |
           echo Pushing release of tag ${{ github.ref }}
           node common/scripts/install-run-rush.js docker:push -v
   dist-build:
-    # if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    # if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/s') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/s') }}
     needs: build
     runs-on: macos-latest
     timeout-minutes: 60

@@ -43,9 +43,8 @@
 
   const me = getCurrentAccount()
 
-  $: filteredApps = apps.filter((it) => !hiddenAppsIds.includes(it._id) && isAppAllowed(it, me))
-  $: topApps = filteredApps.filter((it) => it.position === 'top')
-  $: bottomdApps = filteredApps.filter((it) => it.position !== 'top')
+  $: topApps = apps.filter((it) => it.position === 'top')
+  $: bottomdApps = apps.filter((it) => !hiddenAppsIds.includes(it._id) && isAppAllowed(it, me) && it.position !== 'top')
 </script>
 
 <div class="flex-{direction === 'horizontal' ? 'row-center' : 'col-center'} clear-mins apps-{direction} relative">
@@ -59,13 +58,13 @@
       buttons={'union'}
     >
       {#each topApps as app}
-        <NavLink app={app.alias} shrink={0}>
+        <NavLink app={app.alias} shrink={0} disabled={app._id === active}>
           <AppItem selected={app._id === active} icon={app.icon} label={app.label} />
         </NavLink>
       {/each}
       <div class="divider" />
       {#each bottomdApps as app}
-        <NavLink app={app.alias} shrink={0}>
+        <NavLink app={app.alias} shrink={0} disabled={app._id === active}>
           <AppItem selected={app._id === active} icon={app.icon} label={app.label} />
         </NavLink>
       {/each}

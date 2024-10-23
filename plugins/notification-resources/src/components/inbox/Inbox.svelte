@@ -15,7 +15,7 @@
 <script lang="ts">
   import activity, { ActivityMessage } from '@hcengineering/activity'
   import chunter from '@hcengineering/chunter'
-  import { Doc, getCurrentAccount, groupByArray, IdMap, Ref, SortingOrder, Space } from '@hcengineering/core'
+  import { Class, Doc, getCurrentAccount, groupByArray, IdMap, Ref, SortingOrder } from '@hcengineering/core'
   import { DocNotifyContext, InboxNotification, notificationId } from '@hcengineering/notification'
   import { ActionContext, createQuery, getClient } from '@hcengineering/presentation'
   import {
@@ -37,6 +37,7 @@
   import view, { decodeObjectURI } from '@hcengineering/view'
   import { parseLinkId } from '@hcengineering/view-resources'
   import { get } from 'svelte/store'
+  import { getResource } from '@hcengineering/platform'
 
   import { InboxNotificationsClientImpl } from '../../inboxNotificationsClient'
   import notification from '../../plugin'
@@ -46,10 +47,6 @@
   import InboxMenuButton from './InboxMenuButton.svelte'
   import { onDestroy } from 'svelte'
   import SettingsButton from './SettingsButton.svelte'
-
-  export let currentSpace: Ref<Space> | undefined = undefined
-  export let asideComponent: AnyComponent | undefined = undefined
-  export let asideId: string | undefined = undefined
 
   const client = getClient()
   const hierarchy = client.getHierarchy()
@@ -70,6 +67,9 @@
   }
 
   const linkProviders = client.getModel().findAllSync(view.mixin.LinkIdProvider, {})
+
+  let urlObjectId: Ref<Doc> | undefined = undefined
+  let urlObjectClass: Ref<Class<Doc>> | undefined = undefined
 
   let showArchive = false
   let archivedActivityNotifications: InboxNotification[] = []
@@ -145,7 +145,7 @@
   $: filteredData = filterData(filter, selectedTabId, inboxData, $contextByIdStore)
 
   const unsubscribeLoc = locationStore.subscribe((newLocation) => {
-    void syncLocation(newLocation, $contextByDocStore)
+    void syncLocation(newLocation)
   })
 
   let isContextsLoaded = false
@@ -156,11 +156,11 @@
     }
 
     const loc = getCurrentLocation()
-    void syncLocation(loc, docs)
+    void syncLocation(loc)
     isContextsLoaded = true
   })
 
-  async function syncLocation (newLocation: Location, contextByDoc: Map<Ref<Doc>, DocNotifyContext>): Promise<void> {
+  async function syncLocation (newLocation: Location): Promise<void> {
     const loc = await resolveLocation(newLocation)
     if (loc?.loc.path[2] !== notificationId) {
       return
@@ -168,13 +168,19 @@
 
     if (loc?.loc.path[3] == null) {
       selectedContext = undefined
+      urlObjectId = undefined
+      urlObjectClass = undefined
       restoreLocation(newLocation, notificationId)
       return
     }
 
     const [id, _class] = decodeObjectURI(loc?.loc.path[3] ?? '')
     const _id = await parseLinkId(linkProviders, id, _class)
-    const context = _id ? contextByDoc.get(_id) : undefined
+    urlObjectId = _id
+    urlObjectClass = _class
+    const thread = loc?.loc.path[4] as Ref<ActivityMessage>
+    const queryContext = loc.loc.query?.context as Ref<DocNotifyContext>
+    const context = $contextByIdStore.get(queryContext) ?? $contextByDocStore.get(thread) ?? $contextByDocStore.get(_id)
 
     selectedContextId = context?._id
 
@@ -183,6 +189,11 @@
     }
 
     const selectedMessageId = loc?.loc.query?.message as Ref<ActivityMessage> | undefined
+
+    if (thread !== undefined) {
+      const fn = await getResource(chunter.function.OpenThreadInSidebar)
+      void fn(thread, undefined, undefined, selectedMessageId)
+    }
 
     if (selectedMessageId !== undefined) {
       selectedMessage = get(inboxClient.activityInboxNotifications).find(
@@ -196,7 +207,7 @@
 
   $: selectedContext = selectedContextId ? selectedContext ?? $contextByIdStore.get(selectedContextId) : undefined
 
-  $: void updateSelectedPanel(selectedContext)
+  $: void updateSelectedPanel(selectedContext, urlObjectClass)
   $: void updateTabItems(inboxData, $contextsStore)
 
   async function updateTabItems (inboxData: InboxData, notifyContexts: DocNotifyContext[]): Promise<void> {
@@ -253,29 +264,42 @@
 
     const selectedNotification: InboxNotification | undefined = event?.detail?.notification
 
-    void selectInboxContext(linkProviders, selectedContext, selectedNotification)
+    void selectInboxContext(linkProviders, selectedContext, selectedNotification, event?.detail.object)
+  }
+  function isChunterChannel (selectedContext: DocNotifyContext, urlObjectClass?: Ref<Class<Doc>>): boolean {
+    const isActivityMessageContext = hierarchy.isDerived(selectedContext.objectClass, activity.class.ActivityMessage)
+    const chunterClass = isActivityMessageContext
+      ? urlObjectClass ?? selectedContext.objectClass
+      : selectedContext.objectClass
+    return hierarchy.isDerived(chunterClass, chunter.class.ChunterSpace)
   }
 
-  async function updateSelectedPanel (selectedContext?: DocNotifyContext): Promise<void> {
+  async function updateSelectedPanel (
+    selectedContext?: DocNotifyContext,
+    urlObjectClass?: Ref<Class<Doc>>
+  ): Promise<void> {
     if (selectedContext === undefined) {
       selectedComponent = undefined
       return
     }
 
-    const isChunterChannel = hierarchy.isDerived(selectedContext.objectClass, chunter.class.ChunterSpace)
-    const panelComponent = hierarchy.classHierarchyMixin(selectedContext.objectClass, view.mixin.ObjectPanel)
+    const isChunter = isChunterChannel(selectedContext, urlObjectClass)
+    const panelComponent = hierarchy.classHierarchyMixin(
+      isChunter ? urlObjectClass ?? selectedContext.objectClass : selectedContext.objectClass,
+      view.mixin.ObjectPanel
+    )
 
     selectedComponent = panelComponent?.component ?? view.component.EditDoc
 
     const contextNotifications = $notificationsByContextStore.get(selectedContext._id) ?? []
 
-    const ops = getClient().apply(selectedContext._id, 'readNotifications')
+    const ops = getClient().apply(undefined, 'readNotifications')
     try {
       await inboxClient.readNotifications(
         ops,
         contextNotifications
           .filter(({ _class, isViewed }) =>
-            isChunterChannel ? _class === notification.class.CommonInboxNotification : !isViewed
+            isChunter ? _class === notification.class.CommonInboxNotification : !isViewed
           )
           .map(({ _id }) => _id)
       )
@@ -370,6 +394,7 @@
     }
   ]
   $: $deviceInfo.replacedPanel = replacedPanel
+
   onDestroy(() => {
     $deviceInfo.replacedPanel = undefined
     unsubscribeLoc()
@@ -423,13 +448,17 @@
       short
     />
   {/if}
-  <div bind:this={replacedPanel} class="hulyComponent" class:beforeAside={asideComponent !== undefined && asideId}>
+  <div bind:this={replacedPanel} class="hulyComponent">
     {#if selectedContext && selectedComponent}
       <Component
         is={selectedComponent}
         props={{
-          _id: selectedContext.objectId,
-          _class: selectedContext.objectClass,
+          _id: isChunterChannel(selectedContext, urlObjectClass)
+            ? urlObjectId ?? selectedContext.objectId
+            : selectedContext.objectId,
+          _class: isChunterChannel(selectedContext, urlObjectClass)
+            ? urlObjectClass ?? selectedContext.objectClass
+            : selectedContext.objectClass,
           context: selectedContext,
           activityMessage: selectedMessage,
           props: { context: selectedContext }
@@ -438,12 +467,6 @@
       />
     {/if}
   </div>
-  {#if asideComponent !== undefined && asideId}
-    <Separator name={'inbox'} index={1} color={'var(--theme-divider-color)'} separatorSize={1} />
-    <div class="hulyComponent aside">
-      <Component is={asideComponent} props={{ currentSpace, _id: asideId }} on:close />
-    </div>
-  {/if}
 </div>
 
 <style lang="scss">

@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-import { codeBlockOptions, codeOptions } from '@hcengineering/text'
+import { codeOptions } from '@hcengineering/text'
 import { showPopup } from '@hcengineering/ui'
 import { type Editor, Extension } from '@tiptap/core'
 import type { CodeOptions } from '@tiptap/extension-code'
@@ -27,6 +27,7 @@ import Underline from '@tiptap/extension-underline'
 import StarterKit from '@tiptap/starter-kit'
 
 import LinkPopup from '../components/LinkPopup.svelte'
+import { CodeBlockHighlighExtension, codeBlockHighlightOptions } from '../components/extension/codeblock'
 
 export interface DefaultKitOptions {
   codeBlock?: Partial<CodeBlockOptions> | false
@@ -50,7 +51,7 @@ export const DefaultKit = Extension.create<DefaultKitOptions>({
           }
         },
         code: this.options.code ?? codeOptions,
-        codeBlock: this.options.codeBlock ?? codeBlockOptions,
+        codeBlock: false,
         hardBreak: this.options.hardBreak,
         heading: this.options.heading,
         history: this.options.history
@@ -63,7 +64,8 @@ export const DefaultKit = Extension.create<DefaultKitOptions>({
       Link.configure({
         openOnClick: true,
         HTMLAttributes: { class: 'cursor-pointer', rel: 'noopener noreferrer', target: '_blank' }
-      })
+      }),
+      CodeBlockHighlighExtension.configure(codeBlockHighlightOptions)
     ]
   }
 })
@@ -71,11 +73,14 @@ export const DefaultKit = Extension.create<DefaultKitOptions>({
 export async function formatLink (editor: Editor): Promise<void> {
   const link = editor.getAttributes('link').href
 
-  showPopup(LinkPopup, { link }, undefined, undefined, (newLink) => {
-    if (newLink === '') {
-      editor.chain().focus().extendMarkRange('link').unsetLink().run()
-    } else {
-      editor.chain().focus().extendMarkRange('link').setLink({ href: newLink }).run()
-    }
+  // give editor some time to handle blur event
+  setTimeout(() => {
+    showPopup(LinkPopup, { link }, undefined, undefined, (newLink) => {
+      if (newLink === '') {
+        editor.chain().focus().extendMarkRange('link').unsetLink().run()
+      } else {
+        editor.chain().focus().extendMarkRange('link').setLink({ href: newLink }).run()
+      }
+    })
   })
 }

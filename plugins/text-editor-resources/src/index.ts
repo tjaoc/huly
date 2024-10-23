@@ -18,7 +18,7 @@ import { type Resources } from '@hcengineering/platform'
 import { formatLink } from './kits/default-kit'
 import { isEditable, isHeadingVisible } from './kits/editor-kit'
 import { openTableOptions, isEditableTableActive } from './components/extension/table/table'
-import { openImage, expandImage, moreImageActions } from './components/extension/imageExt'
+import { openImage, downloadImage, expandImage, moreImageActions } from './components/extension/imageExt'
 import { configureNote, isEditableNote } from './components/extension/note'
 
 export * from '@hcengineering/presentation/src/types'
@@ -73,12 +73,8 @@ export { InlineToolbarExtension, type InlineStyleToolbarOptions } from './compon
 export { ImageExtension, type ImageOptions } from './components/extension/imageExt'
 export { ImageUploadExtension, type ImageUploadOptions } from './components/extension/imageUploadExt'
 export * from './command/deleteAttachment'
-export {
-  TiptapCollabProvider,
-  type TiptapCollabProviderConfiguration,
-  createTiptapCollaborationData
-} from './provider/tiptap'
-export { formatCollaborativeDocumentId, formatPlatformDocumentId } from './provider/utils'
+export { createTiptapCollaborationData } from './provider/utils'
+export { type Provider } from './provider/types'
 
 export default async (): Promise<Resources> => ({
   function: {
@@ -86,6 +82,7 @@ export default async (): Promise<Resources> => ({
     OpenTableOptions: openTableOptions,
     OpenImage: openImage,
     ExpandImage: expandImage,
+    DownloadImage: downloadImage,
     MoreImageActions: moreImageActions,
     ConfigureNote: configureNote,
     IsEditableTableActive: isEditableTableActive,

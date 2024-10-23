@@ -47,7 +47,7 @@ export type {
   MouseTargetEvent
 } from './types'
 
-export { themeStore } from '@hcengineering/theme'
+export { themeStore, languageStore } from '@hcengineering/theme'
 // export { applicationShortcutKey } from './utils'
 export { getCurrentLocation, locationToUrl, navigate, location, setLocationStorageKey } from './location'
 
@@ -96,6 +96,7 @@ export { default as DatePresenter } from './components/calendar/DatePresenter.sv
 export { default as DueDatePresenter } from './components/calendar/DueDatePresenter.svelte'
 export { default as DateTimePresenter } from './components/calendar/DateTimePresenter.svelte'
 export { default as TimeInputBox } from './components/calendar/TimeInputBox.svelte'
+export { default as Html } from './components/Html.svelte'
 export { default as StylishEdit } from './components/StylishEdit.svelte'
 export { default as Grid } from './components/Grid.svelte'
 export { default as Row } from './components/Row.svelte'
@@ -156,6 +157,7 @@ export { default as Hotkey } from './components/Hotkey.svelte'
 export { default as HotkeyGroup } from './components/HotkeyGroup.svelte'
 export { default as ModernWizardDialog } from './components/wizard/ModernWizardDialog.svelte'
 export { default as ModernWizardBar } from './components/wizard/ModernWizardBar.svelte'
+export { default as ModernTab } from './components/ModernTab.svelte'
 
 export { default as IconAdd } from './components/icons/Add.svelte'
 export { default as IconCircleAdd } from './components/icons/CircleAdd.svelte'

@@ -81,6 +81,8 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
     process.exit(1)
   }
 
+  const collaborator = process.env.COLLABORATOR
+
   const modelVersion = process.env.MODEL_VERSION
   if (modelVersion === undefined) {
     console.error('please provide model version requirement')
@@ -97,6 +99,11 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
   if (serverSecret === undefined) {
     console.log('Please provide server secret')
     process.exit(1)
+  }
+
+  let uploadConfig = process.env.UPLOAD_CONFIG
+  if (uploadConfig === undefined) {
+    uploadConfig = ''
   }
 
   let previewConfig = process.env.PREVIEW_CONFIG
@@ -116,6 +123,8 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
 
   setMetadata(serverToken.metadata.Secret, serverSecret)
 
+  const disableSignUp = process.env.DISABLE_SIGNUP
+
   const config = {
     elasticUrl,
     storageAdapter,
@@ -129,9 +138,12 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
     rekoniUrl,
     calendarUrl,
     collaboratorUrl,
+    collaborator,
     brandingUrl,
     previewConfig,
-    pushPublicKey
+    uploadConfig,
+    pushPublicKey,
+    disableSignUp
   }
   console.log('Starting Front service with', config)
   const shutdown = start(ctx, config, SERVER_PORT, extraConfig)

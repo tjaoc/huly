@@ -93,6 +93,11 @@
   $: if (element != null) {
     element.focus()
   }
+
+  function getContextKey (index: number): string {
+    const contextId = displayData[index][0]
+    return contextId ?? index.toString()
+  }
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
@@ -102,12 +107,14 @@
     bind:this={list}
     bind:selection={listSelection}
     count={displayData.length}
+    items={displayData}
     highlightIndex={displayData.findIndex(([context]) => context === selectedContext)}
     noScroll
     minHeight="5.625rem"
     kind="full-size"
     colorsSchema="lumia"
     lazy={true}
+    getKey={getContextKey}
   >
     <svelte:fragment slot="item" let:item={itemIndex}>
       {@const contextId = displayData[itemIndex][0]}

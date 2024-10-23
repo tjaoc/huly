@@ -39,7 +39,7 @@ import { taskId } from '@hcengineering/task'
 import telegram, { telegramId } from '@hcengineering/telegram'
 import { templatesId } from '@hcengineering/templates'
 import tracker, { trackerId } from '@hcengineering/tracker'
-import uiPlugin, { getCurrentLocation, locationStorageKeyId, navigate, setLocationStorageKey } from '@hcengineering/ui'
+import uiPlugin, { getCurrentLocation, locationStorageKeyId, locationToUrl, navigate, parseLocation, setLocationStorageKey } from '@hcengineering/ui'
 import { uploaderId } from '@hcengineering/uploader'
 import { viewId } from '@hcengineering/view'
 import workbench, { workbenchId } from '@hcengineering/workbench'
@@ -52,6 +52,7 @@ import { productsId } from '@hcengineering/products'
 import { questionsId } from '@hcengineering/questions'
 import { trainingId } from '@hcengineering/training'
 import { documentsId } from '@hcengineering/controlled-documents'
+import aiBot, { aiBotId } from '@hcengineering/ai-bot'
 
 import '@hcengineering/activity-assets'
 import '@hcengineering/attachment-assets'
@@ -95,14 +96,14 @@ import '@hcengineering/analytics-collector-assets'
 import '@hcengineering/text-editor-assets'
 
 import { coreId } from '@hcengineering/core'
-import presentation, { parsePreviewConfig, presentationId } from '@hcengineering/presentation'
+import presentation, { parsePreviewConfig, parseUploadConfig, presentationId } from '@hcengineering/presentation'
 import textEditor, { textEditorId } from '@hcengineering/text-editor'
 import love, { loveId } from '@hcengineering/love'
 import print, { printId } from '@hcengineering/print'
 import sign from '@hcengineering/sign'
 import analyticsCollector, { analyticsCollectorId } from '@hcengineering/analytics-collector'
 
-import { setDefaultLanguage } from '@hcengineering/theme'
+import { setDefaultLanguage, initThemeStore } from '@hcengineering/theme'
 import { configureNotifications } from './notifications'
 import { Config, IPCMainExposed, Branding } from './types'
 
@@ -204,9 +205,10 @@ export async function configurePlatform (): Promise<void> {
   setMetadata(presentation.metadata.FilesURL, config.FILES_URL)
   setMetadata(presentation.metadata.CollaboratorUrl, config.COLLABORATOR_URL)
   setMetadata(presentation.metadata.PreviewConfig, parsePreviewConfig(config.PREVIEW_CONFIG))
+  setMetadata(presentation.metadata.UploadConfig, parseUploadConfig(config.UPLOAD_CONFIG, config.UPLOAD_URL))
   setMetadata(presentation.metadata.FrontUrl, config.FRONT_URL)
 
-  setMetadata(textEditor.metadata.CollaboratorUrl, config.COLLABORATOR_URL)
+  setMetadata(textEditor.metadata.Collaborator, config.COLLABORATOR ?? '')
 
   setMetadata(github.metadata.GithubApplication, config.GITHUB_APP ?? '')
   setMetadata(github.metadata.GithubClientID, config.GITHUB_CLIENTID ?? '')
@@ -234,6 +236,7 @@ export async function configurePlatform (): Promise<void> {
   setMetadata(sign.metadata.SignURL, config.SIGN_URL)
   setMetadata(uiPlugin.metadata.DefaultApplication, login.component.LoginApp)
   setMetadata(analyticsCollector.metadata.EndpointURL, config.ANALYTICS_COLLECTOR_URL)
+  setMetadata(aiBot.metadata.EndpointURL, config.AI_URL)
 
   const languages = myBranding.languages !== undefined && myBranding.languages !== '' ? myBranding.languages.split(',').map((l) => l.trim()) : ['en', 'ru', 'es', 'pt']
 
@@ -275,6 +278,7 @@ export async function configurePlatform (): Promise<void> {
   addLocation(tagsId, async () => await import('@hcengineering/tags-resources'))
   addLocation(calendarId, async () => await import('@hcengineering/calendar-resources'))
   addLocation(analyticsCollectorId, async () => await import('@hcengineering/analytics-collector-resources'))
+  addLocation(aiBotId, async () => await import('@hcengineering/ai-bot-resources'))
 
   addLocation(trackerId, async () => await import('@hcengineering/tracker-resources'))
   addLocation(boardId, async () => await import('@hcengineering/board-resources'))
@@ -301,7 +305,7 @@ export async function configurePlatform (): Promise<void> {
   addLocation(printId, () => import(/* webpackChunkName: "print" */ '@hcengineering/print-resources'))
   addLocation(textEditorId, () => import(/* webpackChunkName: "text-editor" */ '@hcengineering/text-editor-resources'))
 
-  setMetadata(client.metadata.FilterModel, true)
+  setMetadata(client.metadata.FilterModel, 'ui')
   setMetadata(client.metadata.ExtraPlugins, ['preference' as Plugin])
 
   // Use binary response transfer for faster performance and small transfer sizes.
@@ -315,6 +319,8 @@ export async function configurePlatform (): Promise<void> {
   setMetadata(workbench.metadata.DefaultApplication, myBranding.defaultApplication ?? 'tracker')
   setMetadata(workbench.metadata.DefaultSpace, myBranding.defaultSpace ?? tracker.project.DefaultProject)
   setMetadata(workbench.metadata.DefaultSpecial, myBranding.defaultSpecial ?? 'issues')
+
+  initThemeStore()
 
   addEventListener(workbench.event.NotifyConnection, async (evt) => {
     await ipcMain.setFrontCookie(
@@ -331,6 +337,7 @@ export async function configurePlatform (): Promise<void> {
   }
 
   const last = localStorage.getItem(locationStorageKeyId)
+
   if (config.INITIAL_URL !== '') {
     console.log('NAVIGATE', config.INITIAL_URL, getCurrentLocation())
     // NavigationExpandedDefault=false fills buggy:
@@ -347,5 +354,6 @@ export async function configurePlatform (): Promise<void> {
   } else {
     navigate({ path: [] })
   }
+
   console.log('Initial location is: ', getCurrentLocation())
 }

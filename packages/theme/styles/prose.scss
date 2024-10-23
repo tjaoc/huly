@@ -345,7 +345,6 @@ table.proseTable {
   margin: 0 1px;
   padding: 0 .25rem;
   font-family: var(--mono-font);
-  color: var(--text-editor-inline-code-color);
   background-color: var(--theme-button-default);
   border: 1px solid var(--theme-button-border);
   border-radius: .25rem;
@@ -363,7 +362,22 @@ table.proseTable {
 }
 
 pre.proseCodeBlock {
+  position: relative;
   white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: normal;
+}
+
+pre.proseCodeBlock {
+  button:not(.hovered) {
+    opacity: 0;
+  }
+
+  &:hover {
+    button {
+      opacity: 1;
+    }
+  }
 }
 
 // Fixes for MessageViewer
@@ -380,4 +394,12 @@ pre.proseCodeBlock > pre.proseCode {
 .ProseMirror {
   h1, h2, h3, p, pre, code { cursor: text; }
   p div { cursor: auto; }
+}
+
+.theme-dark {
+  @import './github-dark.scss';
+}
+
+.theme-light {
+  @import './github-light.scss';
 }

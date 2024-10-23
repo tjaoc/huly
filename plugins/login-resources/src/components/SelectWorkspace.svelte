@@ -16,51 +16,46 @@
 <script lang="ts">
   import { LoginInfo, Workspace } from '@hcengineering/login'
   import { OK, Severity, Status } from '@hcengineering/platform'
-  import presentation, { NavLink, isAdminUser } from '@hcengineering/presentation'
+  import presentation, { NavLink, isAdminUser, reduceCalls } from '@hcengineering/presentation'
   import {
     Button,
     Label,
     Scroller,
     SearchEdit,
     deviceOptionsStore as deviceInfo,
-    setMetadataLocalStorage
+    setMetadataLocalStorage,
+    ticker
   } from '@hcengineering/ui'
   import { onMount } from 'svelte'
   import login from '../plugin'
   import { getAccount, getHref, getWorkspaces, goTo, navigateToWorkspace, selectWorkspace } from '../utils'
   import StatusControl from './StatusControl.svelte'
 
-  const CHECK_INTERVAL = 1000
-
   export let navigateUrl: string | undefined = undefined
   let workspaces: Workspace[] = []
-  let flagToUpdateWorkspaces = false
 
   let status = OK
 
   let account: LoginInfo | undefined = undefined
 
+  let flagToUpdateWorkspaces = false
+
   async function loadAccount (): Promise<void> {
     account = await getAccount()
   }
 
-  async function updateWorkspaces (): Promise<void> {
+  const updateWorkspaces = reduceCalls(async function updateWorkspaces (time: number): Promise<void> {
     try {
       workspaces = await getWorkspaces()
     } catch (e) {
       // we should be able to continue from this state
     }
-    if (flagToUpdateWorkspaces) {
-      setTimeout(updateWorkspaces, CHECK_INTERVAL)
-    }
-  }
+  })
+
+  $: if (flagToUpdateWorkspaces) updateWorkspaces($ticker)
 
   onMount(() => {
     void loadAccount()
-
-    return () => {
-      flagToUpdateWorkspaces = false
-    }
   })
 
   async function select (workspace: string): Promise<void> {
@@ -81,8 +76,8 @@
       }
 
       workspaces = res
+      await updateWorkspaces(0)
       flagToUpdateWorkspaces = true
-      await updateWorkspaces()
     } catch (err: any) {
       setMetadataLocalStorage(login.metadata.LastToken, null)
       setMetadataLocalStorage(presentation.metadata.Token, null)
@@ -114,8 +109,11 @@
   {#await _getWorkspaces() then}
     <Scroller padding={'.125rem 0'}>
       <div class="form">
-        {#each workspaces.filter((it) => search === '' || (it.workspaceName?.includes(search) ?? false) || it.workspace.includes(search)) as workspace}
+        {#each workspaces
+          .slice(0, 500)
+          .filter((it) => search === '' || (it.workspaceName?.includes(search) ?? false) || it.workspace.includes(search)) as workspace}
           {@const wsName = workspace.workspaceName ?? workspace.workspace}
+          {@const lastUsageDays = Math.round((Date.now() - workspace.lastVisit) / (1000 * 3600 * 24))}
           <!-- svelte-ignore a11y-click-events-have-key-events -->
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
@@ -125,13 +123,28 @@
             <div class="flex flex-col flex-grow">
               <span class="label overflow-label flex-center">
                 {wsName}
-                {#if workspace.creating === true}
-                  ({workspace.createProgress}%)
+                {#if workspace.mode === 'creating'}
+                  ({workspace.progress}%)
                 {/if}
               </span>
-              {#if isAdmin && wsName !== workspace.workspace}
-                <span class="text-xs flex-center">
+              {#if isAdmin}
+                <span class="text-xs flex-row-center flex-center">
                   {workspace.workspace}
+                  {#if workspace.region !== undefined}
+                    at ({workspace.region})
+                  {/if}
+                  <div class="text-sm">
+                    {#if workspace.backupInfo != null}
+                      {@const sz = workspace.backupInfo.dataSize + workspace.backupInfo.blobsSize}
+                      {@const szGb = Math.round((sz * 100) / 1024) / 100}
+                      {#if szGb > 0}
+                        - {Math.round((sz * 100) / 1024) / 100}Gb -
+                      {:else}
+                        - {Math.round(sz)}Mb -
+                      {/if}
+                    {/if}
+                    ({lastUsageDays} days)
+                  </div>
                 </span>
               {/if}
             </div>
@@ -156,7 +169,12 @@
       {#if workspaces.length}
         <div>
           <span><Label label={login.string.WantAnotherWorkspace} /></span>
-          <NavLink href={getHref('createWorkspace')}><Label label={login.string.CreateWorkspace} /></NavLink>
+          <NavLink
+            href={getHref('createWorkspace')}
+            onClick={() => {
+              goTo('createWorkspace')
+            }}><Label label={login.string.CreateWorkspace} /></NavLink
+          >
         </div>
       {/if}
       <div>
@@ -169,8 +187,10 @@
             setMetadataLocalStorage(login.metadata.LoginEndpoint, null)
             setMetadataLocalStorage(login.metadata.LoginEmail, null)
             goTo('login')
-          }}><Label label={login.string.ChangeAccount} /></NavLink
+          }}
         >
+          <Label label={login.string.ChangeAccount} />
+        </NavLink>
       </div>
     </div>
   {/await}

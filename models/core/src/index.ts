@@ -20,6 +20,7 @@ import {
   DOMAIN_CONFIGURATION,
   DOMAIN_DOC_INDEX_STATE,
   DOMAIN_MIGRATION,
+  DOMAIN_SPACE,
   DOMAIN_STATUS,
   DOMAIN_TRANSIENT,
   DOMAIN_TX,
@@ -43,6 +44,7 @@ import {
   TConfiguration,
   TConfigurationElement,
   TDoc,
+  TCard,
   TDocIndexState,
   TDomainIndexConfiguration,
   TEnum,
@@ -76,7 +78,6 @@ import {
 } from './core'
 import { definePermissions } from './permissions'
 import {
-  DOMAIN_SPACE,
   TAccount,
   TPermission,
   TRole,
@@ -101,7 +102,7 @@ import {
   TTxWorkspaceEvent
 } from './tx'
 
-export { coreId } from '@hcengineering/core'
+export { coreId, DOMAIN_SPACE } from '@hcengineering/core'
 export * from './core'
 export { coreOperation } from './migration'
 export * from './security'
@@ -160,6 +161,7 @@ export function createModel (builder: Builder): void {
     TEnum,
     TTypeAny,
     TTypeRelatedDocument,
+    TCard,
     TDocIndexState,
     TFullTextSearchContext,
     TConfiguration,
@@ -201,18 +203,12 @@ export function createModel (builder: Builder): void {
       { createdBy: 1 },
       { createdBy: -1 },
       { createdOn: -1 },
-      { modifiedBy: 1 },
-      { objectSpace: 1 }
+      { modifiedBy: 1 }
     ],
     indexes: [
       {
         keys: {
-          objectSpace: 1,
-          _id: 1,
-          modifiedOn: 1
-        },
-        filter: {
-          objectSpace: core.space.Model
+          objectSpace: 1
         }
       }
     ]
@@ -313,7 +309,8 @@ export function createModel (builder: Builder): void {
     ]
   })
 
-  builder.mixin(core.class.Space, core.class.Class, core.mixin.FullTextSearchContext, {
+  builder.createDoc(core.class.FullTextSearchContext, core.space.Model, {
+    toClass: core.class.Space,
     childProcessingAllowed: false
   })
 

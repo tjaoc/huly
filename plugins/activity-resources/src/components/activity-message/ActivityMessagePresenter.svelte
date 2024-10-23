@@ -33,12 +33,13 @@
   export let actions: Action[] = []
   export let hoverable = true
   export let hoverStyles: 'borderedHover' | 'filledHover' = 'borderedHover'
-  export let withShowMore: boolean = true
+  export let withShowMore: boolean = false
   export let attachmentImageSize: 'x-large' | undefined = undefined
   export let type: ActivityMessageViewType = 'default'
   export let videoPreload = true
   export let hideLink = false
   export let compact = false
+  export let readonly = false
   export let onClick: (() => void) | undefined = undefined
 
   const client = getClient()
@@ -72,6 +73,7 @@
       hideLink,
       type,
       compact,
+      readonly,
       onClick
     }}
   />

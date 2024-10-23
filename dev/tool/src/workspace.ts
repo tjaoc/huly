@@ -25,7 +25,7 @@ import core, {
   type Tx,
   type WorkspaceId
 } from '@hcengineering/core'
-import { getMongoClient, getWorkspaceDB } from '@hcengineering/mongo'
+import { getMongoClient, getWorkspaceMongoDB } from '@hcengineering/mongo'
 import { connect } from '@hcengineering/server-tool'
 import { generateModelDiff, printDiff } from './mdiff'
 
@@ -33,7 +33,7 @@ export async function diffWorkspace (mongoUrl: string, workspace: WorkspaceId, r
   const client = getMongoClient(mongoUrl)
   try {
     const _client = await client.getClient()
-    const db = getWorkspaceDB(_client, workspace)
+    const db = getWorkspaceMongoDB(_client, workspace)
 
     console.log('diffing transactions...')
 
@@ -86,7 +86,7 @@ export async function updateField (
   try {
     const _client = await client.getClient()
     try {
-      const db = getWorkspaceDB(_client, workspaceId)
+      const db = getWorkspaceMongoDB(_client, workspaceId)
       await db
         .collection(cmd.domain)
         .updateOne({ _id: cmd.objectId as Ref<Doc> }, { $set: { [cmd.attribute]: valueToPut } })
@@ -98,24 +98,15 @@ export async function updateField (
   }
 }
 
-export async function recreateElastic (
-  mongoUrl: string,
-  workspaceId: WorkspaceId,
-  transactorUrl: string
-): Promise<void> {
+export async function recreateElastic (mongoUrl: string, workspaceId: WorkspaceId): Promise<void> {
   const client = getMongoClient(mongoUrl)
   const _client = await client.getClient()
-  const connection = (await connect(transactorUrl, workspaceId, undefined, {
-    mode: 'backup'
-  })) as unknown as CoreClient & BackupClient
   try {
-    const db = getWorkspaceDB(_client, workspaceId)
+    const db = getWorkspaceMongoDB(_client, workspaceId)
     await db
       .collection(DOMAIN_DOC_INDEX_STATE)
-      .updateMany({ _class: core.class.DocIndexState }, { $set: { stages: {} } })
-    await connection.sendForceClose()
+      .updateMany({ _class: core.class.DocIndexState }, { $set: { stages: {}, needIndex: true } })
   } finally {
     client.close()
-    await connection.close()
   }
 }

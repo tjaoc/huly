@@ -13,12 +13,14 @@
 // limitations under the License.
 //
 
-import { type Blob, type MeasureContext, type WorkspaceId, RateLimiter } from '@hcengineering/core'
-import { type StorageAdapter, type StorageAdapterEx } from '@hcengineering/server-core'
+import { type Attachment } from '@hcengineering/attachment'
+import { type Blob, type MeasureContext, type Ref, type WorkspaceId, RateLimiter } from '@hcengineering/core'
+import { DOMAIN_ATTACHMENT } from '@hcengineering/model-attachment'
+import { type ListBlobResult, type StorageAdapter, type StorageAdapterEx } from '@hcengineering/server-core'
+import { type Db } from 'mongodb'
 import { PassThrough } from 'stream'
 
 export interface MoveFilesParams {
-  blobSizeLimitMb: number
   concurrency: number
   move: boolean
 }
@@ -30,7 +32,7 @@ export async function syncFiles (
 ): Promise<void> {
   if (exAdapter.adapters === undefined) return
 
-  for (const [name, adapter] of exAdapter.adapters.entries()) {
+  for (const [name, adapter] of [...exAdapter.adapters.entries()].reverse()) {
     await adapter.make(ctx, workspaceId)
 
     await retryOnFailure(ctx, 5, async () => {
@@ -40,20 +42,27 @@ export async function syncFiles (
       const iterator = await adapter.listStream(ctx, workspaceId)
       try {
         while (true) {
-          const data = await iterator.next()
-          if (data === undefined) break
+          const dataBulk = await iterator.next()
+          if (dataBulk.length === 0) break
 
-          const blob = await exAdapter.stat(ctx, workspaceId, data._id)
-          if (blob !== undefined) continue
+          for (const data of dataBulk) {
+            const blob = await exAdapter.stat(ctx, workspaceId, data._id)
+            if (blob !== undefined) {
+              if (blob.provider !== name && name === exAdapter.defaultAdapter) {
+                await exAdapter.syncBlobFromStorage(ctx, workspaceId, data._id, exAdapter.defaultAdapter)
+              }
+              continue
+            }
 
-          await exAdapter.syncBlobFromStorage(ctx, workspaceId, data._id, name)
+            await exAdapter.syncBlobFromStorage(ctx, workspaceId, data._id, name)
 
-          count += 1
-          if (count % 100 === 0) {
-            const duration = Date.now() - time
-            time = Date.now()
+            count += 1
+            if (count % 100 === 0) {
+              const duration = Date.now() - time
+              time = Date.now()
 
-            console.log('...processed', count, Math.round(duration / 1000) + 's')
+              console.log('...processed', count, Math.round(duration / 1000) + 's')
+            }
           }
         }
         console.log('processed', count)
@@ -81,13 +90,38 @@ export async function moveFiles (
   for (const [name, adapter] of exAdapter.adapters.entries()) {
     if (name === exAdapter.defaultAdapter) continue
 
-    console.log('moving from', name, 'limit', params.blobSizeLimitMb, 'concurrency', params.concurrency)
+    console.log('moving from', name, 'limit', 'concurrency', params.concurrency)
 
     // we attempt retry the whole process in case of failure
     // files that were already moved will be skipped
     await retryOnFailure(ctx, 5, async () => {
       await processAdapter(ctx, exAdapter, adapter, target, workspaceId, params)
     })
+  }
+}
+
+export async function showLostFiles (
+  ctx: MeasureContext,
+  workspaceId: WorkspaceId,
+  db: Db,
+  storageAdapter: StorageAdapter,
+  { showAll }: { showAll: boolean }
+): Promise<void> {
+  const iterator = db.collection<Attachment>(DOMAIN_ATTACHMENT).find({})
+
+  while (true) {
+    const attachment = await iterator.next()
+    if (attachment === null) break
+
+    const { _id, _class, file, name, modifiedOn } = attachment
+    const date = new Date(modifiedOn).toISOString()
+
+    const stat = await storageAdapter.stat(ctx, workspaceId, file)
+    if (stat === undefined) {
+      console.warn('-', date, _class, _id, file, name)
+    } else if (showAll) {
+      console.log('+', date, _class, _id, file, name)
+    }
   }
 }
 
@@ -99,81 +133,128 @@ async function processAdapter (
   workspaceId: WorkspaceId,
   params: MoveFilesParams
 ): Promise<void> {
+  if (source === target) {
+    // Just in case
+    return
+  }
   let time = Date.now()
   let processedCnt = 0
   let processedBytes = 0
-  let skippedCnt = 0
   let movedCnt = 0
   let movedBytes = 0
   let batchBytes = 0
 
+  function printStats (): void {
+    const duration = Date.now() - time
+    console.log(
+      '...processed',
+      processedCnt,
+      Math.round(processedBytes / 1024 / 1024) + 'MB',
+      'moved',
+      movedCnt,
+      Math.round(movedBytes / 1024 / 1024) + 'MB',
+      '+' + Math.round(batchBytes / 1024 / 1024) + 'MB',
+      Math.round(duration / 1000) + 's'
+    )
+
+    batchBytes = 0
+    time = Date.now()
+  }
+
   const rateLimiter = new RateLimiter(params.concurrency)
 
   const iterator = await source.listStream(ctx, workspaceId)
+
+  const targetIterator = await target.listStream(ctx, workspaceId)
+
+  const targetBlobs = new Map<Ref<Blob>, ListBlobResult>()
+
+  let targetFilled = false
+
+  const toRemove: string[] = []
   try {
     while (true) {
-      const data = await iterator.next()
-      if (data === undefined) break
+      const dataBulk = await iterator.next()
+      if (dataBulk.length === 0) break
 
-      const blob = (await exAdapter.stat(ctx, workspaceId, data._id)) ?? (await source.stat(ctx, workspaceId, data._id))
-
-      if (blob === undefined) {
-        console.error('blob not found', data._id)
-        continue
+      if (!targetFilled) {
+        // Only fill target if have something to move.
+        targetFilled = true
+        while (true) {
+          const part = await targetIterator.next()
+          for (const p of part) {
+            targetBlobs.set(p._id, p)
+          }
+          if (part.length === 0) {
+            break
+          }
+        }
       }
 
-      if (blob.provider !== exAdapter.defaultAdapter) {
-        if (blob.size <= params.blobSizeLimitMb * 1024 * 1024) {
-          await rateLimiter.exec(async () => {
+      for (const data of dataBulk) {
+        let targetBlob: Blob | ListBlobResult | undefined = targetBlobs.get(data._id)
+        if (targetBlob !== undefined) {
+          console.log('Target blob already exists', targetBlob._id)
+
+          const aggrBlob = await exAdapter.stat(ctx, workspaceId, data._id)
+          if (aggrBlob === undefined || aggrBlob?.provider !== targetBlob.provider) {
+            targetBlob = await exAdapter.syncBlobFromStorage(ctx, workspaceId, targetBlob._id, exAdapter.defaultAdapter)
+          }
+          // We could safely delete source blob
+          toRemove.push(data._id)
+        }
+
+        if (targetBlob === undefined) {
+          const sourceBlob = await source.stat(ctx, workspaceId, data._id)
+
+          if (sourceBlob === undefined) {
+            console.error('blob not found', data._id)
+            continue
+          }
+          targetBlob = await rateLimiter.exec(async () => {
             try {
-              await retryOnFailure(
+              const result = await retryOnFailure(
                 ctx,
                 5,
                 async () => {
-                  await processFile(ctx, source, params.move ? exAdapter : target, workspaceId, blob)
+                  await processFile(ctx, source, target, workspaceId, sourceBlob)
+                  // We need to sync and update aggregator table for now.
+                  return await exAdapter.syncBlobFromStorage(ctx, workspaceId, sourceBlob._id, exAdapter.defaultAdapter)
                 },
                 50
               )
               movedCnt += 1
-              movedBytes += blob.size
-              batchBytes += blob.size
+              movedBytes += sourceBlob.size
+              batchBytes += sourceBlob.size
+              return result
             } catch (err) {
               console.error('failed to process blob', data._id, err)
             }
           })
-        } else {
-          skippedCnt += 1
-          console.log('skipping large blob', data._id, Math.round(blob.size / 1024 / 1024))
+
+          if (targetBlob !== undefined) {
+            // We could safely delete source blob
+            toRemove.push(sourceBlob._id)
+          }
+          processedBytes += sourceBlob.size
         }
-      }
+        processedCnt += 1
 
-      processedCnt += 1
-      processedBytes += blob.size
-
-      if (processedCnt % 100 === 0) {
-        await rateLimiter.waitProcessing()
-
-        const duration = Date.now() - time
-
-        console.log(
-          '...processed',
-          processedCnt,
-          Math.round(processedBytes / 1024 / 1024) + 'MB',
-          'moved',
-          movedCnt,
-          Math.round(movedBytes / 1024 / 1024) + 'MB',
-          '+' + Math.round(batchBytes / 1024 / 1024) + 'MB',
-          'skipped',
-          skippedCnt,
-          Math.round(duration / 1000) + 's'
-        )
-
-        batchBytes = 0
-        time = Date.now()
+        if (processedCnt % 100 === 0) {
+          await rateLimiter.waitProcessing()
+          printStats()
+        }
       }
     }
 
     await rateLimiter.waitProcessing()
+    if (toRemove.length > 0 && params.move) {
+      while (toRemove.length > 0) {
+        const part = toRemove.splice(0, 500)
+        await source.remove(ctx, workspaceId, part)
+      }
+    }
+    printStats()
   } finally {
     await iterator.close()
   }

@@ -156,9 +156,9 @@
     },
     {
       "commandKind": "phased",
-      "name": "revalidate",
+      "name": "dorevalidate",
       "phases": ["_phase:validate"],
-      "summary": "revalidate",
+      "summary": "dorevalidate",
       "enableParallelism": true,
       "incremental": false
     },
@@ -238,7 +238,7 @@
       "summary": "Build docker with platform",
       "description": "use to build all docker containers required for platform",
       "safeForSimultaneousRushProcesses": true,
-      "shellCommand": "rush docker:build -p 20 --to @hcengineering/pod-server --to @hcengineering/pod-front --to @hcengineering/prod --to @hcengineering/pod-account --to @hcengineering/pod-collaborator --to @hcengineering/tool --to @hcengineering/pod-print --to @hcengineering/pod-sign --to @hcengineering/pod-analytics-collector --to @hcengineering/rekoni-service --to @hcengineering/pod-ai-bot"
+      "shellCommand": "rush docker:build -p 20 --to @hcengineering/pod-server --to @hcengineering/pod-front --to @hcengineering/prod --to @hcengineering/pod-account --to @hcengineering/pod-workspace --to @hcengineering/pod-collaborator --to @hcengineering/tool --to @hcengineering/pod-print --to @hcengineering/pod-sign --to @hcengineering/pod-analytics-collector --to @hcengineering/rekoni-service --to @hcengineering/pod-ai-bot --to @hcengineering/import-tool"
     },        
     {
       "commandKind": "global",
@@ -279,6 +279,14 @@
       "description": "Clean typescript incremental cache",
       "safeForSimultaneousRushProcesses": true,
       "shellCommand": "find .|grep tsconfig.tsbuildinfo | xargs rm | pwd"
+    }, 
+    {
+      "commandKind": "global",
+      "name": "revalidate",
+      "summary": "Clean Validate cache and to validate again",
+      "description": "Clean typescript incremental cache",
+      "safeForSimultaneousRushProcesses": true,
+      "shellCommand": "find .|grep tsBuildInfoFile.info | xargs rm | pwd && rush dorevalidate"
     },    
     {
       "commandKind": "global",
@@ -287,6 +295,14 @@
       "description": "show model version",
       "safeForSimultaneousRushProcesses": true,
       "shellCommand": "npx node ./common/scripts/show_version.js"
+    },
+    {
+      "commandKind": "global",
+      "name": "show-model",
+      "summary": "show model",
+      "description": "show model",
+      "safeForSimultaneousRushProcesses": true,
+      "shellCommand": "cd ./models/all && rushx show-model"
     },
     {
       "commandKind": "global",
@@ -303,7 +319,15 @@
       "description": "Format and autofix linting issues in changed projects",
       "safeForSimultaneousRushProcesses": true,
       "shellCommand": "./common/scripts/each-diff.sh rushx format --force"
-    }
+    },
+    {
+      "commandKind": "global",
+      "name": "desktop",
+      "summary": "Build desktop build",
+      "description": "use to build all docker containers required for platform",
+      "safeForSimultaneousRushProcesses": true,
+      "shellCommand": "rush package -p 20 --to desktop && cd ./desktop-package && rushx dist"
+    },        
   ],
 
   /**

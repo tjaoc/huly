@@ -20,6 +20,7 @@ import {
   type DocumentQuery,
   getCurrentAccount,
   isOtherDay,
+  type Lookup,
   type Ref,
   SortingOrder,
   type Space,
@@ -69,7 +70,7 @@ export class ChannelDataProvider implements IChannelDataProvider {
   private readonly tailQuery = createQuery(true)
   private readonly refsQuery = createQuery(true)
 
-  private chatId: Ref<Doc> | undefined = undefined
+  chatId: Ref<Doc> | undefined = undefined
   private readonly msgClass: Ref<Class<ActivityMessage>>
   private selectedMsgId: Ref<ActivityMessage> | undefined = undefined
   private tailStart: Timestamp | undefined = undefined
@@ -119,7 +120,7 @@ export class ChannelDataProvider implements IChannelDataProvider {
   })
 
   constructor (
-    readonly context: DocNotifyContext | undefined,
+    private context: DocNotifyContext | undefined,
     readonly space: Ref<Space>,
     chatId: Ref<Doc>,
     _class: Ref<Class<ActivityMessage>>,
@@ -209,6 +210,13 @@ export class ChannelDataProvider implements IChannelDataProvider {
     )
   }
 
+  async updateNewTimestamp (context?: DocNotifyContext): Promise<void> {
+    this.context = context ?? this.context
+    const firstNewMsgIndex = await this.getFirstNewMsgIndex()
+    const metadata = get(this.metadataStore)
+    this.newTimestampStore.set(firstNewMsgIndex !== undefined ? metadata[firstNewMsgIndex]?.createdOn : undefined)
+  }
+
   private async loadInitialMessages (
     selectedMsg?: Ref<ActivityMessage>,
     loadAll = false,
@@ -285,11 +293,19 @@ export class ChannelDataProvider implements IChannelDataProvider {
       },
       {
         sort: { createdOn: SortingOrder.Descending },
-        lookup: {
-          _id: { attachments: attachment.class.Attachment, inlineButtons: chunter.class.InlineButton }
-        }
+        lookup: this.getLookup()
       }
     )
+  }
+
+  getLookup (): Lookup<ActivityMessage> {
+    return {
+      _id: {
+        attachments: attachment.class.Attachment,
+        inlineButtons: chunter.class.InlineButton,
+        reactions: activity.class.Reaction
+      }
+    }
   }
 
   isNextLoading (mode: LoadMode): boolean {
@@ -314,12 +330,11 @@ export class ChannelDataProvider implements IChannelDataProvider {
     const client = getClient()
     const skipIds = this.getChunkSkipIds(loadAfter)
 
-    const messages = await client.findAll(
+    let messages: ActivityMessage[] = await client.findAll(
       this.msgClass,
       {
         attachedTo: this.chatId,
         space: this.space,
-        _id: { $nin: skipIds },
         createdOn: equal
           ? isBackward
             ? { $lte: loadAfter }
@@ -331,11 +346,11 @@ export class ChannelDataProvider implements IChannelDataProvider {
       {
         limit: limit ?? this.limit,
         sort: { createdOn: isBackward ? SortingOrder.Descending : SortingOrder.Ascending },
-        lookup: {
-          _id: { attachments: attachment.class.Attachment, inlineButtons: chunter.class.InlineButton }
-        }
+        lookup: this.getLookup()
       }
     )
+
+    messages = messages.filter(({ _id }) => !skipIds.includes(_id))
 
     if (messages.length === 0) {
       return

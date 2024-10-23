@@ -27,9 +27,10 @@
   import { DocNotifyContext } from '@hcengineering/notification'
   import { ActivityMessage, ActivityMessagesFilter } from '@hcengineering/activity'
   import { getClient } from '@hcengineering/presentation'
-  import { Channel } from '@hcengineering/chunter'
+  import { Channel, ObjectChatPanel } from '@hcengineering/chunter'
   import view from '@hcengineering/view'
   import { messageInFocus } from '@hcengineering/activity-resources'
+  import { onMount } from 'svelte'
 
   import ChannelComponent from './Channel.svelte'
   import ChannelHeader from './ChannelHeader.svelte'
@@ -55,6 +56,7 @@
     isThreadOpened = newLocation.path[4] != null
   })
 
+  $: readonly = hierarchy.isDerived(object._class, core.class.Space) ? (object as Space).archived : false
   $: showJoinOverlay = shouldShowJoinOverlay(object)
   $: isDocChat = !hierarchy.isDerived(object._class, chunter.class.ChunterSpace)
   $: withAside =
@@ -91,9 +93,18 @@
 
     messageInFocus.set(message._id)
   }
+
+  let objectChatPanel: ObjectChatPanel | undefined
+  let prevObjectId: Ref<Doc> | undefined = undefined
+
+  $: if (prevObjectId !== object._id) {
+    prevObjectId = object._id
+    objectChatPanel = hierarchy.classHierarchyMixin(object._class, chunter.mixin.ObjectChatPanel)
+    isAsideShown = isAsideShown ?? objectChatPanel?.openByDefault === true
+  }
 </script>
 
-<div class="popupPanel panel">
+<div class="popupPanel">
   <ChannelHeader
     _id={object._id}
     _class={object._class}
@@ -103,6 +114,7 @@
     canOpen={isDocChat}
     allowClose={embedded}
     {isAsideShown}
+    canOpenInSidebar={true}
     on:close
     on:select={handleMessageSelect}
     on:aside-toggled={() => {
@@ -113,7 +125,7 @@
   <div class="popupPanel-body" class:asideShown={withAside && isAsideShown}>
     <div class="popupPanel-body__main">
       {#key object._id}
-        {#if shouldShowJoinOverlay(object)}
+        {#if !readonly && shouldShowJoinOverlay(object)}
           <div class="body h-full w-full clear-mins flex-center">
             <div class="joinOverlay">
               <div class="an-element__label header">
@@ -143,9 +155,9 @@
         <Separator name="aside" float index={0} />
         <div class="antiPanel-wrap__content">
           {#if hierarchy.isDerived(object._class, chunter.class.Channel)}
-            <ChannelAside _class={object._class} object={toChannel(object)} />
+            <ChannelAside object={toChannel(object)} {objectChatPanel} />
           {:else}
-            <DocAside _class={object._class} {object} />
+            <DocAside {object} {objectChatPanel} />
           {/if}
         </div>
       </div>

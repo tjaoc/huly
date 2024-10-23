@@ -14,16 +14,19 @@
 //
 
 import { Analytics } from '@hcengineering/analytics'
-import { startBackup } from '@hcengineering/backup-service'
-import { MeasureMetricsContext, metricsToString, newMetrics } from '@hcengineering/core'
-import { DummyDbAdapter, DummyFullTextAdapter, type PipelineFactory } from '@hcengineering/server-core'
-import { createServerPipeline } from '@hcengineering/server-pipeline'
 import { configureAnalytics, SplitLogger } from '@hcengineering/analytics-service'
+import { startBackup } from '@hcengineering/backup-service'
+import { MeasureMetricsContext, metricsToString, newMetrics, type Tx } from '@hcengineering/core'
+import { type PipelineFactory } from '@hcengineering/server-core'
+import { createBackupPipeline, getConfig } from '@hcengineering/server-pipeline'
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
 
+import { readFileSync } from 'node:fs'
+const model = JSON.parse(readFileSync(process.env.MODEL_JSON ?? 'model.json').toString()) as Tx[]
+
 const metricsContext = new MeasureMetricsContext(
-  'github',
+  'backup',
   {},
   {},
   newMetrics(),
@@ -55,35 +58,26 @@ const onClose = (): void => {
   metricsContext.info('Closed')
 }
 
-startBackup(metricsContext, (mongoUrl, storageAdapter) => {
-  const factory: PipelineFactory = createServerPipeline(
-    metricsContext,
-    mongoUrl,
-    {
+startBackup(
+  metricsContext,
+  (mongoUrl, storageAdapter) => {
+    const factory: PipelineFactory = createBackupPipeline(metricsContext, mongoUrl, model, {
       externalStorage: storageAdapter,
+      usePassedCtx: true
+    })
+    return factory
+  },
+  (ctx, dbUrls, workspace, branding, externalStorage) => {
+    return getConfig(ctx, dbUrls, workspace, branding, ctx, {
+      externalStorage,
       fullTextUrl: '',
       indexParallel: 0,
       indexProcessing: 0,
-      disableTriggers: true,
       rekoniUrl: '',
-      usePassedCtx: true
-    },
-    {
-      adapters: {
-        FullTextBlob: {
-          factory: async () => new DummyDbAdapter(),
-          url: ''
-        }
-      },
-      fulltextAdapter: {
-        factory: async () => new DummyFullTextAdapter(),
-        stages: () => [],
-        url: ''
-      }
-    }
-  )
-  return factory
-})
+      disableTriggers: true
+    })
+  }
+)
 
 process.on('SIGINT', onClose)
 process.on('SIGTERM', onClose)

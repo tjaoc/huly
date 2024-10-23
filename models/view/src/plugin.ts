@@ -17,13 +17,14 @@ import { type Blob, type Doc, type Ref } from '@hcengineering/core'
 import { type IntlString, mergeIds, type Resource } from '@hcengineering/platform'
 import { type AnyComponent } from '@hcengineering/ui/src/types'
 import { type FilterFunction, type ViewAction, type ViewCategoryAction, viewId } from '@hcengineering/view'
-import { type BlobMetadata, type FileOrBlob, type FilePreviewExtension } from '@hcengineering/presentation'
+import { type BlobMetadata, type FileOrBlob, type FilePreviewExtension } from '@hcengineering/presentation/src/types'
 import { type PresentationMiddlewareFactory } from '@hcengineering/presentation/src/pipeline'
 import view from '@hcengineering/view-resources/src/plugin'
 
 export default mergeIds(viewId, view, {
   actionImpl: {
     Archive: '' as ViewAction,
+    UnArchive: '' as ViewAction,
     Join: '' as ViewAction,
     Leave: '' as ViewAction,
     Move: '' as ViewAction,
@@ -87,7 +88,8 @@ export default mergeIds(viewId, view, {
     AudioViewer: '' as AnyComponent,
     ImageViewer: '' as AnyComponent,
     VideoViewer: '' as AnyComponent,
-    PDFViewer: '' as AnyComponent
+    PDFViewer: '' as AnyComponent,
+    TextViewer: '' as AnyComponent
   },
   string: {
     Table: '' as IntlString,
@@ -138,6 +140,7 @@ export default mergeIds(viewId, view, {
     CanDeleteSpace: '' as Resource<(doc?: Doc | Doc[]) => Promise<boolean>>,
     CanJoinSpace: '' as Resource<(doc?: Doc | Doc[]) => Promise<boolean>>,
     CanLeaveSpace: '' as Resource<(doc?: Doc | Doc[]) => Promise<boolean>>,
+    IsClipboardAvailable: '' as Resource<(doc?: Doc | Doc[]) => Promise<boolean>>,
     BlobImageMetadata: '' as Resource<(file: FileOrBlob, blob: Ref<Blob>) => Promise<BlobMetadata | undefined>>,
     BlobVideoMetadata: '' as Resource<(file: FileOrBlob, blob: Ref<Blob>) => Promise<BlobMetadata | undefined>>
   },
@@ -149,6 +152,7 @@ export default mergeIds(viewId, view, {
     Audio: '' as Ref<FilePreviewExtension>,
     Image: '' as Ref<FilePreviewExtension>,
     Video: '' as Ref<FilePreviewExtension>,
-    PDF: '' as Ref<FilePreviewExtension>
+    PDF: '' as Ref<FilePreviewExtension>,
+    Text: '' as Ref<FilePreviewExtension>
   }
 })

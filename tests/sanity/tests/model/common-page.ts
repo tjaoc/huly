@@ -12,11 +12,14 @@ export class CommonPage {
   selectPopupInputSearch = (): Locator => this.page.locator('div.popup input.search')
   selectPopupListItem = (name: string): Locator => this.page.locator('div.selectPopup div.list-item', { hasText: name })
   selectPopupListItemFirst = (): Locator => this.page.locator('div.selectPopup div.list-item')
+  selectPopupApMenuItem = (hasText: string): Locator => this.page.locator('div.popup button.ap-menuItem', { hasText })
   selectPopupAddButton = (): Locator => this.page.locator('div.selectPopup button[data-id="btnAdd"]')
   selectPopupButton = (): Locator => this.page.locator('div.selectPopup button')
   selectPopupExpandButton = (): Locator => this.page.locator('div.selectPopup button[data-id="btnExpand"]')
   popupSpanLabel = (point: string): Locator =>
-    this.page.locator('div[class$="opup"] span[class*="label"]', { hasText: point })
+    this.page.locator(`div[class$="opup"] span[class*="label"]:has-text("${point}")`)
+
+  readonly inputSearchIcon = (): Locator => this.page.locator('.searchInput-icon')
 
   selectPopupSpanLines = (item: string): Locator =>
     this.page.locator('div.selectPopup span[class^="lines"]', { hasText: item })
@@ -49,6 +52,7 @@ export class CommonPage {
 
   buttonFilter = (): Locator => this.page.getByRole('button', { name: 'Filter' })
   inputFilterTitle = (): Locator => this.page.locator('div.selectPopup input[placeholder="Title"]')
+  inputFilterName = (): Locator => this.page.locator('div.selectPopup input[placeholder="Name"]')
   inputSearch = (): Locator => this.page.locator('div.selectPopup input[placeholder="Search..."]')
   buttonFilterApply = (): Locator => this.page.locator('div.selectPopup button[type="button"]', { hasText: 'Apply' })
   buttonClearFilters = (): Locator => this.page.locator('button > span', { hasText: 'Clear filters' })
@@ -86,6 +90,7 @@ export class CommonPage {
     this.page.locator('div.date-popup-container div.input:last-child span.digit:nth-child(5)')
 
   submitButton = (): Locator => this.page.locator('div.date-popup-container button[type="submit"]')
+  buttonBreadcrumb = (hasText?: string): Locator => this.page.locator('button.hulyBreadcrumb-container', { hasText })
 
   async selectMenuItem (page: Page, name: string, fullWordFilter: boolean = false): Promise<void> {
     if (name !== 'first') {
@@ -191,6 +196,10 @@ export class CommonPage {
     await this.selectPopupListItem(name).click({ delay: 100 })
   }
 
+  async selectPopupAp (name: string): Promise<void> {
+    await this.selectPopupApMenuItem(name).click({ delay: 100 })
+  }
+
   async selectPopupItem (name: string): Promise<void> {
     await this.hulyPopupRowButton(name).click({ delay: 100 })
   }
@@ -203,6 +212,10 @@ export class CommonPage {
     await expect(this.menuPopupItemButton(itemText)).toBeVisible()
   }
 
+  async clickPopupItem (itemText: string): Promise<void> {
+    await this.menuPopupItemButton(itemText).first().click()
+  }
+
   async selectFilter (filter: string, filterSecondLevel?: string): Promise<void> {
     await this.buttonFilter().click()
     await this.selectPopupMenu(filter).click()
@@ -211,6 +224,10 @@ export class CommonPage {
       switch (filter) {
         case 'Title':
           await this.inputFilterTitle().fill(filterSecondLevel)
+          await this.buttonFilterApply().click()
+          break
+        case 'Name':
+          await this.inputFilterName().fill(filterSecondLevel)
           await this.buttonFilterApply().click()
           break
         case 'Labels':

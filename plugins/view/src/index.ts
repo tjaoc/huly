@@ -126,6 +126,7 @@ const view = plugin(viewId, {
   action: {
     Delete: '' as Ref<Action>,
     Archive: '' as Ref<Action>,
+    UnArchive: '' as Ref<Action>,
     Join: '' as Ref<Action>,
     Leave: '' as Ref<Action>,
     Move: '' as Ref<Action>,
@@ -250,7 +251,14 @@ const view = plugin(viewId, {
     Join: '' as Asset,
     Leave: '' as Asset,
     Copy: '' as Asset,
-    TodoList: '' as Asset
+    TodoList: '' as Asset,
+    DetailsFilled: '' as Asset,
+    Translate: '' as Asset,
+    Undo: '' as Asset,
+    Video: '' as Asset,
+    Audio: '' as Asset,
+    File: '' as Asset,
+    PinTack: '' as Asset
   },
   category: {
     General: '' as Ref<ActionCategory>,

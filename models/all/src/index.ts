@@ -34,6 +34,7 @@ import { preferenceId, createModel as preferenceModel } from '@hcengineering/mod
 import presentation, { presentationId, createModel as presentationModel } from '@hcengineering/model-presentation'
 import recruit, { recruitId, createModel as recruitModel } from '@hcengineering/model-recruit'
 import { requestId, createModel as requestModel } from '@hcengineering/model-request'
+import { aiBotId, createModel as aiBotModel } from '@hcengineering/model-ai-bot'
 import { serverActivityId, createModel as serverActivityModel } from '@hcengineering/model-server-activity'
 import { serverAttachmentId, createModel as serverAttachmentModel } from '@hcengineering/model-server-attachment'
 import { serverCalendarId, createModel as serverCalendarModel } from '@hcengineering/model-server-calendar'
@@ -76,7 +77,6 @@ import view, { viewId, createModel as viewModel } from '@hcengineering/model-vie
 import workbench, { workbenchId, createModel as workbenchModel } from '@hcengineering/model-workbench'
 import { desktopPreferencesId, createModel as desktopPreferencesModel } from '@hcengineering/model-desktop-preferences'
 
-import { createModel as serverTranslate, translateId } from '@hcengineering/model-server-translate'
 import document, { documentId, createModel as documentModel } from '@hcengineering/model-document'
 import { serverDocumentId, createModel as serverDocumentModel } from '@hcengineering/model-server-document'
 
@@ -178,7 +178,7 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
       {
         label: calendar.string.ConfigLabel,
         description: calendar.string.ConfigDescription,
-        enabled: false,
+        enabled: true,
         beta: true,
         icon: calendar.icon.Calendar,
         classFilter: defaultFilter
@@ -255,7 +255,7 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
       {
         label: inventory.string.ConfigLabel,
         description: inventory.string.ConfigDescription,
-        enabled: false,
+        enabled: true,
         beta: false,
         classFilter: defaultFilter
       }
@@ -266,8 +266,8 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
       {
         label: hr.string.ConfigLabel,
         description: hr.string.ConfigDescription,
-        enabled: false,
-        beta: true,
+        enabled: true,
+        beta: false,
         icon: hr.icon.Structure,
         classFilter: defaultFilter
       }
@@ -291,7 +291,7 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
         label: document.string.ConfigLabel,
         description: document.string.ConfigDescription,
         enabled: true,
-        beta: true,
+        beta: false,
         icon: document.icon.DocumentApplication,
         classFilter: defaultFilter
       }
@@ -342,7 +342,7 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
         label: github.string.ConfigLabel,
         description: github.string.ConfigDescription,
         enabled: true,
-        beta: true,
+        beta: false,
         icon: github.icon.Github
       }
     ],
@@ -359,6 +359,7 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
       }
     ],
     [printModel, printId],
+    [aiBotModel, aiBotId],
     [driveModel, driveId],
     [
       documentsModel,
@@ -424,7 +425,6 @@ export default function buildModel (enabled: string[] = ['*'], disabled: string[
     [serverRequestModel, serverRequestId],
     [serverViewModel, serverViewId],
     [serverActivityModel, serverActivityId],
-    [serverTranslate, translateId],
     [serverDocumentModel, serverDocumentId],
     [serverGithubModel, serverGithubId],
     [serverLoveModel, serverLoveId],
