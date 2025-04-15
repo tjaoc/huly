@@ -14,8 +14,10 @@
 // limitations under the License.
 //
 
+import activity from '@hcengineering/activity'
+import chunter from '@hcengineering/chunter'
+import { type Employee, type PersonAccount } from '@hcengineering/contact'
 import core, {
-  getCurrentAccount,
   toIdMap,
   type Attribute,
   type Class,
@@ -27,7 +29,7 @@ import core, {
   type TxOperations
 } from '@hcengineering/core'
 import { type IntlString, type Resources } from '@hcengineering/platform'
-import { createQuery, getClient } from '@hcengineering/presentation'
+import { createQuery, getClient, onClient } from '@hcengineering/presentation'
 import task, {
   getStatusIndex,
   makeRank,
@@ -41,9 +43,6 @@ import { getCurrentLocation, navigate, showPopup } from '@hcengineering/ui'
 import { type ViewletDescriptor } from '@hcengineering/view'
 import { CategoryQuery, groupBy, statusStore } from '@hcengineering/view-resources'
 import { get, writable } from 'svelte/store'
-import { type Employee, type PersonAccount } from '@hcengineering/contact'
-import activity from '@hcengineering/activity'
-import chunter from '@hcengineering/chunter'
 
 import AssignedTasks from './components/AssignedTasks.svelte'
 import Dashboard from './components/Dashboard.svelte'
@@ -68,15 +67,15 @@ import ProjectTypeClassPresenter from './components/taskTypes/ProjectTypeClassPr
 import TaskKindSelector from './components/taskTypes/TaskKindSelector.svelte'
 import TaskTypeClassPresenter from './components/taskTypes/TaskTypeClassPresenter.svelte'
 import TaskTypePresenter from './components/taskTypes/TaskTypePresenter.svelte'
+import TaskTypeListPresenter from './components/taskTypes/TaskTypeListPresenter.svelte'
 
-import ProjectTypeSelector from './components/projectTypes/ProjectTypeSelector.svelte'
-import CreateProjectType from './components/projectTypes/CreateProjectType.svelte'
-import ProjectTypeGeneralSectionEditor from './components/projectTypes/ProjectTypeGeneralSectionEditor.svelte'
-import ProjectTypeTasksTypeSectionEditor from './components/projectTypes/ProjectTypeTasksTypeSectionEditor.svelte'
-import ProjectTypeAutomationsSectionEditor from './components/projectTypes/ProjectTypeAutomationsSectionEditor.svelte'
-import ProjectTypeCollectionsSectionEditor from './components/projectTypes/ProjectTypeCollectionsSectionEditor.svelte'
-import TaskTypeEditor from './components/taskTypes/TaskTypeEditor.svelte'
 import { employeeByIdStore, personAccountByIdStore, personByIdStore } from '@hcengineering/contact-resources'
+import CreateProjectType from './components/projectTypes/CreateProjectType.svelte'
+import ProjectTypeAutomationsSectionEditor from './components/projectTypes/ProjectTypeAutomationsSectionEditor.svelte'
+import ProjectTypeGeneralSectionEditor from './components/projectTypes/ProjectTypeGeneralSectionEditor.svelte'
+import ProjectTypeSelector from './components/projectTypes/ProjectTypeSelector.svelte'
+import ProjectTypeTasksTypeSectionEditor from './components/projectTypes/ProjectTypeTasksTypeSectionEditor.svelte'
+import TaskTypeEditor from './components/taskTypes/TaskTypeEditor.svelte'
 
 export { default as AssigneePresenter } from './components/AssigneePresenter.svelte'
 export { default as TypeSelector } from './components/TypeSelector.svelte'
@@ -199,6 +198,7 @@ export default async (): Promise<Resources> => ({
     StateIconPresenter,
     StatusFilter,
     TaskTypePresenter,
+    TaskTypeListPresenter,
     TaskTypeClassPresenter,
     ProjectTypeClassPresenter,
     ProjectTypePresenter,
@@ -207,7 +207,6 @@ export default async (): Promise<Resources> => ({
     ProjectTypeGeneralSectionEditor,
     ProjectTypeTasksTypeSectionEditor,
     ProjectTypeAutomationsSectionEditor,
-    ProjectTypeCollectionsSectionEditor,
     TaskTypeEditor
   },
   actionImpl: {
@@ -228,11 +227,16 @@ export async function getAllStates (
   attr: Attribute<Status>,
   filterDone: boolean = true
 ): Promise<any[]> {
-  const typeId = get(selectedTypeStore)
+  const joinedProjectsTypes = get(typesOfJoinedProjectsStore) ?? []
+  const typeId = get(selectedTypeStore) ?? (joinedProjectsTypes.length === 1 ? joinedProjectsTypes[0] : undefined)
   const type = typeId !== undefined ? get(typeStore).get(typeId) : undefined
-  const taskTypeId = get(selectedTaskTypeStore)
+  const $taskType = get(taskTypeStore)
+  const joinedTaskTypes = Array.from($taskType.values()).filter((taskType) =>
+    joinedProjectsTypes.includes(taskType.parent)
+  )
+  const taskTypeId = get(selectedTaskTypeStore) ?? (joinedTaskTypes.length === 1 ? joinedTaskTypes[0]?._id : undefined)
   if (taskTypeId !== undefined) {
-    const taskType = get(taskTypeStore).get(taskTypeId)
+    const taskType = $taskType.get(taskTypeId)
     if (taskType === undefined) {
       return []
     }
@@ -285,17 +289,16 @@ export async function getAllStates (
       return statuses.map((p) => p?._id)
     }
   }
-  const joinedProjectsTypes = get(typesOfJoinedProjectsStore) ?? []
-  const includedStatuses = Array.from(get(taskTypeStore).values())
-    .filter((taskType) => joinedProjectsTypes.includes(taskType.parent))
-    .flatMap((taskType) => taskType.statuses)
-  const allStates = get(statusStore).array.filter((p) => p.ofAttribute === attr._id && includedStatuses.includes(p._id))
+  const includedStatuses = new Set(joinedTaskTypes.flatMap((taskType) => taskType.statuses))
+  const $statusStore = get(statusStore)
+  const allStates = [...includedStatuses].map((p) => $statusStore.byId.get(p))
+  const states = allStates.filter((p) => p !== undefined && p.ofAttribute === attr._id)
   if (filterDone) {
-    return allStates
+    return states
       .filter((p) => p?.category !== task.statusCategory.Lost && p?.category !== task.statusCategory.Won)
       .map((p) => p?._id)
   } else {
-    return allStates.map((p) => p?._id)
+    return states.map((p) => p?._id)
   }
 }
 
@@ -364,33 +367,29 @@ export const taskTypeStore = writable<IdMap<TaskType>>(new Map())
 export const typesOfJoinedProjectsStore = writable<Array<Ref<ProjectType>>>()
 export const joinedProjectsStore = writable<Project[]>()
 
-function fillStores (): void {
-  const client = getClient()
+const query = createQuery(true)
+const taskQuery = createQuery(true)
+const projectQuery = createQuery(true)
 
-  if (client !== undefined) {
-    const query = createQuery(true)
-    query.query(task.class.ProjectType, {}, (res) => {
-      typeStore.set(toIdMap(res))
-    })
+onClient((client, user) => {
+  query.query(task.class.ProjectType, {}, (res) => {
+    typeStore.set(toIdMap(res))
+  })
 
-    const taskQuery = createQuery(true)
-    taskQuery.query(task.class.TaskType, {}, (res) => {
-      taskTypeStore.set(toIdMap(res))
-    })
+  taskQuery.query(task.class.TaskType, {}, (res) => {
+    taskTypeStore.set(toIdMap(res))
+  })
 
-    const projectQuery = createQuery(true)
-    projectQuery.query(task.class.Project, { members: getCurrentAccount()._id }, (res) => {
+  projectQuery.query(
+    task.class.Project,
+    { members: user._id },
+    (res) => {
       typesOfJoinedProjectsStore.set(res.map((r) => r.type).filter((it, idx, arr) => arr.indexOf(it) === idx))
       joinedProjectsStore.set(res)
-    })
-  } else {
-    setTimeout(() => {
-      fillStores()
-    }, 50)
-  }
-}
-
-fillStores()
+    },
+    { showArchived: true }
+  )
+})
 
 export const selectedTypeStore = writable<Ref<ProjectType> | undefined>(undefined)
 export const selectedTaskTypeStore = writable<Ref<TaskType> | undefined>(undefined)

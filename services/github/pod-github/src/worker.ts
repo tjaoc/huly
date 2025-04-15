@@ -24,6 +24,7 @@ import core, {
   TxApplyIf,
   TxCUD,
   TxOperations,
+  TxProcessor,
   TxWorkspaceEvent,
   WithLookup,
   WorkspaceEvent,
@@ -34,7 +35,8 @@ import core, {
   reduceCalls,
   toIdMap,
   type Blob,
-  type MigrationState
+  type MigrationState,
+  type TimeRateLimiter
 } from '@hcengineering/core'
 import github, {
   DocSyncInfo,
@@ -42,7 +44,6 @@ import github, {
   GithubIntegration,
   GithubIntegrationRepository,
   GithubIssue,
-  GithubMilestone,
   GithubProject,
   GithubUserInfo,
   githubId
@@ -51,7 +52,7 @@ import { LiveQuery } from '@hcengineering/query'
 import { StorageAdapter } from '@hcengineering/server-core'
 import { getPublicLinkUrl } from '@hcengineering/server-guest-resources'
 import task, { ProjectType, TaskType } from '@hcengineering/task'
-import { MarkupNode, isMarkdownsEquals, jsonToMarkup } from '@hcengineering/text'
+import { MarkupNode, MarkupNodeType, isMarkdownsEquals, jsonToMarkup } from '@hcengineering/text'
 import tracker from '@hcengineering/tracker'
 import { User } from '@octokit/webhooks-types'
 import { App, Octokit } from 'octokit'
@@ -95,6 +96,8 @@ export class GithubWorker implements IntegrationManager {
   syncPromise?: Promise<void>
 
   triggerRequests: number = 0
+
+  authRequestSend = new Set<Ref<Account>>()
 
   triggerSync: () => void = () => {
     this.triggerRequests++
@@ -158,8 +161,40 @@ export class GithubWorker implements IntegrationManager {
     body: string
   ): Promise<{ markdownCompatible: boolean, markdown: string }> {
     const markupText = await this.getMarkup(container, body)
-    const markDown = await this.getMarkdown(markupText)
-    return { markdownCompatible: isMarkdownsEquals(body, markDown), markdown: markDown }
+    const markdown = await this.getMarkdown(markupText)
+    const markdownCompatible = isMarkdownsEquals(body, markdown)
+    return { markdownCompatible, markdown }
+  }
+
+  async getMarkupSafe (
+    container: IntegrationContainer,
+    text?: string | null,
+    preprocessor?: (nodes: MarkupNode) => Promise<void>
+  ): Promise<string> {
+    if (text == null) {
+      return ''
+    }
+
+    const markup = await this.getMarkup(container, text, preprocessor)
+    const markdown = await this.getMarkdown(markup)
+    const compatible = isMarkdownsEquals(text, markdown)
+
+    return compatible
+      ? markup
+      : jsonToMarkup({
+        type: MarkupNodeType.doc,
+        content: [
+          {
+            type: MarkupNodeType.markdown,
+            content: [
+              {
+                type: MarkupNodeType.text,
+                text
+              }
+            ]
+          }
+        ]
+      })
   }
 
   async getMarkup (
@@ -188,17 +223,15 @@ export class GithubWorker implements IntegrationManager {
       text ?? '',
       concatLink(this.getBranding()?.front ?? config.FrontURL, `/browse/?workspace=${this.workspace.name}`),
       // TODO storage URL
-      concatLink(this.getBranding()?.front ?? config.FrontURL, `/files?workspace=${this.workspace.name}&file=`),
+      concatLink(this.getBranding()?.front ?? config.FrontURL, `/files/${this.workspace.name}/`),
       preprocessor
     )
   }
 
   async getContainer (space: Ref<Space>): Promise<ContainerFocus | undefined> {
-    const project = (
-      await this.liveQuery.queryFind<GithubProject>(github.mixin.GithubProject, {
-        _id: space as Ref<GithubProject>
-      })
-    ).shift()
+    const project = await this.liveQuery.findOne<GithubProject>(github.mixin.GithubProject, {
+      _id: space as Ref<GithubProject>
+    })
     if (project !== undefined) {
       for (const v of this.integrations.values()) {
         if (v.octokit === undefined) {
@@ -215,25 +248,20 @@ export class GithubWorker implements IntegrationManager {
     }
   }
 
-  async getProjectRepositories (space: Ref<Space>): Promise<GithubIntegrationRepository[]> {
-    const repositories = await this.liveQuery.queryFind<GithubIntegrationRepository>(
-      github.class.GithubIntegrationRepository,
-      {}
-    )
-    return repositories.filter((it) => it.githubProject === space)
-  }
-
   async getRepositoryById (
     _id?: Ref<GithubIntegrationRepository> | null
   ): Promise<GithubIntegrationRepository | undefined> {
     if (_id != null) {
-      return (
-        await this.liveQuery.queryFind<GithubIntegrationRepository>(github.class.GithubIntegrationRepository, { _id })
-      ).shift()
+      return await this.liveQuery.findOne<GithubIntegrationRepository>(github.class.GithubIntegrationRepository, {
+        _id
+      })
     }
   }
 
-  async getAccountU (user: User): Promise<PersonAccount | undefined> {
+  async getAccountU (user?: User): Promise<PersonAccount | undefined> {
+    if (user == null) {
+      return undefined
+    }
     return await this.getAccount({
       id: user.node_id,
       login: user.login,
@@ -285,7 +313,9 @@ export class GithubWorker implements IntegrationManager {
       })
     }
 
-    const account = await this.liveQuery.findOne(contact.class.PersonAccount, { email: `github:${userInfo.login}` })
+    const account = await this.client
+      .getModel()
+      .findOne(contact.class.PersonAccount, { email: `github:${userInfo.login}` })
     if (account !== undefined) {
       const person = await this.liveQuery.findOne(contact.class.Person, { _id: account.person })
       // We need to be sure employee are exists.
@@ -326,13 +356,14 @@ export class GithubWorker implements IntegrationManager {
         person,
         role: AccountRole.User
       })
-      const acc = await this.liveQuery.findOne(contact.class.PersonAccount, { _id: id })
+      const acc = await this.client.getModel().findOne(contact.class.PersonAccount, { _id: id })
       return acc
     }
   }
 
   private constructor (
     readonly ctx: MeasureContext,
+    readonly limiter: TimeRateLimiter,
     readonly platform: PlatformWorker,
     readonly installations: Map<number, InstallationRecord>,
     readonly client: Client,
@@ -414,8 +445,8 @@ export class GithubWorker implements IntegrationManager {
   private async findPerson (userInfo: UserInfo, userName: string): Promise<Ref<Person>> {
     let person: Ref<Person> | undefined
     // try to find by account.
-    if (userInfo.email != null) {
-      const personAccount = await this.liveQuery.findOne(contact.class.PersonAccount, { email: userInfo.email })
+    if (userInfo.email != null && userInfo.email.trim().length > 0) {
+      const personAccount = await this.client.getModel().findOne(contact.class.PersonAccount, { email: userInfo.email })
       person = personAccount?.person
     }
 
@@ -467,7 +498,7 @@ export class GithubWorker implements IntegrationManager {
   }
 
   async getGithubLogin (container: IntegrationContainer, person: Ref<Person>): Promise<UserInfo | undefined> {
-    const accounts = await this.liveQuery.queryFind(contact.class.PersonAccount, {})
+    const accounts = this.client.getModel().findAllSync(contact.class.PersonAccount, {})
     const acc = accounts.find((it) => it.person === person && it.email.startsWith('github:'))
     if (acc === undefined) {
       return // Nobody, will use system account.
@@ -522,7 +553,11 @@ export class GithubWorker implements IntegrationManager {
         const ops = new TxOperations(this.client, accountRef)
         await syncUser(ctx, record, userAuth, ops, accountRef)
       } catch (err: any) {
-        await this.platform.revokeUserAuth(record)
+        try {
+          await this.platform.revokeUserAuth(record)
+        } catch (err: any) {
+          ctx.error(`Failed to revoke user ${record._id}`, err)
+        }
         if (err.response?.data?.message !== 'Bad credentials') {
           ctx.error(`Failed to sync user ${record._id}`, err)
           Analytics.handleError(err)
@@ -546,7 +581,7 @@ export class GithubWorker implements IntegrationManager {
     let record = await this.platform.getAccountByRef(this.workspace.name, account)
 
     // const accountRef = this.accounts.find((it) => it._id === account)
-    const accountRef = await this.liveQuery.findOne(contact.class.PersonAccount, { _id: account })
+    const [accountRef] = this.client.getModel().findAllSync(contact.class.PersonAccount, { _id: account })
     if (record === undefined) {
       if (accountRef !== undefined) {
         const accounts = this._client.getModel().getAccountByPersonId(accountRef.person)
@@ -570,11 +605,22 @@ export class GithubWorker implements IntegrationManager {
     }
 
     // We need to inform user, he need to authorize this account with github.
-    if (accountRef !== undefined) {
+    if (accountRef !== undefined && !this.authRequestSend.has(accountRef._id)) {
+      this.authRequestSend.add(accountRef._id)
       const person = await this.liveQuery.findOne(contact.class.Person, { _id: accountRef.person })
       if (person !== undefined) {
         const personSpace = await this.liveQuery.findOne(contact.class.PersonSpace, { person: person._id })
         if (personSpace !== undefined) {
+          // We need to remove if user has authentication in workspace but doesn't have a record.
+
+          const accounts = this._client.getModel().getAccountByPersonId(accountRef.person)
+          const authentications = await this.liveQuery.findAll(github.class.GithubAuthentication, {
+            createdBy: { $in: accounts.map((it) => it._id) }
+          })
+          for (const auth of authentications) {
+            await this._client.remove(auth)
+          }
+
           await createNotification(this._client, person, {
             user: account,
             space: personSpace._id,
@@ -635,7 +681,7 @@ export class GithubWorker implements IntegrationManager {
   async getProjectStatuses (type: Ref<ProjectType> | undefined): Promise<Status[]> {
     if (type === undefined) return []
 
-    const statuses = await this.liveQuery.queryFind(core.class.Status, {})
+    const statuses = this.client.getModel().findAllSync(core.class.Status, {})
 
     const projectType = await this.getProjectType(type)
 
@@ -647,7 +693,7 @@ export class GithubWorker implements IntegrationManager {
     if (type === undefined) return []
     const taskType = await this.getTaskType(type)
 
-    const statuses = await this.liveQuery.queryFind(core.class.Status, {})
+    const statuses = this.client.getModel().findAllSync(core.class.Status, {})
 
     const allowedTypes = new Set(taskType?.statuses ?? [])
     return statuses.filter((it) => allowedTypes.has(it._id))
@@ -727,37 +773,27 @@ export class GithubWorker implements IntegrationManager {
   }
 
   projects: GithubProject[] = []
-  milestones: GithubMilestone[] = []
 
   async queryProjects (): Promise<void> {
     await new Promise<void>((resolve) => {
-      this.liveQuery.query(github.mixin.GithubProject, {}, (res) => {
-        let needRefresh = false
-        if (!equalExceptKeys(this.projects, res, ['sequence', 'modifiedOn', 'modifiedBy'])) {
-          needRefresh = true
+      this.liveQuery.query(
+        github.mixin.GithubProject,
+        {
+          archived: false
+        },
+        (res) => {
+          let needRefresh = false
+          if (!equalExceptKeys(this.projects, res, ['sequence', 'modifiedOn', 'modifiedBy'])) {
+            needRefresh = true
+          }
+          this.projects = res
+          resolve()
+          if (needRefresh || this.projects.length !== res.length) {
+            // Do not trigger update if only sequence is changed.
+            this.triggerUpdate()
+          }
         }
-        this.projects = res
-        resolve()
-        if (needRefresh || this.projects.length !== res.length) {
-          // Do not trigger update if only sequence is changed.
-          this.triggerUpdate()
-        }
-      })
-    })
-
-    await new Promise<void>((resolve) => {
-      this.liveQuery.query(github.mixin.GithubMilestone, {}, (res) => {
-        let needRefresh = false
-        if (!equalExceptKeys(this.milestones, res, ['modifiedOn', 'modifiedBy'])) {
-          needRefresh = true
-        }
-        this.milestones = res
-        resolve()
-        if (needRefresh || this.milestones.length !== res.length) {
-          // Do not trigger update if only sequence is changed.
-          this.triggerUpdate()
-        }
-      })
+      )
     })
   }
 
@@ -780,7 +816,7 @@ export class GithubWorker implements IntegrationManager {
             loginNodeId: inst.loginNodeId ?? '',
             type: inst.type ?? 'User',
             installationName: inst?.installationName ?? '',
-            enabled: true,
+            enabled: !inst.suspended,
             synchronized: new Set(),
             projectStructure: new Map(),
             syncLock: new Map()
@@ -811,10 +847,14 @@ export class GithubWorker implements IntegrationManager {
           // Handle tx
           const h = this._client.getHierarchy()
           for (const t of tx) {
-            if (h.isDerived(t._class, core.class.TxCUD)) {
+            if (TxProcessor.isExtendsCUD(t._class)) {
               const cud = t as TxCUD<Doc>
               if (cud.objectClass === github.class.DocSyncInfo) {
                 this.triggerSync()
+                break
+              }
+              if (cud.objectClass === contact.class.Person || cud.objectClass === contact.class.Channel) {
+                this.accountMap.clear()
                 break
               }
             }
@@ -846,7 +886,7 @@ export class GithubWorker implements IntegrationManager {
 
   private async queryAccounts (): Promise<void> {
     const updateAccounts = async (accounts: PersonAccount[]): Promise<void> => {
-      const persons = await this.liveQuery.queryFind(contact.class.Person, {
+      const persons = await this.liveQuery.findAll(contact.class.Person, {
         _id: { $in: accounts.map((it) => it.person) }
       })
       const h = this.client.getHierarchy()
@@ -997,14 +1037,11 @@ export class GithubWorker implements IntegrationManager {
   async applyMigrations (): Promise<void> {
     const key = 'lowerCaseDuplicates'
     // We need to apply migrations if required.
-    const migration = await this.client.findOne<MigrationState>(core.class.MigrationState, {
-      plugin: githubId,
-      state: key
-    })
+    const migrations = await this.client.findAll<MigrationState>(core.class.MigrationState, {})
 
     const derivedClient = new TxOperations(this.client, core.account.System, true)
 
-    if (migration === undefined) {
+    if (migrations.find((it) => it.plugin === githubId && it.state === key) === undefined) {
       let modifiedOn = 0
       const limit = 1000
       while (true) {
@@ -1070,6 +1107,21 @@ export class GithubWorker implements IntegrationManager {
         state: key
       })
     }
+
+    const wrongAuthentications = 'migrate-wrong-authentications'
+
+    if (migrations.find((it) => it.plugin === githubId && it.state === wrongAuthentications) === undefined) {
+      const auths = await this.client.findAll(github.class.GithubAuthentication, {})
+      for (const auth of auths) {
+        if (auth.createdBy !== auth.modifiedBy) {
+          await this._client.remove(auth)
+        }
+      }
+      await derivedClient.createDoc(core.class.MigrationState, core.space.Configuration, {
+        plugin: githubId,
+        state: wrongAuthentications
+      })
+    }
   }
 
   async syncAndWait (): Promise<void> {
@@ -1080,65 +1132,76 @@ export class GithubWorker implements IntegrationManager {
       if (this.updateRequests > 0) {
         this.updateRequests = 0 // Just in case
         await this.updateIntegrations()
-        void this.performFullSync()
+        void this.performFullSync().catch((err) => {
+          this.ctx.error('Failed to perform full sync', { error: err })
+        })
       }
-
-      const { projects, repositories } = await this.collectActiveProjects()
-      if (projects.length === 0 && repositories.length === 0) {
-        await this.waitChanges()
-        continue
-      }
-
-      // Check if we have documents with external sync request's pending.
-      const hadExternalChanges = await this.performExternalSync(
-        projects,
-        repositories,
-        'externalVersion',
-        githubExternalSyncVersion
-      )
-      const hadSyncChanges = await this.performSync(projects, repositories)
-
-      // Perform derived operations
-      // Sync derived external data, like pull request reviews, files etc.
-      const hadDerivedChanges = await this.performExternalSync(
-        projects,
-        repositories,
-        'derivedVersion',
-        githubDerivedSyncVersion
-      )
-
-      if (!hadExternalChanges && !hadSyncChanges && !hadDerivedChanges) {
-        if (this.previousWait !== 0) {
-          this.ctx.info('Wait for changes:', { previousWait: this.previousWait, workspace: this.workspace.name })
-          this.previousWait = 0
+      try {
+        const { projects, repositories } = await this.collectActiveProjects()
+        if (projects.length === 0 && repositories.length === 0) {
+          await this.waitChanges()
+          continue
         }
-        // Wait until some sync documents will be modified, updated.
-        await this.waitChanges()
+
+        // Check if we have documents with external sync request's pending.
+        const hadExternalChanges = await this.performExternalSync(
+          projects,
+          repositories,
+          'externalVersion',
+          githubExternalSyncVersion
+        )
+        const hadSyncChanges = await this.performSync(projects, repositories)
+
+        // Perform derived operations
+        // Sync derived external data, like pull request reviews, files etc.
+        const hadDerivedChanges = await this.performExternalSync(
+          projects,
+          repositories,
+          'derivedVersion',
+          githubDerivedSyncVersion
+        )
+
+        if (!hadExternalChanges && !hadSyncChanges && !hadDerivedChanges) {
+          if (this.previousWait !== 0) {
+            this.ctx.info('Wait for changes:', { previousWait: this.previousWait, workspace: this.workspace.name })
+            this.previousWait = 0
+          }
+          // Wait until some sync documents will be modified, updated.
+          await this.waitChanges()
+        }
+      } catch (err: any) {
+        this.ctx.error('failed to perform sync', { err, workspace: this.workspace.name })
       }
     }
   }
 
-  private async performSync (projects: GithubProject[], repositories: GithubIntegrationRepository[]): Promise<boolean> {
+  private async performSync (
+    projects: GithubProject[],
+    repositories: Pick<GithubIntegrationRepository, '_id'>[]
+  ): Promise<boolean> {
     const _projects = toIdMap(projects)
     const _repositories = repositories.map((it) => it._id)
 
-    const docs = await this.ctx.with(
-      'find-doc-sync-info',
-      {},
-      async (ctx) =>
-        await this._client.findAll<DocSyncInfo>(
-          github.class.DocSyncInfo,
-          {
-            needSync: { $ne: githubSyncVersion },
-            externalVersion: { $in: [githubExternalSyncVersion, '#'] },
-            space: { $in: Array.from(_projects.keys()) },
-            repository: { $in: [null, ..._repositories] }
-          },
-          {
-            limit: 50
-          }
-        ),
-      { _projects, _repositories }
+    const docs = await this.limiter.exec(
+      async () =>
+        await this.ctx.with(
+          'find-doc-sync-info',
+          {},
+          (ctx) =>
+            this._client.findAll<DocSyncInfo>(
+              github.class.DocSyncInfo,
+              {
+                needSync: { $ne: githubSyncVersion },
+                externalVersion: { $in: [githubExternalSyncVersion, '#'] },
+                space: { $in: Array.from(_projects.keys()) },
+                repository: { $in: [null, ..._repositories] }
+              },
+              {
+                limit: 50
+              }
+            ),
+          { _projects, _repositories }
+        )
     )
 
     //
@@ -1172,12 +1235,21 @@ export class GithubWorker implements IntegrationManager {
     const projects: GithubProject[] = []
     const repositories: GithubIntegrationRepository[] = []
 
-    const allProjects = await this.liveQuery.queryFind<GithubProject>(github.mixin.GithubProject, {})
-    const allRepositories = await this.liveQuery.queryFind(github.class.GithubIntegrationRepository, { enabled: true })
+    const allProjects = await this.liveQuery.findAll<GithubProject>(github.mixin.GithubProject, {
+      archived: false
+    })
+    const allRepositories = (await this.liveQuery.findAll(github.class.GithubIntegrationRepository, {})).filter(
+      (it) => it.enabled
+    )
 
     for (const it of Array.from(this.integrations.values())) {
       if (it.enabled) {
-        const _projects = allProjects.filter((p) => !syncConfig.MainProject || it.projectStructure.has(p._id))
+        const _projects = []
+        for (const p of allProjects) {
+          if (p.integration === it.integration._id && (!syncConfig.MainProject || it.projectStructure.has(p._id))) {
+            _projects.push(p)
+          }
+        }
 
         const prjIds = new Set(_projects.map((it) => it._id))
 
@@ -1202,13 +1274,13 @@ export class GithubWorker implements IntegrationManager {
       const integration = await this._client.findOne(github.class.GithubIntegration, {
         installationId: intgr.installationId
       })
-      if (integration === undefined && this.installations.has(intgr.installationId)) {
-        const installation = this.installations.get(intgr.installationId) as InstallationRecord
+      const installation = this.installations.get(intgr.installationId) as InstallationRecord
+      if (integration === undefined && installation !== undefined) {
         await this._client.createDoc(
           github.class.GithubIntegration,
           core.space.Configuration,
           {
-            alive: true,
+            alive: !installation.suspended,
             installationId: intgr.installationId,
             clientId: config.ClientID,
             name: installation.installationName,
@@ -1222,7 +1294,7 @@ export class GithubWorker implements IntegrationManager {
         this.triggerUpdate()
       } else if (integration !== undefined) {
         await this._client.diffUpdate(integration, {
-          alive: true
+          alive: !installation.suspended
         })
       }
     }
@@ -1259,98 +1331,109 @@ export class GithubWorker implements IntegrationManager {
     })
 
     for (const info of orderedSyncInfo) {
-      try {
-        const existing = externalDocs.find((it) => it._id === info._id)
-        const mapper = this.mappers.find((it) => it._class.includes(info.objectClass))?.mapper
-        if (mapper === undefined) {
-          this.ctx.info('No mapper for class', { objectClass: info.objectClass, workspace: this.workspace.name })
-          await derivedClient.update<DocSyncInfo>(info, {
-            needSync: githubSyncVersion
-          })
-          continue
-        }
-        const repo = await this.getRepositoryById(info.repository)
-        if (repo !== undefined && !repo.enabled) {
-          continue
-        }
-
-        let parent =
-          info.parent !== undefined
-            ? parents.find((it) => it.url.toLowerCase() === info.parent?.toLowerCase())
-            : undefined
-        if (
-          parent === undefined &&
-          existing !== undefined &&
-          this.client.getHierarchy().isDerived(existing._class, core.class.AttachedDoc)
-        ) {
-          // Find with attached parent
-          parent = attachedParents.find((it) => it._id === (existing as AttachedDoc).attachedTo)
-        }
-
-        if (existing !== undefined && existing.space !== info.space) {
-          // document is moved to non github project, so for github it like delete.
-          const targetProject = await this.client.findOne(github.mixin.GithubProject, {
-            _id: existing.space as Ref<GithubProject>
-          })
-          if (await mapper.handleDelete(existing, info, derivedClient, false, parent)) {
-            const h = this._client.getHierarchy()
-            await derivedClient.remove(info)
-            if (h.hasMixin(existing, github.mixin.GithubIssue)) {
-              const mixinData = this._client.getHierarchy().as(existing, github.mixin.GithubIssue)
-              await this._client.update<GithubIssue>(
-                mixinData,
-                {
-                  url: '',
-                  githubNumber: 0,
-                  repository: '' as Ref<GithubIntegrationRepository>
-                },
-                false,
-                Date.now(),
-                existing.modifiedBy
-              )
-            }
-            continue
-          }
-          if (targetProject !== undefined) {
-            // We need to sync into new project.
+      await this.limiter.exec(async () => {
+        try {
+          const existing = externalDocs.find((it) => it._id === info._id)
+          const mapper = this.mappers.find((it) => it._class.includes(info.objectClass))?.mapper
+          if (mapper === undefined) {
+            this.ctx.info('No mapper for class', { objectClass: info.objectClass, workspace: this.workspace.name })
             await derivedClient.update<DocSyncInfo>(info, {
-              external: null,
-              current: null,
-              url: '',
-              needSync: '',
-              externalVersion: '',
-              githubNumber: 0,
-              repository: null
+              needSync: githubSyncVersion
             })
+            return
           }
-        }
-
-        if (info.deleted === true) {
-          if (await mapper.handleDelete(existing, info, derivedClient, true)) {
-            await derivedClient.remove(info)
-            continue
+          const repo = await this.getRepositoryById(info.repository)
+          if (repo !== undefined && !repo.enabled) {
+            return
           }
-        }
 
-        const docUpdate = await this.ctx.withLog(
-          'sync doc',
-          {},
-          async (ctx) => await mapper.sync(existing, info, parent, derivedClient),
-          { url: info.url.toLowerCase() }
-        )
-        if (docUpdate !== undefined) {
-          await derivedClient.update(info, docUpdate)
+          let parent =
+            info.parent !== undefined
+              ? parents.find((it) => it.url.toLowerCase() === info.parent?.toLowerCase())
+              : undefined
+          if (
+            parent === undefined &&
+            existing !== undefined &&
+            this.client.getHierarchy().isDerived(existing._class, core.class.AttachedDoc)
+          ) {
+            // Find with attached parent
+            parent = attachedParents.find((it) => it._id === (existing as AttachedDoc).attachedTo)
+          }
+
+          if (existing !== undefined && existing.space !== info.space) {
+            // document is moved to non github project, so for github it like delete.
+            const targetProject = await this.client.findOne(github.mixin.GithubProject, {
+              _id: existing.space as Ref<GithubProject>
+            })
+            try {
+              if (await mapper.handleDelete(existing, info, derivedClient, false, parent)) {
+                const h = this._client.getHierarchy()
+                await derivedClient.remove(info)
+                if (h.hasMixin(existing, github.mixin.GithubIssue)) {
+                  const mixinData = this._client.getHierarchy().as(existing, github.mixin.GithubIssue)
+                  await this._client.update<GithubIssue>(
+                    mixinData,
+                    {
+                      url: '',
+                      githubNumber: 0,
+                      repository: '' as Ref<GithubIntegrationRepository>
+                    },
+                    false,
+                    Date.now(),
+                    existing.modifiedBy
+                  )
+                }
+                return
+              }
+            } catch (err: any) {
+              this.ctx.error('failed to handle delete', { err })
+            }
+
+            if (targetProject !== undefined) {
+              // We need to sync into new project.
+              await derivedClient.update<DocSyncInfo>(info, {
+                external: null,
+                current: null,
+                url: '',
+                needSync: '',
+                externalVersion: '',
+                githubNumber: 0,
+                repository: null
+              })
+            }
+          }
+
+          if (info.deleted === true) {
+            try {
+              if (await mapper.handleDelete(existing, info, derivedClient, true)) {
+                await derivedClient.remove(info)
+              }
+            } catch (err: any) {
+              this.ctx.error('failed to handle delete', { err })
+            }
+            return
+          }
+
+          const docUpdate = await this.ctx.withLog(
+            'sync doc',
+            {},
+            (ctx) => mapper.sync(existing, info, parent, derivedClient),
+            { url: info.url.toLowerCase(), workspace: this.workspace.name }
+          )
+          if (docUpdate !== undefined) {
+            await derivedClient.update(info, docUpdate)
+          }
+        } catch (err: any) {
+          Analytics.handleError(err)
+          this.ctx.error('failed to sync doc', { _id: info._id, objectClass: info.objectClass, error: err })
+          // Mark to stop processing of document, before restart.
+          await derivedClient.update<DocSyncInfo>(info, {
+            error: errorToObj(err),
+            needSync: githubSyncVersion,
+            externalVersion: githubExternalSyncVersion
+          })
         }
-      } catch (err: any) {
-        Analytics.handleError(err)
-        this.ctx.error('failed to sync doc', { _id: info._id, objectClass: info.objectClass, error: err })
-        // Mark to stop processing of document, before restart.
-        await derivedClient.update<DocSyncInfo>(info, {
-          error: errorToObj(err),
-          needSync: githubSyncVersion,
-          externalVersion: githubExternalSyncVersion
-        })
-      }
+      })
     }
   }
 
@@ -1397,10 +1480,6 @@ export class GithubWorker implements IntegrationManager {
           }, 50) // Small timeout to aggregate few bulk changes.
         }
       }
-      // Wait up for every 60 seconds to refresh, just in case.
-      setTimeout(() => {
-        resolve()
-      }, 60 * 1000)
     })
   }
 
@@ -1422,9 +1501,7 @@ export class GithubWorker implements IntegrationManager {
         'external sync',
         { installation: integration.installationName, workspace: this.workspace.name },
         async () => {
-          if (!integration.enabled || integration.octokit === undefined) {
-            return
-          }
+          const enabled = integration.enabled && integration.octokit !== undefined
 
           const upd: DocumentUpdate<GithubIntegration> = {}
           if (integration.integration.byUser !== integration.login) {
@@ -1437,13 +1514,18 @@ export class GithubWorker implements IntegrationManager {
             upd.clientId = config.ClientID
           }
 
-          if (integration.integration.name !== integration.installationName || !integration.integration.alive) {
+          if (integration.integration.name !== integration.installationName) {
             upd.name = integration.installationName
-            upd.alive = true
+          }
+          if (integration.integration.alive !== enabled) {
+            upd.alive = enabled
           }
           if (Object.keys(upd).length > 0) {
             await this._client.diffUpdate(integration.integration, upd, Date.now(), integration.integration.createdBy)
             this.triggerUpdate()
+          }
+          if (!enabled) {
+            return
           }
           const derivedClient = new TxOperations(this.client, core.account.System, true)
 
@@ -1538,15 +1620,17 @@ export class GithubWorker implements IntegrationManager {
   ): Promise<GithubWorker | undefined> {
     ctx.info('Connecting to', { workspace: workspace.workspaceUrl, workspaceId: workspace.workspaceName })
     let client: Client | undefined
+    let endpoint: string | undefined
     try {
-      client = await createPlatformClient(workspace.name, 30000, (event: ClientConnectEvent) => {
+      ;({ client, endpoint } = await createPlatformClient(workspace.name, 30000, async (event: ClientConnectEvent) => {
         reconnect(workspace.name, event)
-      })
+      }))
 
       await GithubWorker.checkIntegrations(client, installations)
 
       const worker = new GithubWorker(
         ctx,
+        platformWorker.getRateLimiter(endpoint ?? ''),
         platformWorker,
         installations,
         client,
@@ -1556,7 +1640,13 @@ export class GithubWorker implements IntegrationManager {
         branding
       )
       ctx.info('Init worker', { workspace: workspace.workspaceUrl, workspaceId: workspace.workspaceName })
-      void worker.init()
+      void worker.init().catch((err) => {
+        ctx.error('Failed to init worker', {
+          workspace: workspace.workspaceUrl,
+          workspaceId: workspace.workspaceName,
+          error: err
+        })
+      })
       return worker
     } catch (err: any) {
       ctx.error('timeout during to connect', { workspace, error: err })

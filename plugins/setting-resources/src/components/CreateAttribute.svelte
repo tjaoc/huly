@@ -24,7 +24,7 @@
     Ref,
     Type
   } from '@hcengineering/core'
-  import { getEmbeddedLabel } from '@hcengineering/platform'
+  import { Asset, getEmbeddedLabel } from '@hcengineering/platform'
   import presentation, { getClient } from '@hcengineering/presentation'
   import {
     AnyComponent,
@@ -35,17 +35,21 @@
     Modal,
     ButtonIcon,
     IconDelete,
-    IconCopy
+    IconCopy,
+    showPopup
   } from '@hcengineering/ui'
   import { DropdownIntlItem } from '@hcengineering/ui/src/types'
   import setting from '../plugin'
   import view from '@hcengineering/view'
   import { clearSettingsStore } from '../store'
+  import { IconPicker } from '@hcengineering/view-resources'
 
   export let _id: Ref<Class<Type<PropertyType>>> | undefined = undefined
   export let _class: Ref<Class<Doc>>
+  export let isCard: boolean = false
 
   let name: string
+  let icon: Asset | undefined
   let type: Type<PropertyType> | undefined
   let index: IndexKind | undefined
   let defaultValue: any | undefined
@@ -58,8 +62,9 @@
 
     const data: Data<AnyAttribute> = {
       attributeOf: _class,
-      name: name.trim().replace('/', '').replace(' ', '') + '_' + generateId(),
+      name: 'custom' + generateId(),
       label: getEmbeddedLabel(name),
+      icon,
       isCustom: true,
       type,
       defaultValue
@@ -89,22 +94,31 @@
   const items = getTypes()
   export let selectedType: Ref<Class<Type<PropertyType>>> | undefined = undefined
 
-  $: selectedType && selectType(selectedType)
+  $: selectType(selectedType)
 
-  function selectType (type: Ref<Class<Type<PropertyType>>>): void {
+  function selectType (type: Ref<Class<Type<PropertyType>>> | undefined): void {
+    if (type === undefined) return
     const _class = hierarchy.getClass(type)
     const editor = hierarchy.as(_class, view.mixin.ObjectEditor)
     if (editor.editor !== undefined) {
       is = editor.editor
     }
   }
-  const handleSelection = (e: { detail: Ref<Class<Type<any>>> }) => {
+  const handleSelection = (e: { detail: Ref<Class<Type<any>>> }): void => {
     selectType(e.detail)
   }
-  const handleChange = (e: any) => {
+  const handleChange = (e: any): void => {
     type = e.detail?.type
     index = e.detail?.index
     defaultValue = e.detail?.defaultValue
+  }
+
+  function setIcon (): void {
+    showPopup(IconPicker, { icon, showEmoji: false, showColor: false }, 'top', async (res) => {
+      if (res !== undefined) {
+        icon = res.icon
+      }
+    })
   }
 </script>
 
@@ -126,7 +140,16 @@
     <div class="hulyChip-item font-medium-12">
       <Label label={setting.string.Custom} />
     </div>
-    <ModernEditbox bind:value={name} label={core.string.Name} size={'large'} kind={'ghost'} autoFocus />
+    <div class="flex items-center">
+      <ButtonIcon
+        icon={icon ?? setting.icon.Enums}
+        size={'medium'}
+        iconSize={'large'}
+        kind={'tertiary'}
+        on:click={setIcon}
+      />
+      <ModernEditbox bind:value={name} label={core.string.Name} size={'large'} kind={'ghost'} autoFocus />
+    </div>
   </div>
   <div class="hulyModal-content__settingsSet">
     <div class="hulyModal-content__settingsSet-line">
@@ -148,6 +171,7 @@
         props={{
           type,
           defaultValue,
+          isCard,
           kind: 'regular',
           size: 'large'
         }}

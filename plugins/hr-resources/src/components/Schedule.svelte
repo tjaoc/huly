@@ -34,7 +34,7 @@
     Breadcrumb,
     Switcher,
     defineSeparators,
-    workbenchSeparators,
+    twoPanelsSeparators,
     deviceOptionsStore as deviceInfo,
     tableToCSV,
     showPopup
@@ -96,6 +96,7 @@
   function inc (val: number): void {
     switch (mode) {
       case CalendarMode.Month: {
+        currentDate.setDate(1)
         currentDate.setMonth(currentDate.getMonth() + val)
         break
       }
@@ -180,7 +181,7 @@
   $: $deviceInfo.replacedPanel = replacedPanel
   onDestroy(() => ($deviceInfo.replacedPanel = undefined))
 
-  defineSeparators('workbench', workbenchSeparators)
+  defineSeparators('schedule', twoPanelsSeparators)
 </script>
 
 <div class="hulyPanels-container">
@@ -194,9 +195,8 @@
       }}
     />
     <Separator
-      name={'workbench'}
+      name={'schedule'}
       float={$deviceInfo.navigator.float}
-      disabledWhen={['panel-aside']}
       index={0}
       color={'transparent'}
       separatorSize={0}

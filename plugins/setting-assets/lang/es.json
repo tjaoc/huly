@@ -110,6 +110,23 @@
     "DeleteSpaceTypeConfirm": "¿Estás seguro de que quieres eliminar este tipo de espacio?",
     "WorkspaceName": "Nombre del espacio de trabajo",
     "Workspace": "Espacio de trabajo",
-    "OwnerOrMainteinerRequired": "Necesitas ser Propietario o Mantenedor del espacio de trabajo"
+    "OwnerOrMaintainerRequired": "Necesitas ser Propietario o Mantenedor del espacio de trabajo",
+    "Backup": "Copia de seguridad",
+    "BackupLast": "Última copia de seguridad",
+    "BackupTotalSnapshots": "Total instantáneas",
+    "BackupTotalFiles": "Archivos",
+    "BackupSize": "Tamaño de la copia de seguridad",
+    "BackupLinkInfo": "La URL de un directorio de copia de seguridad que se puede descargar de forma recursiva usando herramientas como wget o curl.",
+    "BackupBearerTokenInfo": "Se requiere un token de portador para acceder a la copia de seguridad.",
+    "BackupSnapshots": "Instantáneas de copia de seguridad",
+    "BackupFileDownload": "Descargar archivo",
+    "BackupFiles": "Archivos de copia de seguridad",
+    "BackupNoBackup": "No hay copias de seguridad disponibles actualmente.",
+    "AddAttribute": "Añadir atributo",
+    "WorkspaceNamePattern": "El nombre debe tener 40 caracteres o menos, no esté vacío y no puede contener caracteres especiales (<, >, /)",
+    "DisablePermissions": "Desactivar el control de acceso basado en roles",
+    "EnablePermissions": "Activar el control de acceso basado en roles",
+    "DisablePermissionsConfirmation": "¿Está seguro de que desea desactivar el control de acceso basado en roles? Todos los roles y permisos serán desactivados.",
+    "EnablePermissionsConfirmation": "¿Está seguro de que desea activar el control de acceso basado en roles? Todos los roles y permisos serán activados."
   }
 }

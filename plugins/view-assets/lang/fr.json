@@ -120,6 +120,10 @@
     "MoreActions": "Plus d'actions",
     "Leave": "Quitter",
     "Join": "Rejoindre",
-    "Copied": "Copié"
+    "Copied": "Copié",
+    "Title": "Titre",
+    "HideArchived": "Masquer les archives",
+    "RemoveRelation": "Supprimer la relation",  
+    "RemoveRelationConfirmation": "Voulez-vous supprimer la relation ?" 
   }
 }

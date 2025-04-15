@@ -125,6 +125,10 @@
     "MoreActions": "More actions",
     "Leave": "Leave",
     "Join": "Join",
-    "Copied": "Copied"
+    "Copied": "Copied",
+    "Title": "Title",
+    "HideArchived": "Hide archived",
+    "RemoveRelation": "Remove relation",
+    "RemoveRelationConfirmation": "Do you want to remove relation?"
   }
 }

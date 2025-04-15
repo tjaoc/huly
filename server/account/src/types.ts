@@ -43,10 +43,14 @@ export interface Account {
   admin?: boolean
   confirmed?: boolean
   lastWorkspace?: number
+  sendOperations?: number
   createdOn: number
   lastVisit: number
   githubId?: string
+  githubUser?: string
   openId?: string
+
+  workspaceLimit?: number
 }
 
 /**
@@ -56,16 +60,10 @@ export interface Workspace extends BaseWorkspaceInfo {
   _id: ObjectId
   accounts: ObjectId[]
 
-  region?: string // Transactor group name
   lastProcessingTime?: number
   attempts?: number
   message?: string
 }
-
-/**
- * @public
- */
-export type ClientWorkspaceInfo = Omit<Workspace, '_id' | 'accounts' | 'workspaceUrl'> & { workspaceId: string }
 
 /**
  * @public
@@ -131,12 +129,7 @@ export type AccountInfo = Omit<Account, 'hash' | 'salt'>
 /**
  * @public
  */
-export type WorkspaceEvent = 'ping' | 'create-started' | 'upgrade-started' | 'progress' | 'create-done' | 'upgrade-done'
-
-/**
- * @public
- */
-export type WorkspaceOperation = 'create' | 'upgrade' | 'all'
+export type WorkspaceOperation = 'create' | 'upgrade' | 'all' | 'all+backup'
 
 /**
  * @public
@@ -152,6 +145,7 @@ export interface UpgradeStatistic {
 
 interface Operator<T, P extends keyof T> {
   $in?: T[P][]
+  $ne?: T[P] | null
   $lt?: T[P]
   $lte?: T[P]
   $gt?: T[P]

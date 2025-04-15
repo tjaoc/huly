@@ -26,6 +26,7 @@
   export let editable: boolean = true
   export let kind: ButtonKind = 'regular'
   export let size: ButtonSize = 'medium'
+  export let isCard: boolean = false
 
   const dispatch = createEventDispatcher()
   const client = getClient()
@@ -44,11 +45,12 @@
       )
     })
 
-  let refClass: Ref<Doc> | undefined = type !== undefined ? hierarchy.getClass(type.of._class)._id : undefined
+  let refClass: Ref<Doc> | undefined =
+    type?.of?._class !== undefined ? hierarchy.getClass(type.of._class)._id : undefined
 
   $: selected = types.find((p) => p._id === refClass)
 
-  const handleChange = (e: any) => {
+  const handleChange = (e: any): void => {
     const type = e.detail?.type
     const res = { type: createArrOf(type) }
     dispatch('change', res)
@@ -84,6 +86,8 @@
     is={getComponent(selected)}
     props={{
       type: type?.of,
+      nested: true,
+      isCard,
       editable,
       kind,
       size

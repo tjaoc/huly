@@ -27,6 +27,7 @@
   export let dragItem: ToDo | null = null
   export let currentDate: Date = new Date()
   export let displayedDaysCount = 1
+  export let element: HTMLElement | undefined = undefined
   export let createComponent: AnyComponent | undefined = calendar.component.CreateEvent
 
   const q = createQuery()
@@ -132,7 +133,8 @@
           participants: [me.person],
           modifiedOn: Date.now(),
           date: e.detail.date.getTime(),
-          dueDate: new Date(e.detail.date).setMinutes(new Date(e.detail.date).getMinutes() + 30)
+          dueDate: new Date(e.detail.date).setMinutes(new Date(e.detail.date).getMinutes() + 30),
+          user: me._id
         }
         raw.push(ev)
       }
@@ -175,6 +177,7 @@
 
 <div
   class="hulyComponent modal"
+  bind:this={element}
   use:resizeObserver={(element) => {
     showLabel = showLabel ? element.clientWidth > rem(3.5) + 399 : element.clientWidth > rem(3.5) + 400
   }}

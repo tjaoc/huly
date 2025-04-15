@@ -27,7 +27,8 @@ import {
   type Timestamp,
   type Type,
   DateRangeMode,
-  IndexKind
+  IndexKind,
+  AccountRole
 } from '@hcengineering/core'
 import lead from '@hcengineering/lead'
 import {
@@ -53,7 +54,7 @@ import workbench from '@hcengineering/model-workbench'
 import notification from '@hcengineering/notification'
 import recruit from '@hcengineering/recruit'
 import tags from '@hcengineering/tags'
-import { type AnyComponent } from '@hcengineering/ui'
+import { type AnyComponent } from '@hcengineering/ui/src/types'
 import {
   type TodoDoneTester,
   timeId,
@@ -208,6 +209,7 @@ export function createModel (builder: Builder): void {
     {
       label: time.string.Team,
       icon: time.icon.Team,
+      accessLevel: AccountRole.User,
       alias: 'team',
       hidden: false,
       component: time.component.Team

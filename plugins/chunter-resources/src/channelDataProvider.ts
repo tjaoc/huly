@@ -126,7 +126,8 @@ export class ChannelDataProvider implements IChannelDataProvider {
     _class: Ref<Class<ActivityMessage>>,
     selectedMsgId: Ref<ActivityMessage> | undefined,
     loadAll = false,
-    withRefs = false
+    withRefs = false,
+    private readonly collection: string | undefined = undefined
   ) {
     this.chatId = chatId
     this.msgClass = _class
@@ -197,7 +198,11 @@ export class ChannelDataProvider implements IChannelDataProvider {
 
     this.metadataQuery.query(
       this.msgClass,
-      { attachedTo: this.chatId, space: this.space },
+      {
+        attachedTo: this.chatId,
+        space: this.space,
+        ...(this.collection != null ? { collection: this.collection } : {})
+      },
       (res) => {
         this.updatesDates(res)
         this.metadataStore.set(res)
@@ -211,7 +216,8 @@ export class ChannelDataProvider implements IChannelDataProvider {
   }
 
   async updateNewTimestamp (context?: DocNotifyContext): Promise<void> {
-    this.context = context ?? this.context
+    if (context === undefined) return
+    this.context = context
     const firstNewMsgIndex = await this.getFirstNewMsgIndex()
     const metadata = get(this.metadataStore)
     this.newTimestampStore.set(firstNewMsgIndex !== undefined ? metadata[firstNewMsgIndex]?.createdOn : undefined)
@@ -281,6 +287,7 @@ export class ChannelDataProvider implements IChannelDataProvider {
       {
         attachedTo: this.chatId,
         space: this.space,
+        ...(this.collection != null ? { collection: this.collection } : {}),
         ...query,
         ...(this.tailStart !== undefined ? { createdOn: { $gte: this.tailStart } } : {})
       },
@@ -335,6 +342,7 @@ export class ChannelDataProvider implements IChannelDataProvider {
       {
         attachedTo: this.chatId,
         space: this.space,
+        ...(this.collection != null ? { collection: this.collection } : {}),
         createdOn: equal
           ? isBackward
             ? { $lte: loadAfter }

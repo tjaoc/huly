@@ -77,21 +77,17 @@ async function removeDoneStateFilter (client: MigrationClient): Promise<void> {
 }
 
 export const viewOperation: MigrateOperation = {
-  async migrate (client: MigrationClient): Promise<void> {
-    await tryMigrate(client, viewId, [
+  async migrate (client: MigrationClient, mode): Promise<void> {
+    await tryMigrate(mode, client, viewId, [
       {
         state: 'remove-done-state-pref',
+        mode: 'upgrade',
         func: removeDoneStatePref
       },
       {
         state: 'remove-done-state-filter',
+        mode: 'upgrade',
         func: removeDoneStateFilter
-      },
-      {
-        state: 'fix-rename-backups',
-        func: async (client: MigrationClient): Promise<void> => {
-          await client.update(DOMAIN_VIEW, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
-        }
       }
     ])
   },

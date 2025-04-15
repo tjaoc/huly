@@ -45,6 +45,7 @@
     right: string
     width: string
     height: string
+    maxWidth: string
     transform: string
     visibility: string
     classList: string
@@ -57,6 +58,7 @@
     right: '',
     width: '',
     height: '',
+    maxWidth: '',
     transform: '',
     visibility: 'hidden',
     classList: ''
@@ -71,6 +73,7 @@
       right: '',
       width: '',
       height: '',
+      maxWidth: '',
       transform: '',
       visibility: 'hidden',
       classList: ''
@@ -86,6 +89,7 @@
       width: '',
       height: '',
       transform: '',
+      maxWidth: '',
       visibility: 'visible',
       classList: ''
     }
@@ -93,11 +97,18 @@
       if (clWidth === undefined) {
         clWidth = tooltipHTML.clientWidth
       }
+
+      let isElementInvalidTarget = false
+
       if ($tooltip.element) {
         rect = $tooltip.element.getBoundingClientRect()
         rectAnchor = $tooltip.anchor
           ? $tooltip.anchor.getBoundingClientRect()
           : $tooltip.element.getBoundingClientRect()
+
+        if (rect.x === 0 && rect.y === 0 && rect.width === 0 && rect.height === 0) {
+          isElementInvalidTarget = true
+        }
 
         if ($tooltip.component) {
           clearStyles()
@@ -140,6 +151,9 @@
             else dir = 'top'
           } else dir = $tooltip.direction
 
+          const left = rectAnchor.x + rectAnchor.width / 2
+          const maxWidth = Math.min(left, docWidth - left)
+
           if (dir === 'right') {
             options.top = rectAnchor.y + rectAnchor.height / 2 + 'px'
             options.left = `calc(${rectAnchor.right}px + .75rem)`
@@ -151,10 +165,12 @@
           } else if (dir === 'bottom') {
             options.top = `calc(${rectAnchor.bottom}px + .5rem)`
             options.left = rectAnchor.x + rectAnchor.width / 2 + 'px'
+            options.maxWidth = `calc(${maxWidth * 2}px - 1.5rem)`
             options.transform = 'translateX(-50%)'
           } else if (dir === 'top') {
             options.bottom = `calc(${docHeight - rectAnchor.y}px + .75rem)`
             options.left = rectAnchor.x + rectAnchor.width / 2 + 'px'
+            options.maxWidth = `calc(${maxWidth * 2}px - 1.5rem)`
             options.transform = 'translateX(-50%)'
           }
         }
@@ -166,8 +182,13 @@
         options.transform = 'translate(-50%, -50%)'
         options.classList = 'no-arrow'
       }
-      options.visibility = 'visible'
-      shown = true
+      if (isElementInvalidTarget) {
+        options.visibility = 'hidden'
+        shown = false
+      } else {
+        options.visibility = 'visible'
+        shown = true
+      }
     } else if (tooltipHTML) {
       shown = false
       options.visibility = 'hidden'
@@ -183,6 +204,7 @@
       right: '',
       width: '',
       height: '',
+      maxWidth: '',
       visibility: 'visible',
       transform: '',
       classList: ''
@@ -356,10 +378,14 @@
     style:right={options.right}
     style:width={options.width}
     style:height={options.height}
+    style:max-width={options.maxWidth}
     style:transform={options.transform}
+    style:visibility={options.visibility}
     style:z-index={($modals.findIndex((t) => t.type === 'tooltip') ?? 1) + 10000}
   >
-    <Label label={$tooltip.label} params={$tooltip.props ?? {}} />
+    <span class="label">
+      <Label label={$tooltip.label} params={$tooltip.props ?? {}} />
+    </span>
     {#if $tooltip.keys !== undefined}
       <div class="keys">
         {#each $tooltip.keys as key, i}
@@ -518,6 +544,7 @@
   .keys {
     margin-left: 0.5rem;
     display: flex;
+    flex-shrink: 0;
     align-items: center;
     gap: 0.125rem;
   }
@@ -553,6 +580,11 @@
       background-color: var(--theme-popup-divider);
       clip-path: url('#nub-border');
       z-index: 2;
+    }
+
+    &:not(:has(.key, .keys)) span.label {
+      width: 100%;
+      word-wrap: break-word;
     }
   }
   .no-arrow {

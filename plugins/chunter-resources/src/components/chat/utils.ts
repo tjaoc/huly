@@ -12,23 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import attachment, { type SavedAttachments } from '@hcengineering/attachment'
+
 import { type DirectMessage } from '@hcengineering/chunter'
 import contact, { type PersonAccount } from '@hcengineering/contact'
-import core, {
+import {
   type Account,
   AccountRole,
   getCurrentAccount,
   hasAccountRole,
   type IdMap,
   type Ref,
-  SortingOrder,
-  type UserStatus,
-  type WithLookup
+  type UserStatus
 } from '@hcengineering/core'
 import notification, { type DocNotifyContext } from '@hcengineering/notification'
 import { InboxNotificationsClientImpl } from '@hcengineering/notification-resources'
-import { createQuery, getClient, MessageBox } from '@hcengineering/presentation'
+import { getClient, MessageBox } from '@hcengineering/presentation'
 import { type Action, showPopup } from '@hcengineering/ui'
 import view from '@hcengineering/view'
 import workbench, { type SpecialNavModel } from '@hcengineering/workbench'
@@ -43,7 +41,6 @@ interface NavigatorState {
   collapsedSections: string[]
 }
 
-export const savedAttachmentsStore = writable<Array<WithLookup<SavedAttachments>>>([])
 export const navigatorStateStore = writable<NavigatorState>(restoreNavigatorState())
 
 function restoreNavigatorState (): NavigatorState {
@@ -103,6 +100,7 @@ export const chatSpecials: SpecialNavModel[] = [
       icon: chunter.icon.ChannelBrowser,
       label: chunter.string.Channels,
       createLabel: chunter.string.CreateChannel,
+      createComponentAccess: AccountRole.User,
       createComponent: chunter.component.CreateChannel
     },
     position: 'top'
@@ -364,27 +362,6 @@ function archiveActivityChannels (contexts: DocNotifyContext[]): void {
   )
 }
 
-export function loadSavedAttachments (): void {
-  const client = getClient()
-
-  if (client !== undefined) {
-    const savedAttachmentsQuery = createQuery(true)
-
-    savedAttachmentsQuery.query(
-      attachment.class.SavedAttachments,
-      { space: core.space.Workspace },
-      (res) => {
-        savedAttachmentsStore.set(res.filter(({ $lookup }) => $lookup?.attachedTo !== undefined))
-      },
-      { lookup: { attachedTo: attachment.class.Attachment }, sort: { modifiedOn: SortingOrder.Descending } }
-    )
-  } else {
-    setTimeout(() => {
-      loadSavedAttachments()
-    }, 50)
-  }
-}
-
 export async function hideActivityChannels (contexts: DocNotifyContext[]): Promise<void> {
   const ops = getClient().apply(undefined, 'hideActivityChannels')
 
@@ -400,7 +377,7 @@ export async function hideActivityChannels (contexts: DocNotifyContext[]): Promi
 export async function readActivityChannels (contexts: DocNotifyContext[]): Promise<void> {
   const client = InboxNotificationsClientImpl.getClient()
   const notificationsByContext = get(client.inboxNotificationsByContext)
-  const ops = getClient().apply(undefined, 'readActivityChannels')
+  const ops = getClient().apply(undefined, 'readActivityChannels', true)
 
   try {
     for (const context of contexts) {

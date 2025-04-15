@@ -39,7 +39,7 @@ import {
   IndexKind,
   type Blob,
   type Class,
-  type CollaborativeDoc,
+  type MarkupBlobRef,
   type Domain,
   type Ref,
   type Timestamp
@@ -175,7 +175,7 @@ export class TMember extends TAttachedDoc implements Member {
 export class TOrganization extends TContact implements Organization {
   @Prop(TypeCollaborativeDoc(), core.string.Description)
   @Index(IndexKind.FullText)
-    description!: CollaborativeDoc
+    description!: MarkupBlobRef | null
 
   @Prop(Collection(contact.class.Member), contact.string.Members)
     members!: number
@@ -263,22 +263,22 @@ export function createModel (builder: Builder): void {
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: contact.class.Contact,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: contact.class.Person,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: contact.class.Organization,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: contact.class.Member,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.mixin(contact.mixin.Employee, core.class.Class, view.mixin.ObjectFactory, {
@@ -518,11 +518,6 @@ export function createModel (builder: Builder): void {
     grouppingManager: contact.aggregation.GrouppingPersonManager
   })
 
-  builder.mixin(contact.mixin.Employee, core.class.Class, view.mixin.ObjectEditor, {
-    editor: contact.component.EditEmployee,
-    pinned: true
-  })
-
   builder.mixin(contact.class.Organization, core.class.Class, view.mixin.ObjectEditor, {
     editor: contact.component.EditOrganization,
     pinned: true
@@ -702,6 +697,17 @@ export function createModel (builder: Builder): void {
   )
 
   builder.createDoc(
+    contact.class.ChannelProvider,
+    core.space.Model,
+    {
+      label: contact.string.Viber,
+      icon: contact.icon.Viber,
+      placeholder: contact.string.ViberPlaceholder
+    },
+    contact.channelProvider.Viber
+  )
+
+  builder.createDoc(
     contact.class.AvatarProvider,
     core.space.Model,
     {
@@ -782,7 +788,8 @@ export function createModel (builder: Builder): void {
   })
 
   builder.mixin(contact.class.Person, core.class.Class, view.mixin.AttributePresenter, {
-    presenter: contact.component.PersonRefPresenter
+    presenter: contact.component.PersonRefPresenter,
+    arrayPresenter: contact.component.ContactArrayEditor
   })
 
   builder.mixin(contact.class.Contact, core.class.Class, view.mixin.AttributePresenter, {
@@ -790,7 +797,8 @@ export function createModel (builder: Builder): void {
   })
 
   builder.mixin(contact.mixin.Employee, core.class.Class, view.mixin.AttributePresenter, {
-    presenter: contact.component.EmployeeRefPresenter
+    presenter: contact.component.EmployeeRefPresenter,
+    arrayPresenter: contact.component.EmployeeArrayEditor
   })
 
   builder.mixin(contact.mixin.Employee, core.class.Class, view.mixin.IgnoreActions, {
@@ -915,6 +923,25 @@ export function createModel (builder: Builder): void {
       secured: true
     },
     contact.action.KickEmployee
+  )
+
+  createAction(
+    builder,
+    {
+      action: contact.actionImpl.ResendInvite,
+      label: contact.string.ResendInvite,
+      query: {},
+      category: contact.category.Contact,
+      target: contact.mixin.Employee,
+      input: 'focus',
+      context: {
+        mode: ['context'],
+        group: 'remove'
+      },
+      secured: true,
+      visibilityTester: contact.function.CanResendInvitation
+    },
+    contact.action.ResendInvite
   )
 
   createAction(

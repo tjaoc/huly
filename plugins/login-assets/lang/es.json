@@ -3,7 +3,7 @@
     "RequiredField": "Campo obligatorio: {field}",
     "FieldsDoNotMatch": "{field} no coincide con {field2}",
     "ConnectingToServer": "Conectando al servidor...",
-    "IncorrectValue": "Valor incorrecto para {field}"
+    "IncorrectValue": "Valor incorrecto para {field}"    
   },
   "string": {
     "LogIn": "Iniciar sesión",
@@ -19,6 +19,7 @@
     "DoNotHaveAnAccount": "¿No tienes una cuenta?",
     "PasswordRepeat": "Repetir contraseña",
     "HaveAccount": "¿Ya tienes una cuenta?",
+    "LoadingAccount": "Cargando...",
     "SelectWorkspace": "Seleccionar espacio de trabajo",
     "Copy": "Copiar",
     "Copied": "Copiado",
@@ -56,6 +57,13 @@
     "Next": "Siguiente",
     "Skip": "Saltar",
     "SignUpCompleted": "Registro completado",
-    "StartUsingHuly": "Comienza a usar Huly"
+    "StartUsingHuly": "Comienza a usar Huly",
+    "PasswordMinLength": "{count, plural, =1 {La contraseña debe tener al menos # carácter} other {La contraseña debe tener al menos # caracteres}}",
+    "PasswordMinSpecialChars": "{count, plural, =1 {La contraseña debe contener al menos # carácter especial} other {La contraseña debe contener al menos # caracteres especiales}}",
+    "PasswordMinDigits": "{count, plural, =1 {La contraseña debe contener al menos # número} other {La contraseña debe contener al menos # números}}",
+    "PasswordMinUpperChars": "{count, plural, =1 {La contraseña debe contener al menos # letra mayúscula} other {La contraseña debe contener al menos # letras mayúsculas}}",
+    "PasswordMinLowerChars": "{count, plural, =1 {La contraseña debe contener al menos # letra minúscula} other {La contraseña debe contener al menos # letras minúsculas}}",
+    "WorkspaceArchivedDesc": "El espacio de trabajo está archivado por no estar en uso.",
+    "RestoreArchivedWorkspace": "Restaurar"
   }
 }

@@ -16,7 +16,7 @@
 import activity from '@hcengineering/activity'
 import contact from '@hcengineering/contact'
 import { AccountRole, DOMAIN_MODEL, type Account, type Blob, type Domain, type Ref } from '@hcengineering/core'
-import { Mixin, Model, type Builder, UX } from '@hcengineering/model'
+import { Mixin, Model, UX, type Builder } from '@hcengineering/model'
 import core, { TClass, TConfiguration, TDoc } from '@hcengineering/model-core'
 import view, { createAction } from '@hcengineering/model-view'
 import notification from '@hcengineering/notification'
@@ -28,17 +28,18 @@ import {
   type Integration,
   type IntegrationType,
   type InviteSettings,
-  type WorkspaceSetting,
   type SettingsCategory,
-  type UserMixin,
+  type SpaceTypeCreator,
   type SpaceTypeEditor,
   type SpaceTypeEditorSection,
-  type SpaceTypeCreator
+  type UserMixin,
+  type WorkspaceSetting
 } from '@hcengineering/setting'
 import templates from '@hcengineering/templates'
+import exportPlugin from '@hcengineering/export'
 import setting from './plugin'
 
-import workbench from '@hcengineering/model-workbench'
+import workbench, { WidgetType } from '@hcengineering/model-workbench'
 import { type AnyComponent } from '@hcengineering/ui/src/types'
 
 export { settingId } from '@hcengineering/setting'
@@ -133,6 +134,18 @@ export function createModel (builder: Builder): void {
     TSpaceTypeCreator
   )
 
+  builder.createDoc(
+    workbench.class.Widget,
+    core.space.Model,
+    {
+      label: setting.string.Settings,
+      type: WidgetType.Flexible,
+      icon: setting.icon.Setting,
+      component: setting.component.SettingsWidget
+    },
+    setting.ids.SettingsWidget
+  )
+
   builder.mixin(setting.class.Integration, core.class.Class, notification.mixin.ClassCollaborators, {
     fields: ['modifiedBy']
   })
@@ -218,6 +231,19 @@ export function createModel (builder: Builder): void {
     setting.class.WorkspaceSettingCategory,
     core.space.Model,
     {
+      name: 'backup',
+      label: setting.string.Backup,
+      icon: setting.icon.Setting,
+      component: setting.component.Backup,
+      order: 950,
+      role: AccountRole.Owner
+    },
+    setting.ids.Backup
+  )
+  builder.createDoc(
+    setting.class.WorkspaceSettingCategory,
+    core.space.Model,
+    {
       name: 'owners',
       label: setting.string.Owners,
       icon: setting.icon.Owners,
@@ -272,6 +298,20 @@ export function createModel (builder: Builder): void {
     setting.class.WorkspaceSettingCategory,
     core.space.Model,
     {
+      name: 'relation',
+      label: core.string.Relations,
+      icon: setting.icon.Relations,
+      component: setting.component.RelationSetting,
+      group: 'settings-editor',
+      role: AccountRole.Maintainer,
+      order: 4501
+    },
+    setting.ids.Relations
+  )
+  builder.createDoc(
+    setting.class.WorkspaceSettingCategory,
+    core.space.Model,
+    {
       name: 'enums',
       label: setting.string.Enums,
       icon: setting.icon.Enums,
@@ -296,6 +336,20 @@ export function createModel (builder: Builder): void {
       order: 4700
     },
     setting.ids.InviteSettings
+  )
+  builder.createDoc(
+    setting.class.WorkspaceSettingCategory,
+    core.space.Model,
+    {
+      name: 'export',
+      label: exportPlugin.string.Export,
+      icon: exportPlugin.icon.Export,
+      component: exportPlugin.component.ExportSettings,
+      group: 'settings-editor',
+      role: AccountRole.User,
+      order: 4800
+    },
+    setting.ids.Export
   )
   // Currently remove Support item from settings
   // builder.createDoc(
@@ -406,24 +460,28 @@ export function createModel (builder: Builder): void {
     actions: [view.action.Delete]
   })
 
-  createAction(builder, {
-    action: view.actionImpl.ShowPopup,
-    actionProps: {
-      component: setting.component.CreateMixin,
-      fillProps: {
-        _object: 'value'
+  createAction(
+    builder,
+    {
+      action: view.actionImpl.ShowPopup,
+      actionProps: {
+        component: setting.component.CreateMixin,
+        fillProps: {
+          _object: 'value'
+        }
+      },
+      label: setting.string.CreateMixin,
+      input: 'focus',
+      icon: view.icon.Pin,
+      category: setting.category.Settings,
+      target: core.class.Class,
+      context: {
+        mode: ['context', 'browser'],
+        group: 'edit'
       }
     },
-    label: setting.string.CreateMixin,
-    input: 'focus',
-    icon: view.icon.Pin,
-    category: setting.category.Settings,
-    target: core.class.Class,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'edit'
-    }
-  })
+    setting.action.CreateMixin
+  )
 
   createAction(
     builder,

@@ -3,8 +3,7 @@
   import login from '@hcengineering/login'
   import { getEmbeddedLabel, getMetadata } from '@hcengineering/platform'
   import presentation, { getClient, isAdminUser, uiContext } from '@hcengineering/presentation'
-  import { Button, IconArrowLeft, IconArrowRight, fetchMetadataLocalStorage, ticker } from '@hcengineering/ui'
-  import EditBox from '@hcengineering/ui/src/components/EditBox.svelte'
+  import { Button, EditBox, IconArrowLeft, IconArrowRight, fetchMetadataLocalStorage, ticker } from '@hcengineering/ui'
   import MetricsInfo from './statistics/MetricsInfo.svelte'
 
   const _endpoint: string = fetchMetadataLocalStorage(login.metadata.LoginEndpoint) ?? ''
@@ -25,8 +24,6 @@
 
   let avgTime = 0
 
-  let rps = 0
-
   let active = 0
 
   let opss = 0
@@ -44,7 +41,7 @@
         profiling = data?.profiling ?? false
       })
       .catch((err) => {
-        console.error(err)
+        console.error(err, time)
       })
   }
   let data: any
@@ -65,13 +62,8 @@
     avgTime = 0
     maxTime = 0
     let count = commandsToSend
-    let ops = 0
     avgTime = 0
     opss = 0
-    const int = setInterval(() => {
-      rps = ops
-      ops = 0
-    }, 1000)
     const rate = new RateLimiter(commandsToSendParallel)
     const client = getClient()
 
@@ -96,7 +88,6 @@
       } else {
         avgTime = ed - st
       }
-      ops++
       opss++
       count--
     }
@@ -112,7 +103,6 @@
     }
     await rate.waitProcessing()
     running = false
-    clearInterval(int)
   }
 
   async function downloadProfile (): Promise<void> {
@@ -132,7 +122,7 @@
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-    fetchStats(0)
+    await fetchStats(0)
   }
 
   let metrics: Metrics | undefined
@@ -213,9 +203,9 @@
       <div class="p-3">2.</div>
       <Button
         icon={IconArrowRight}
-        label={getEmbeddedLabel('Reboot server')}
+        label={getEmbeddedLabel('Reboot workspace')}
         on:click={() => {
-          void fetch(endpoint + `/api/v1/manage?token=${token}&operation=reboot`, {
+          void fetch(endpoint + `/api/v1/manage?token=${token}&operation=force-close`, {
             method: 'PUT'
           })
         }}
@@ -241,7 +231,7 @@
 {/if}
 
 {#if metrics}
-  <MetricsInfo {metrics} />
+  <MetricsInfo {metrics} sortOrder={'avg'} />
 {/if}
 
 <style lang="scss">

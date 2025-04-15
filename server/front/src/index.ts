@@ -1,6 +1,6 @@
 //
 // Copyright © 2020, 2021 Anticrm Platform Contributors.
-// Copyright © 2021 Hardcore Engineering Inc.
+// Copyright © 2021, 2025 Hardcore Engineering Inc.
 //
 // Licensed under the Eclipse Public License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License. You may
@@ -25,9 +25,9 @@ import fileUpload, { UploadedFile } from 'express-fileupload'
 import expressStaticGzip from 'express-static-gzip'
 import https from 'https'
 import morgan from 'morgan'
-import { join, resolve } from 'path'
+import { join, normalize, resolve } from 'path'
 import { cwd } from 'process'
-import sharp from 'sharp'
+import sharp, { type Sharp } from 'sharp'
 import { v4 as uuid } from 'uuid'
 import { preConditions } from './utils'
 
@@ -35,8 +35,15 @@ import fs, { createReadStream, mkdtempSync } from 'fs'
 import { rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 
-const cacheControlValue = 'public, max-age=365d'
+const cacheControlValue = 'public, no-cache, must-revalidate, max-age=365d'
 const cacheControlNoCache = 'public, no-store, no-cache, must-revalidate, max-age=0'
+
+const KEEP_ALIVE_TIMEOUT = 5 // seconds
+const KEEP_ALIVE_MAX = 1000
+const KEEP_ALIVE_HEADERS = {
+  Connection: 'keep-alive',
+  'Keep-Alive': `timeout=${KEEP_ALIVE_TIMEOUT}, max=${KEEP_ALIVE_MAX}`
+}
 
 async function storageUpload (
   ctx: MeasureContext,
@@ -49,7 +56,7 @@ async function storageUpload (
   const resp = await ctx.with(
     'storage upload',
     { workspace: workspace.name },
-    async (ctx) => await storageAdapter.put(ctx, workspace, uuid, data, file.mimetype, file.size),
+    (ctx) => storageAdapter.put(ctx, workspace, uuid, data, file.mimetype, file.size),
     { file: file.name, contentType: file.mimetype }
   )
 
@@ -104,15 +111,16 @@ async function getFileRange (
         const dataStream = await ctx.with(
           'partial',
           {},
-          async (ctx) => await client.partial(ctx, workspace, stat._id, start, end - start + 1),
+          (ctx) => client.partial(ctx, workspace, stat._id, start, end - start + 1),
           {}
         )
         res.writeHead(206, {
-          Connection: 'keep-alive',
+          ...KEEP_ALIVE_HEADERS,
           'Content-Range': `bytes ${start}-${end}/${size}`,
           'Accept-Ranges': 'bytes',
           'Content-Length': end - start + 1,
           'Content-Type': stat.contentType,
+          'Content-Security-Policy': "default-src 'none';",
           Etag: stat.etag,
           'Last-Modified': new Date(stat.modifiedOn).toISOString()
         })
@@ -172,11 +180,11 @@ async function getFile (
   ) {
     // Matched, return not modified
     res.writeHead(304, {
+      ...KEEP_ALIVE_HEADERS,
       'content-type': stat.contentType,
       etag: stat.etag,
       'last-modified': new Date(stat.modifiedOn).toISOString(),
-      'cache-control': cacheControlValue,
-      Connection: 'keep-alive'
+      'cache-control': cacheControlValue
     })
     res.end()
     return
@@ -184,11 +192,11 @@ async function getFile (
   if (preConditions.IfUnmodifiedSince(req.headers, { lastModified: new Date(stat.modifiedOn) }) === 'failed') {
     // Send 412 (Precondition Failed)
     res.writeHead(412, {
+      ...KEEP_ALIVE_HEADERS,
       'content-type': stat.contentType,
       etag: stat.etag,
       'last-modified': new Date(stat.modifiedOn).toISOString(),
-      'cache-control': cacheControlValue,
-      Connection: 'keep-alive'
+      'cache-control': cacheControlValue
     })
     res.end()
     return
@@ -199,13 +207,16 @@ async function getFile (
     { contentType: stat.contentType },
     async (ctx) => {
       try {
-        const dataStream = await ctx.with('readable', {}, async (ctx) => await client.get(ctx, workspace, stat._id))
+        const dataStream = await ctx.with('readable', {}, (ctx) => client.get(ctx, workspace, stat._id))
         res.writeHead(200, {
           'Content-Type': stat.contentType,
+          'Content-Security-Policy': "default-src 'none';",
+          'Content-Length': stat.size,
           Etag: stat.etag,
           'Last-Modified': new Date(stat.modifiedOn).toISOString(),
           'Cache-Control': cacheControlValue,
-          Connection: 'keep-alive'
+          connection: 'keep-alive',
+          'keep-alive': 'timeout=5, max=1000'
         })
 
         dataStream.pipe(res)
@@ -241,7 +252,6 @@ async function getFile (
 export function start (
   ctx: MeasureContext,
   config: {
-    elasticUrl: string
     storageAdapter: StorageAdapter
     accountsUrl: string
     uploadUrl: string
@@ -257,6 +267,7 @@ export function start (
     brandingUrl?: string
     previewConfig: string
     uploadConfig: string
+    linkPreviewUrl?: string
     pushPublicKey?: string
     disableSignUp?: string
   },
@@ -267,6 +278,24 @@ export function start (
 
   const tempFileDir = mkdtempSync(join(tmpdir(), 'front-'))
   let temoFileIndex = 0
+
+  function cleanupTempFiles (): void {
+    const maxAge = 1000 * 60 * 60 // 1 hour
+    fs.readdir(tempFileDir, (err, files) => {
+      if (err != null) return
+      files.forEach((file) => {
+        const filePath = join(tempFileDir, file)
+        fs.stat(filePath, (err, stats) => {
+          if (err != null) return
+          if (Date.now() - stats.mtime.getTime() > maxAge) {
+            fs.unlink(filePath, () => {})
+          }
+        })
+      })
+    })
+  }
+
+  setInterval(cleanupTempFiles, 1000 * 60 * 15) // Run every 15 minutes
 
   app.use(cors())
   app.use(
@@ -306,6 +335,7 @@ export function start (
       GMAIL_URL: config.gmailUrl,
       CALENDAR_URL: config.calendarUrl,
       COLLABORATOR: config.collaborator,
+      LINK_PREVIEW_URL: config.linkPreviewUrl,
       COLLABORATOR_URL: config.collaboratorUrl,
       BRANDING_URL: config.brandingUrl,
       PREVIEW_CONFIG: config.previewConfig,
@@ -317,6 +347,7 @@ export function start (
     res.status(200)
     res.set('Cache-Control', cacheControlNoCache)
     res.set('Connection', 'keep-alive')
+    res.set('Keep-Alive', `timeout=${KEEP_ALIVE_TIMEOUT}, max=${KEEP_ALIVE_MAX}`)
     res.json(data)
   })
 
@@ -328,6 +359,7 @@ export function start (
       res.status(200)
       res.setHeader('Content-Type', 'application/json')
       res.setHeader('Connection', 'keep-alive')
+      res.setHeader('Keep-Alive', 'timeout=5')
       res.setHeader('Cache-Control', cacheControlNoCache)
 
       const json = JSON.stringify({
@@ -375,6 +407,7 @@ export function start (
             res.setHeader('Cache-Control', cacheControlNoCache)
           }
           res.setHeader('Connection', 'keep-alive')
+          res.setHeader('Keep-Alive', `timeout=${KEEP_ALIVE_TIMEOUT}, max=${KEEP_ALIVE_MAX}`)
         }
       }
     })
@@ -385,14 +418,14 @@ export function start (
       'handle-file',
       {},
       async (ctx) => {
-        let payload: Token = { email: 'guest', workspace: { name: req.query.workspace as string } }
         try {
           const cookies = ((req?.headers?.cookie as string) ?? '').split(';').map((it) => it.trim().split('='))
 
           const token =
             cookies.find((it) => it[0] === 'presentation-metadata-Token')?.[1] ??
-            (req.query.token as string | undefined)
-          payload = token !== undefined ? decodeToken(token) : payload
+            (req.query.token as string | undefined) ??
+            ''
+          const payload = decodeToken(token)
 
           const uuid = req.params.file ?? req.query.file
           if (uuid === undefined) {
@@ -400,10 +433,8 @@ export function start (
             return
           }
 
-          let blobInfo = await ctx.with(
-            'notoken-stat',
-            { workspace: payload.workspace.name },
-            async (ctx) => await config.storageAdapter.stat(ctx, payload.workspace, uuid)
+          let blobInfo = await ctx.with('stat', { workspace: payload.workspace.name }, (ctx) =>
+            config.storageAdapter.stat(ctx, payload.workspace, uuid)
           )
 
           if (blobInfo === undefined) {
@@ -412,24 +443,13 @@ export function start (
             return
           }
 
-          // try image and octet streams
-          const isImage =
-            blobInfo.contentType.includes('image/') || blobInfo.contentType.includes('application/octet-stream')
-
-          if (token === undefined) {
-            if (blobInfo !== undefined && !isImage) {
-              // Do not allow to return non images with no token.
-              if (token === undefined) {
-                res.status(403).send()
-                return
-              }
-            }
-          }
-
           if (req.method === 'HEAD') {
             res.writeHead(200, {
               'accept-ranges': 'bytes',
+              connection: 'keep-alive',
+              'Keep-Alive': 'timeout=5',
               'content-length': blobInfo.size,
+              'content-security-policy': "default-src 'none';",
               Etag: blobInfo.etag,
               'Last-Modified': new Date(blobInfo.modifiedOn).toISOString()
             })
@@ -438,32 +458,30 @@ export function start (
             res.end()
             return
           }
+          // try image and octet streams
+          const isImage =
+            blobInfo.contentType.includes('image/') || blobInfo.contentType.includes('application/octet-stream')
 
           const size = req.query.size !== undefined ? parseInt(req.query.size as string) : undefined
           const accept = req.headers.accept
           if (accept !== undefined && isImage && blobInfo.contentType !== 'image/gif' && size !== undefined) {
-            blobInfo = await ctx.with(
-              'resize',
-              {},
-              async (ctx) =>
-                await getGeneratePreview(ctx, blobInfo as PlatformBlob, size, uuid, config, payload, accept, () =>
-                  join(tempFileDir, `${++temoFileIndex}`)
-                )
+            blobInfo = await ctx.with('resize', {}, (ctx) =>
+              getGeneratePreview(ctx, blobInfo as PlatformBlob, size, uuid, config, payload, accept, () =>
+                join(tempFileDir, `${++temoFileIndex}`)
+              )
             )
           }
 
           const range = req.headers.range
           if (range !== undefined) {
-            await ctx.with('file-range', { workspace: payload.workspace.name }, async (ctx) => {
-              await getFileRange(ctx, blobInfo as PlatformBlob, range, config.storageAdapter, payload.workspace, res)
-            })
+            await ctx.with('file-range', { workspace: payload.workspace.name }, (ctx) =>
+              getFileRange(ctx, blobInfo as PlatformBlob, range, config.storageAdapter, payload.workspace, res)
+            )
           } else {
             await ctx.with(
               'file',
               { workspace: payload.workspace.name },
-              async (ctx) => {
-                await getFile(ctx, blobInfo as PlatformBlob, config.storageAdapter, payload.workspace, req, res)
-              },
+              (ctx) => getFile(ctx, blobInfo as PlatformBlob, config.storageAdapter, payload.workspace, req, res),
               { uuid }
             )
           }
@@ -475,9 +493,7 @@ export function start (
             error?.Code === 'NoSuchKey'
           ) {
             ctx.error('No such storage key', {
-              file: req.query.file,
-              workspace: payload?.workspace,
-              email: payload?.email
+              file: req.query.file
             })
             res.status(404).send()
             return
@@ -621,7 +637,7 @@ export function start (
           }
           const id = uuid()
           const contentType = response.headers['content-type'] ?? 'application/octet-stream'
-          const data: Buffer[] = []
+          const data: Uint8Array[] = []
           response
             .on('data', function (chunk) {
               data.push(chunk)
@@ -699,7 +715,7 @@ export function start (
         }
         const id = uuid()
         const contentType = response.headers['content-type']
-        const data: Buffer[] = []
+        const data: Uint8Array[] = []
         response
           .on('data', function (chunk) {
             data.push(chunk)
@@ -753,6 +769,11 @@ export function start (
   ]
 
   app.get('*', (request, response) => {
+    const safePath = normalize(join(dist, request.path))
+    if (!safePath.startsWith(dist)) {
+      response.sendStatus(403)
+      return
+    }
     if (filesPatterns.some((it) => request.path.endsWith(it))) {
       response.sendStatus(404)
       return
@@ -762,15 +783,15 @@ export function start (
       lastModified: true,
       cacheControl: false,
       headers: {
-        'Cache-Control': cacheControlNoCache
+        'Cache-Control': cacheControlNoCache,
+        'Keep-Alive': 'timeout=5'
       }
     })
   })
 
   const server = app.listen(port)
-
-  server.keepAliveTimeout = 60 * 1000 + 1000
-  server.headersTimeout = 60 * 1000 + 2000
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT * 1000 + 1000
+  server.headersTimeout = KEEP_ALIVE_TIMEOUT * 1000 + 2000
   return () => {
     server.close()
   }
@@ -827,14 +848,23 @@ async function getGeneratePreview (
     return d
   } else {
     const files: string[] = []
+    let pipeline: Sharp | undefined
     try {
       // Let's get data and resize it
       const fname = tempFile()
       files.push(fname)
       await writeFile(fname, await config.storageAdapter.get(ctx, payload.workspace, uuid))
 
-      let pipeline = sharp(fname)
+      pipeline = sharp(fname)
+      const md = await pipeline.metadata()
+      if (md.format === undefined) {
+        // No format detected, return blob
+        return blob
+      }
       sharp.cache(false)
+
+      // auto orient image based on exif to prevent resize use wrong orientation
+      pipeline = pipeline.rotate()
 
       pipeline = pipeline.resize({
         width: size,
@@ -880,7 +910,7 @@ async function getGeneratePreview (
       const outFile = tempFile()
       files.push(outFile)
 
-      const dataBuff = await ctx.with('resize', { contentType }, async () => await pipeline.toFile(outFile))
+      const dataBuff = await ctx.with('resize', { contentType }, () => (pipeline as Sharp).toFile(outFile))
       pipeline.destroy()
 
       // Add support of avif as well.
@@ -897,8 +927,7 @@ async function getGeneratePreview (
         _id: sizeId as Ref<PlatformBlob>,
         size: dataBuff.size,
         contentType,
-        etag: upload.etag,
-        storageId: sizeId
+        etag: upload.etag
       }
     } catch (err: any) {
       Analytics.handleError(err)
@@ -914,6 +943,7 @@ async function getGeneratePreview (
       // Return original in case of error
       return blob
     } finally {
+      pipeline?.destroy()
       for (const f of files) {
         await rm(f)
       }

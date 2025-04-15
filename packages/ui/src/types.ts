@@ -231,7 +231,8 @@ export const posAlignment = [
   'centered',
   'center',
   'status',
-  'movable'
+  'movable',
+  'full-centered'
 ] as const
 
 export type PopupPosAlignment = (typeof posAlignment)[number]
@@ -304,6 +305,7 @@ export interface LabelAndProps {
   onUpdate?: (result: any) => void
   kind?: 'tooltip' | 'submenu' | 'popup'
   keys?: string[]
+  timeout?: number
 }
 
 export interface ListItem {
@@ -326,6 +328,7 @@ export interface DropdownIntlItem {
   id: string | number
   label: IntlString
   icon?: Asset | AnySvelteComponent | ComponentType
+  iconProps?: Record<string, any>
   params?: Record<string, any>
   description?: IntlString
   paramsDescription?: Record<string, any>

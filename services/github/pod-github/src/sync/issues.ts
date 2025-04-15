@@ -19,7 +19,9 @@ import core, {
   TxOperations,
   cutObjectArray,
   generateId,
-  makeCollaborativeDoc
+  makeCollabId,
+  makeCollabJsonId,
+  makeDocCollabId
 } from '@hcengineering/core'
 import github, {
   DocSyncInfo,
@@ -44,7 +46,6 @@ import {
   githubSyncVersion
 } from '../types'
 import { IssueExternalData, issueDetails } from './githubTypes'
-import { appendGuestLink } from './guest'
 import { GithubIssueData, IssueSyncManagerBase, IssueSyncTarget, IssueUpdate, WithMarkup } from './issueBase'
 import { syncConfig } from './syncConfig'
 import { getSince, gqlp, guessStatus, isGHWriteAllowed, syncRunner } from './utils'
@@ -94,13 +95,15 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     if (projectV2Event) {
       const projectV2Event = event as ProjectsV2ItemEvent
 
-      const githubProjects = await this.provider.liveQuery.queryFind(github.mixin.GithubProject, {})
+      const githubProjects = await this.provider.liveQuery.findAll(github.mixin.GithubProject, {
+        archived: false
+      })
       let prj = githubProjects.find((it) => it.projectNodeId === projectV2Event.projects_v2_item.project_node_id)
       if (prj === undefined) {
         // Checking for milestones
-        const m = (await this.provider.liveQuery.queryFind(github.mixin.GithubMilestone, {})).find(
-          (it) => it.projectNodeId === projectV2Event.projects_v2_item.project_node_id
-        )
+        const m = await this.provider.liveQuery.findOne(github.mixin.GithubMilestone, {
+          projectNodeId: projectV2Event.projects_v2_item.project_node_id
+        })
         if (m !== undefined) {
           prj = githubProjects.find((it) => it._id === m.space)
         }
@@ -216,7 +219,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         const update: IssueUpdate = {}
         const du: DocumentUpdate<DocSyncInfo> = {}
         if (event.changes.body !== undefined) {
-          update.description = await this.provider.getMarkup(integration, event.issue.body, this.stripGuestLink)
+          update.description = await this.provider.getMarkupSafe(integration, event.issue.body, this.stripGuestLink)
           du.markdown = await this.provider.getMarkdown(update.description)
         }
         if (event.changes.title !== undefined) {
@@ -239,7 +242,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
       case 'assigned':
       case 'unassigned': {
         const assignees = await this.getAssigneesI(event.issue)
-        const update: DocumentUpdate<Issue> = {
+        const update: IssueUpdate = {
           assignee: assignees?.[0]?.person ?? null
         }
         await this.handleUpdate(externalData as IssueExternalData, derivedClient, update, account, prj, false)
@@ -255,7 +258,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         }
         const type = await this.provider.getTaskTypeOf(prj.type, tracker.class.Issue)
         const statuses = await this.provider.getStatuses(type?._id)
-        const update: DocumentUpdate<Issue> = {
+        const update: IssueUpdate = {
           status: (
             await guessStatus(
               {
@@ -305,7 +308,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         external: issueExternal,
         externalVersion: githubExternalSyncVersion,
         lastModified: new Date(issueExternal.updatedAt).getTime(),
-        allowOpenInHuly: true
+        addHulyLink: true
       })
 
       // We need trigger comments, if their sync data created before
@@ -330,6 +333,9 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     if (container?.container === undefined) {
       return { needSync: githubSyncVersion }
     }
+
+    let needCreateConnectedAtHuly = info.addHulyLink === true
+
     if (
       (container.project.projectNodeId === undefined ||
         !container.container.projectStructure.has(container.project._id)) &&
@@ -349,13 +355,9 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         }
         if (info.repository == null) {
           // No need to sync if component it not yet set
-          const repos = (await this.provider.getProjectRepositories(container.project._id))
-            .map((it) => it.name)
-            .join(', ')
           this.ctx.error('Not syncing repository === null', {
             url: info.url,
-            identifier: (existing as Issue).identifier,
-            repos
+            identifier: (existing as Issue).identifier
           })
           return { needSync: githubSyncVersion }
         }
@@ -368,20 +370,16 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
     if (info.external === undefined && existing !== undefined) {
       const repository = await this.provider.getRepositoryById(info.repository)
       if (repository === undefined) {
-        const repos = (await this.provider.getProjectRepositories(container.project._id))
-          .map((it) => it.name)
-          .join(', ')
         this.ctx.error('Not syncing repository === undefined', {
           url: info.url,
-          identifier: (existing as Issue).identifier,
-          repos
+          identifier: (existing as Issue).identifier
         })
         return { needSync: githubSyncVersion }
       }
 
       const description = await this.ctx.withLog('query collaborative description', {}, async () => {
-        const content = await this.collaborator.getContent((existing as Issue).description)
-        return content.description ?? ''
+        const collabId = makeDocCollabId(existing, 'description')
+        return await this.collaborator.getMarkup(collabId, (existing as Issue).description)
       })
 
       this.ctx.info('create github issue', {
@@ -411,12 +409,13 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         url: issueExternal.url.toLowerCase(),
         githubNumber: issueExternal.number,
         lastModified: new Date(issueExternal.updatedAt).getTime(),
-        allowOpenInHuly: true,
+        addHulyLink: false, // Do not need, since we create comment on Github about issue is connected.
         current: {
           title: issueExternal.title,
-          description: await this.provider.getMarkup(container.container, issueExternal.body, this.stripGuestLink)
+          description: await this.provider.getMarkupSafe(container.container, issueExternal.body, this.stripGuestLink)
         }
       }
+      needCreateConnectedAtHuly = true
       await derivedClient.update(info, update)
       info.external = update.external
       info.externalVersion = update.externalVersion
@@ -460,6 +459,11 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
         }
       }
     }
+
+    if (existing !== undefined && issueExternal !== undefined && needCreateConnectedAtHuly) {
+      await this.addHulyLink(info, syncResult, existing, issueExternal, container)
+    }
+
     return {
       ...syncResult,
       issueExternal,
@@ -496,7 +500,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
 
     const issueData = {
       title: issueExternal.title,
-      description: await this.provider.getMarkup(container.container, issueExternal.body, this.stripGuestLink),
+      description: await this.provider.getMarkupSafe(container.container, issueExternal.body, this.stripGuestLink),
       assignee: assignees[0]?.person,
       repository: info.repository,
       remainingTime: 0
@@ -545,11 +549,8 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
           url: issueExternal.url,
           workspace: this.provider.getWorkspaceId().name
         })
-        target.prjData = await this.ctx.withLog(
-          'add issue to project v2',
-          {},
-          async () =>
-            await this.addIssueToProject(container, okit, issueExternal, target.target.projectNodeId as string)
+        target.prjData = await this.ctx.withLog('add issue to project v2', {}, () =>
+          this.addIssueToProject(container, okit, issueExternal, target.target.projectNodeId as string)
         )
         if (target.prjData !== undefined) {
           issueExternal.projectItems.nodes.push(target.prjData)
@@ -627,8 +628,8 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
           'query collaborative description',
           {},
           async () => {
-            const content = await this.collaborator.getContent((existing as Issue).description)
-            return content.description ?? ''
+            const collabId = makeDocCollabId(existing, 'description')
+            return await this.collaborator.getMarkup(collabId, (existing as Issue).description)
           },
           { url: issueExternal.url }
         )
@@ -766,7 +767,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
           },
           { url: issueExternal.url, id: existing._id }
         )
-        issueData.description = await this.provider.getMarkup(container.container, body, this.stripGuestLink)
+        issueData.description = await this.provider.getMarkupSafe(container.container, body, this.stripGuestLink)
       } else if (hasFieldStateChanges) {
         await this.ctx.withLog(
           '==> updateIssue',
@@ -838,10 +839,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
       }
     }`
 
-    const body =
-      (await this.provider.getMarkdown(existingIssue.description, async (nodes) => {
-        await appendGuestLink(this.client, existing, nodes, this.provider.getWorkspaceId(), this.provider.getBranding())
-      })) ?? ''
+    const body = (await this.provider.getMarkdown(existingIssue.description)) ?? ''
     if (isGHWriteAllowed()) {
       const response:
       | {
@@ -911,9 +909,12 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
 
     const { description, ...update } = issueData
 
+    const collabId = makeCollabId(tracker.class.Issue, issueId, 'description')
+    const contentId = makeCollabJsonId(collabId)
+
     const value: AttachedData<Issue> = {
       ...update,
-      description: makeCollaborativeDoc(issueId, 'description'),
+      description: contentId,
       kind: taskType,
       component: null,
       milestone: null,
@@ -933,7 +934,7 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
       identifier: `${prj.identifier}-${number}`
     }
 
-    await this.collaborator.updateContent(value.description, { description })
+    await this.collaborator.updateMarkup(collabId, description)
 
     await this.client.addCollection(
       tracker.class.Issue,
@@ -998,8 +999,8 @@ export class IssueSyncManager extends IssueSyncManagerBase implements DocSyncMan
           const response: any = await this.ctx.with(
             'graphql.listIssue',
             { prj: prj.name, repo: repo.name },
-            async () =>
-              await integration.octokit.graphql(
+            () =>
+              integration.octokit.graphql(
                 `query listIssues {
                     nodes(ids: [${idsp}] ) {
                       ... on Issue {

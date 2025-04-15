@@ -16,18 +16,17 @@
   import { Attachment } from '@hcengineering/attachment'
   import { Ref, type WithLookup } from '@hcengineering/core'
   import { Scroller } from '@hcengineering/ui'
-
   import { AttachmentImageSize } from '../types'
   import AttachmentPreview from './AttachmentPreview.svelte'
 
   export let attachments: WithLookup<Attachment>[] = []
   export let savedAttachmentsIds: Ref<Attachment>[] = []
   export let imageSize: AttachmentImageSize | undefined = undefined
-  export let videoPreload = true
+  export let videoPreload = false
 </script>
 
 {#if attachments.length}
-  <Scroller contentDirection={'horizontal'} horizontal gap={'gap-3'}>
+  <Scroller contentDirection={'horizontal'} horizontal gap={'gap-3'} scrollSnap>
     {#each attachments as attachment}
       <AttachmentPreview
         value={attachment}

@@ -1,5 +1,5 @@
 //
-// Copyright © 2022, 2023 Hardcore Engineering Inc.
+// Copyright © 2022, 2023, 2024 Hardcore Engineering Inc.
 //
 // Licensed under the Eclipse Public License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License. You may
@@ -14,11 +14,10 @@
 //
 
 import activity from '@hcengineering/activity'
-import type { Class, CollaborativeDoc, CollectionSize, Domain, Rank, Role, RolesAssignment } from '@hcengineering/core'
+import type { CollectionSize, Domain, MarkupBlobRef, Rank, Role, RolesAssignment } from '@hcengineering/core'
 import { Account, AccountRole, IndexKind, Ref } from '@hcengineering/core'
 import {
   type Document,
-  type DocumentEmbedding,
   type DocumentSnapshot,
   type SavedDocument,
   type Teamspace,
@@ -32,14 +31,14 @@ import {
   Mixin,
   Model,
   Prop,
+  ReadOnly,
   TypeCollaborativeDoc,
-  TypeCollaborativeDocVersion,
   TypeNumber,
   TypeRef,
   TypeString,
   UX
 } from '@hcengineering/model'
-import attachment, { TAttachment } from '@hcengineering/model-attachment'
+import attachment from '@hcengineering/model-attachment'
 import chunter from '@hcengineering/model-chunter'
 import core, { TDoc, TTypedSpace } from '@hcengineering/model-core'
 import { createPublicLinkAction } from '@hcengineering/model-guest'
@@ -62,13 +61,6 @@ export { document as default }
 
 export const DOMAIN_DOCUMENT = 'document' as Domain
 
-@Model(document.class.DocumentEmbedding, attachment.class.Attachment)
-@UX(document.string.Embedding)
-export class TDocumentEmbedding extends TAttachment implements DocumentEmbedding {
-  declare attachedTo: Ref<Document>
-  declare attachedToClass: Ref<Class<Document>>
-}
-
 @Model(document.class.Document, core.class.Doc, DOMAIN_DOCUMENT)
 @UX(document.string.Document, document.icon.Document, undefined, 'name', undefined, document.string.Documents)
 export class TDocument extends TDoc implements Document, Todoable {
@@ -77,7 +69,7 @@ export class TDocument extends TDoc implements Document, Todoable {
     title!: string
 
   @Prop(TypeCollaborativeDoc(), document.string.Document)
-    content!: CollaborativeDoc
+    content!: MarkupBlobRef | null
 
   @Prop(TypeRef(document.class.Document), document.string.ParentDocument)
     parent!: Ref<Document>
@@ -91,7 +83,7 @@ export class TDocument extends TDoc implements Document, Todoable {
   @Hidden()
     lockedBy?: Ref<Account>
 
-  @Prop(Collection(document.class.DocumentEmbedding), document.string.Embeddings)
+  @Prop(Collection(attachment.class.Embedding), attachment.string.Embeddings)
     embeddings?: number
 
   @Prop(Collection(attachment.class.Attachment), attachment.string.Attachments, { shortLabel: attachment.string.Files })
@@ -137,8 +129,9 @@ export class TDocumentSnapshot extends TDoc implements DocumentSnapshot {
   @Index(IndexKind.FullText)
     title!: string
 
-  @Prop(TypeCollaborativeDocVersion(), document.string.Document)
-    content!: CollaborativeDoc
+  @Prop(TypeCollaborativeDoc(), document.string.Document)
+  @ReadOnly()
+    content!: MarkupBlobRef
 
   @Prop(TypeRef(document.class.Document), document.string.ParentDocument)
     parent!: Ref<Document>
@@ -207,7 +200,21 @@ function defineTeamspace (builder: Builder): void {
       configOptions: {
         hiddenKeys: ['name', 'description']
       },
-      config: ['', 'members', 'private', 'archived']
+      config: ['', 'members', 'private', 'archived'],
+      viewOptions: {
+        groupBy: [],
+        orderBy: [],
+        other: [
+          {
+            key: 'hideArchived',
+            type: 'toggle',
+            defaultValue: true,
+            actionTarget: 'options',
+            action: view.function.HideArchived,
+            label: view.string.HideArchived
+          }
+        ]
+      }
     },
     document.viewlet.TeamspaceTable
   )
@@ -263,7 +270,7 @@ function defineTeamspace (builder: Builder): void {
 }
 
 function defineDocument (builder: Builder): void {
-  builder.createModel(TDocument, TDocumentSnapshot, TDocumentEmbedding, TSavedDocument, TDefaultTeamspaceTypeData)
+  builder.createModel(TDocument, TDocumentSnapshot, TSavedDocument, TDefaultTeamspaceTypeData)
 
   builder.mixin(document.class.Document, core.class.Class, time.mixin.ItemPresenter, {
     presenter: document.component.DocumentToDoPresenter
@@ -296,6 +303,10 @@ function defineDocument (builder: Builder): void {
 
   builder.mixin(document.class.Document, core.class.Class, view.mixin.ObjectIcon, {
     component: document.component.DocumentIcon
+  })
+
+  builder.mixin(document.class.Document, core.class.Class, view.mixin.AttributeEditor, {
+    inlineEditor: document.component.DocumentInlineEditor
   })
 
   // Actions
@@ -478,7 +489,7 @@ function defineDocument (builder: Builder): void {
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: document.class.Document,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   // Search

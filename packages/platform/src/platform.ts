@@ -131,6 +131,7 @@ export default plugin(platformId, {
     BadError: '' as StatusCode,
     UnknownError: '' as StatusCode<{ message: string }>,
     InvalidId: '' as StatusCode<{ id: string }>,
+    ConnectionClosed: '' as StatusCode,
 
     LoadingPlugin: '' as StatusCode<{ plugin: string }>,
     NoLocationForPlugin: '' as StatusCode<{ plugin: Plugin }>,
@@ -146,14 +147,19 @@ export default plugin(platformId, {
     InternalServerError: '' as StatusCode,
     MaintenanceWarning: '' as StatusCode<{ time: number }>,
     AccountNotFound: '' as StatusCode<{ account: string }>,
+    AccountMismatch: '' as StatusCode<{ account?: string, requiredAccount?: string }>,
     AccountNotConfirmed: '' as StatusCode<{ account: string }>,
     WorkspaceNotFound: '' as StatusCode<{ workspace: string }>,
+    WorkspaceArchived: '' as StatusCode<{ workspace: string }>,
+    WorkspaceMigration: '' as StatusCode<{ workspace: string }>,
     InvalidPassword: '' as StatusCode<{ account: string }>,
     AccountAlreadyExists: '' as StatusCode<{ account: string }>,
     AccountAlreadyConfirmed: '' as StatusCode<{ account: string }>,
     WorkspaceAlreadyExists: '' as StatusCode<{ workspace: string }>,
     WorkspaceRateLimit: '' as StatusCode<{ workspace: string }>,
-    InvalidOtp: '' as StatusCode
+    WorkspaceLimitReached: '' as StatusCode<{ workspace: string }>,
+    InvalidOtp: '' as StatusCode,
+    InviteNotFound: '' as StatusCode<{ email: string }>
   },
   metadata: {
     locale: '' as Metadata<string>,

@@ -28,6 +28,7 @@ import { type Contact } from '@hcengineering/contact'
 import {
   DateRangeMode,
   IndexKind,
+  type Account,
   type SystemSpace,
   type Domain,
   type Markup,
@@ -68,6 +69,7 @@ export { calendarId } from '@hcengineering/calendar'
 export { calendarOperation } from './migration'
 
 export const DOMAIN_CALENDAR = 'calendar' as Domain
+export const DOMAIN_EVENT = 'event' as Domain
 
 @Model(calendar.class.Calendar, core.class.Doc, DOMAIN_CALENDAR)
 @UX(calendar.string.Calendar, calendar.icon.Calendar)
@@ -85,7 +87,7 @@ export class TExternalCalendar extends TCalendar implements ExternalCalendar {
   externalUser!: string
 }
 
-@Model(calendar.class.Event, core.class.AttachedDoc, DOMAIN_CALENDAR)
+@Model(calendar.class.Event, core.class.AttachedDoc, DOMAIN_EVENT)
 @UX(calendar.string.Event, calendar.icon.Calendar)
 export class TEvent extends TAttachedDoc implements Event {
   declare space: Ref<SystemSpace>
@@ -134,6 +136,8 @@ export class TEvent extends TAttachedDoc implements Event {
   visibility?: Visibility
 
   timeZone?: string
+
+  user!: Ref<Account>
 }
 
 @Model(calendar.class.ReccuringEvent, calendar.class.Event)

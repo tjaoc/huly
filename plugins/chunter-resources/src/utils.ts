@@ -420,7 +420,7 @@ export function recheckNotifications (context: DocNotifyContext): void {
     const toReadData = Array.from(toRead)
     toRead.clear()
     void (async () => {
-      const _client = client.apply(undefined, 'recheckNotifications')
+      const _client = client.apply(undefined, 'recheckNotifications', true)
       await inboxClient.readNotifications(_client, toReadData)
       await _client.commit()
     })()
@@ -429,14 +429,17 @@ export function recheckNotifications (context: DocNotifyContext): void {
 
 export async function readChannelMessages (
   messages: DisplayActivityMessage[],
-  context: DocNotifyContext | undefined
+  contextId: Ref<DocNotifyContext>
 ): Promise<void> {
-  if (messages.length === 0 || context === undefined) {
+  if (messages.length === 0) {
     return
   }
 
   const inboxClient = InboxNotificationsClientImpl.getClient()
-  const client = getClient().apply(undefined, 'readViewportMessages')
+  const context = get(inboxClient.contextById).get(contextId)
+  if (context === undefined) return
+
+  const op = getClient().apply(undefined, 'readViewportMessages', true)
 
   try {
     const allIds = getAllIds(messages)
@@ -464,16 +467,15 @@ export async function readChannelMessages (
     const prevTimestamp = Math.max(storedTimestampUpdates ?? 0, context.lastViewedTimestamp ?? 0)
 
     if (prevTimestamp < newTimestamp) {
-      context.lastViewedTimestamp = newTimestamp
       contextsTimestampStore.update((store) => {
         store.set(context._id, newTimestamp)
         return store
       })
-      await client.update(context, { lastViewedTimestamp: newTimestamp })
+      await op.update(context, { lastViewedTimestamp: newTimestamp })
     }
-    await inboxClient.readNotifications(client, [...notifications, ...relatedMentions])
+    await inboxClient.readNotifications(op, [...notifications, ...relatedMentions])
   } finally {
-    await client.commit()
+    await op.commit()
   }
 }
 
@@ -627,24 +629,6 @@ export async function createDirect (employeeIds: Array<Ref<Employee>>): Promise<
     if (context.hidden) {
       await client.updateDoc(context._class, context.space, context._id, { hidden: false })
     }
-
-    return dmId
   }
-
-  const space = await client.findOne(
-    contact.class.PersonSpace,
-    { person: me.person as Ref<Person> },
-    { projection: { _id: 1 } }
-  )
-  if (space == null) return dmId
-  await client.createDoc(notification.class.DocNotifyContext, space._id, {
-    user: me._id,
-    objectId: dmId,
-    objectClass: chunter.class.DirectMessage,
-    objectSpace: core.space.Space,
-    hidden: false,
-    isPinned: false
-  })
-
   return dmId
 }

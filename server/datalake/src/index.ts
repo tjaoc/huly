@@ -13,19 +13,32 @@
 // limitations under the License.
 //
 
-import core, { type Blob, type MeasureContext, type Ref, type WorkspaceId, withContext } from '@hcengineering/core'
-
+import core, {
+  type Blob,
+  type MeasureContext,
+  type Ref,
+  type WorkspaceId,
+  systemAccountEmail,
+  withContext
+} from '@hcengineering/core'
 import {
   type BlobStorageIterator,
   type BucketInfo,
+  type ListBlobResult,
   type StorageAdapter,
   type StorageConfig,
   type StorageConfiguration,
   type UploadedObjectInfo
 } from '@hcengineering/server-core'
+import { generateToken } from '@hcengineering/server-token'
 import { type Readable } from 'stream'
-import { type ObjectMetadata, Client } from './client'
+import { type UploadObjectParams, DatalakeClient } from './client'
 
+export { DatalakeClient }
+
+/**
+ * @public
+ */
 export interface DatalakeConfig extends StorageConfig {
   kind: 'datalake'
 }
@@ -33,11 +46,22 @@ export interface DatalakeConfig extends StorageConfig {
 /**
  * @public
  */
+export function createDatalakeClient (opt: DatalakeConfig, token: string): DatalakeClient {
+  const endpoint = Number.isInteger(opt.port) ? `${opt.endpoint}:${opt.port}` : opt.endpoint
+  return new DatalakeClient(endpoint, token)
+}
+
+export const CONFIG_KIND = 'datalake'
+
+/**
+ * @public
+ */
 export class DatalakeService implements StorageAdapter {
-  static config = 'datalake'
-  client: Client
+  private readonly client: DatalakeClient
+
   constructor (readonly opt: DatalakeConfig) {
-    this.client = new Client(opt.endpoint, opt.port)
+    const token = generateToken(systemAccountEmail, { name: '' }, { service: 'datalake' })
+    this.client = createDatalakeClient(opt, token)
   }
 
   async initialize (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<void> {}
@@ -74,36 +98,63 @@ export class DatalakeService implements StorageAdapter {
 
   @withContext('listStream')
   async listStream (ctx: MeasureContext, workspaceId: WorkspaceId): Promise<BlobStorageIterator> {
+    let hasMore = true
+    const buffer: ListBlobResult[] = []
+    let cursor: string | undefined
+
     return {
-      next: async () => [],
+      next: async () => {
+        try {
+          while (hasMore && buffer.length < 50) {
+            const res = await this.client.listObjects(ctx, workspaceId, cursor)
+            hasMore = res.cursor !== undefined
+            cursor = res.cursor
+
+            for (const blob of res.blobs) {
+              buffer.push({
+                _id: blob.name as Ref<Blob>,
+                _class: core.class.Blob,
+                etag: blob.etag,
+                size: (typeof blob.size === 'string' ? parseInt(blob.size) : blob.size) ?? 0,
+                provider: this.opt.name,
+                space: core.space.Configuration,
+                modifiedBy: core.account.ConfigUser,
+                modifiedOn: 0
+              })
+            }
+          }
+        } catch (err: any) {
+          ctx.error('Failed to get list', { error: err, workspaceId: workspaceId.name })
+        }
+        return buffer.splice(0, 50)
+      },
       close: async () => {}
     }
   }
 
   @withContext('stat')
   async stat (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string): Promise<Blob | undefined> {
-    try {
-      const result = await this.client.statObject(ctx, workspaceId, objectName)
-      if (result !== undefined) {
-        return {
-          provider: '',
-          _class: core.class.Blob,
-          _id: objectName as Ref<Blob>,
-          storageId: objectName,
-          contentType: result.type,
-          size: result.size ?? 0,
-          etag: result.etag ?? '',
-          space: core.space.Configuration,
-          modifiedBy: core.account.System,
-          modifiedOn: result.lastModified,
-          version: null
+    return await withRetry(ctx, 5, async () => {
+      try {
+        const result = await this.client.statObject(ctx, workspaceId, objectName)
+        if (result !== undefined) {
+          return {
+            provider: '',
+            _class: core.class.Blob,
+            _id: objectName as Ref<Blob>,
+            contentType: result.type,
+            size: result.size ?? 0,
+            etag: result.etag ?? '',
+            space: core.space.Configuration,
+            modifiedBy: core.account.System,
+            modifiedOn: result.lastModified,
+            version: null
+          }
         }
-      } else {
-        ctx.error('no object found', { objectName, workspaceId: workspaceId.name })
+      } catch (err) {
+        ctx.error('failed to stat object', { error: err, objectName, workspaceId: workspaceId.name })
       }
-    } catch (err) {
-      ctx.error('failed to stat object', { error: err, objectName, workspaceId: workspaceId.name })
-    }
+    })
   }
 
   @withContext('get')
@@ -120,21 +171,18 @@ export class DatalakeService implements StorageAdapter {
     contentType: string,
     size?: number
   ): Promise<UploadedObjectInfo> {
-    const metadata: ObjectMetadata = {
+    const params: UploadObjectParams = {
       lastModified: Date.now(),
-      name: objectName,
       type: contentType,
       size
     }
 
-    await ctx.with('put', {}, async (ctx) => {
-      await withRetry(ctx, 5, async () => {
-        await this.client.putObject(ctx, workspaceId, objectName, stream, metadata, size)
-      })
-    })
+    const { etag } = await ctx.with('put', {}, (ctx) =>
+      withRetry(ctx, 5, () => this.client.putObject(ctx, workspaceId, objectName, stream, params))
+    )
 
     return {
-      etag: '',
+      etag,
       versionId: ''
     }
   }
@@ -168,23 +216,15 @@ export class DatalakeService implements StorageAdapter {
 }
 
 export function processConfigFromEnv (storageConfig: StorageConfiguration): string | undefined {
-  let endpoint = process.env.DATALAKE_ENDPOINT
+  const endpoint = process.env.DATALAKE_ENDPOINT
   if (endpoint === undefined) {
     return 'DATALAKE_ENDPOINT'
-  }
-
-  let port = 80
-  const sp = endpoint.split(':')
-  if (sp.length > 1) {
-    endpoint = sp[0]
-    port = parseInt(sp[1])
   }
 
   const config: DatalakeConfig = {
     kind: 'datalake',
     name: 'datalake',
-    endpoint,
-    port
+    endpoint
   }
   storageConfig.storages.push(config)
   storageConfig.default = 'datalake'

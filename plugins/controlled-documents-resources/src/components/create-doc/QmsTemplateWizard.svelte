@@ -32,8 +32,7 @@
     type Ref,
     type Mixin,
     generateId,
-    getCurrentAccount,
-    makeCollaborativeDoc
+    getCurrentAccount
   } from '@hcengineering/core'
   import { MessageBox, getClient } from '@hcengineering/presentation'
   import {
@@ -118,7 +117,7 @@
     state: DocumentState.Draft,
     snapshots: 0,
     changeControl: ccRecordId,
-    content: makeCollaborativeDoc(generateId()),
+    content: null,
 
     requests: 0,
     reviewers: [],
@@ -139,10 +138,15 @@
     currentStepUpdated(e.detail)
   }
 
+  let submitted = false
+
   async function handleSubmit (): Promise<void> {
     if ($locationStep.space === undefined || $locationStep.project === undefined) {
       return
     }
+
+    if (submitted) return
+    submitted = true
 
     const { category } = docObject
     if (category === undefined || category === null) return
@@ -215,6 +219,7 @@
   submitLabel={documents.string.CreateDraft}
   {canProceed}
   {steps}
+  canSubmit={!submitted}
   selectedStep={currentTemplateStep}
   on:stepChanged={handleStepChanged}
   on:submit={handleSubmit}

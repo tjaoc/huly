@@ -13,10 +13,10 @@
 // limitations under the License.
 //
 
-import { DocumentId, parseDocumentId } from '@hcengineering/collaborator-client'
-import { isReadonlyDoc } from '@hcengineering/collaboration'
+import { guestAccountEmail } from '@hcengineering/account'
+import { decodeDocumentId } from '@hcengineering/collaborator-client'
 import { MeasureContext } from '@hcengineering/core'
-import { decodeToken } from '@hcengineering/server-token'
+import { Token, decodeToken } from '@hcengineering/server-token'
 import { Extension, onAuthenticatePayload } from '@hocuspocus/server'
 
 import { getWorkspaceInfo } from '../account'
@@ -35,12 +35,17 @@ export class AuthenticationExtension implements Extension {
 
   async onAuthenticate (data: onAuthenticatePayload): Promise<Context> {
     const ctx = this.configuration.ctx
-    const { workspaceId, collaborativeDoc } = parseDocumentId(data.documentName as DocumentId)
+    const { workspaceId } = decodeDocumentId(data.documentName)
 
     return await ctx.with('authenticate', { workspaceId }, async () => {
       const token = decodeToken(data.token)
+      const readonly = isGuest(token)
 
-      ctx.info('authenticate', { workspaceId, mode: token.extra?.mode ?? '' })
+      ctx.info('authenticate', { workspaceId, mode: token.extra?.mode ?? '', readonly })
+
+      if (readonly) {
+        data.connection.readOnly = true
+      }
 
       // verify workspace can be accessed with the token
       const workspaceInfo = await getWorkspaceInfo(data.token)
@@ -50,9 +55,11 @@ export class AuthenticationExtension implements Extension {
         throw new Error('documentName must include workspace id')
       }
 
-      data.connection.readOnly = isReadonlyDoc(collaborativeDoc)
-
       return buildContext(data)
     })
   }
+}
+
+export function isGuest (token: Token): boolean {
+  return token.email === guestAccountEmail && token.extra?.guest === 'true'
 }

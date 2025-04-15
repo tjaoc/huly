@@ -14,9 +14,7 @@
 //
 
 import type { AccountClient, ClientConnectEvent, MeasureContext, TxPersistenceStore } from '@hcengineering/core'
-import type { Plugin, Resource } from '@hcengineering/platform'
-import { Metadata, plugin } from '@hcengineering/platform'
-
+import { type Plugin, type Resource, type Metadata, plugin } from '@hcengineering/platform'
 /**
  * @public
  */
@@ -56,12 +54,20 @@ export enum ClientSocketReadyState {
 }
 
 export interface ClientFactoryOptions {
+  socketFactory?: ClientSocketFactory
+  useBinaryProtocol?: boolean
+  useProtocolCompression?: boolean
+  connectionTimeout?: number
   onHello?: (serverVersion?: string) => boolean
   onUpgrade?: () => void
   onUnauthorized?: () => void
-  onConnect?: (event: ClientConnectEvent, data: any) => void
+  onArchived?: () => void
+  onMigration?: () => void
+  onConnect?: (event: ClientConnectEvent, lastTx: string | undefined, data: any) => Promise<void>
   ctx?: MeasureContext
   onDialTimeout?: () => void | Promise<void>
+
+  useGlobalRPCHandler?: boolean
 }
 
 /**
@@ -73,6 +79,9 @@ export type ClientFactory = (token: string, endpoint: string, opt?: ClientFactor
 // It will also filter out all UI Elements, like Actions, View declarations etc.
 // ui - will filter out all server element's and all UI disabled elements.
 export type FilterMode = 'none' | 'client' | 'ui'
+
+export const pingConst = 'ping'
+export const pongConst = 'pong!'
 
 export default plugin(clientId, {
   metadata: {

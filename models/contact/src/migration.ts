@@ -7,6 +7,7 @@ import {
   type Domain,
   DOMAIN_TX,
   generateId,
+  groupByArray,
   type Ref,
   type Space,
   TxOperations
@@ -18,7 +19,6 @@ import {
   type MigrationClient,
   type MigrationDocumentQuery,
   type MigrationUpgradeClient,
-  type ModelLogger,
   tryMigrate,
   tryUpgrade
 } from '@hcengineering/model'
@@ -26,7 +26,9 @@ import activity, { DOMAIN_ACTIVITY } from '@hcengineering/model-activity'
 import core, { DOMAIN_SPACE } from '@hcengineering/model-core'
 import { DOMAIN_VIEW } from '@hcengineering/model-view'
 
-import contact, { contactId, DOMAIN_CHANNEL, DOMAIN_CONTACT } from './index'
+import { DOMAIN_CHUNTER } from '@hcengineering/model-chunter'
+import { DOMAIN_DOC_NOTIFY, DOMAIN_NOTIFICATION } from '@hcengineering/notification'
+import contact, { contactId, DOMAIN_CONTACT } from './index'
 
 async function createEmployeeEmail (client: TxOperations): Promise<void> {
   const employees = await client.findAll(contact.mixin.Employee, {})
@@ -156,11 +158,37 @@ async function createPersonSpaces (client: MigrationClient): Promise<void> {
   await client.create(DOMAIN_SPACE, Array.from(newSpaces.values()))
 }
 
+async function mergePersonSpaces (client: MigrationClient): Promise<void> {
+  const spaces = await client.find<PersonSpace>(DOMAIN_SPACE, { _class: contact.class.PersonSpace })
+  const spacesByPerson = groupByArray(spaces, (it) => it.person)
+
+  for (const [person, spaces] of spacesByPerson) {
+    const resultSpace = spaces[0]
+    const deletedSpaces = spaces.slice(1)
+
+    if (resultSpace == null || deletedSpaces.length === 0) {
+      continue
+    }
+
+    const deletedIds = deletedSpaces.map((it) => it._id)
+    const accounts = await client.model.findAll(contact.class.PersonAccount, { person })
+    const accountIds = accounts.map((it) => it._id)
+
+    await client.update(DOMAIN_DOC_NOTIFY, { space: { $in: deletedIds } }, { space: resultSpace._id })
+    await client.update(DOMAIN_NOTIFICATION, { space: { $in: deletedIds } }, { space: resultSpace._id })
+    await client.update(DOMAIN_CHUNTER, { space: { $in: deletedIds } }, { space: resultSpace._id })
+
+    await client.update(DOMAIN_SPACE, { _id: resultSpace._id }, { members: accountIds })
+    await client.deleteMany(DOMAIN_SPACE, { _id: { $in: deletedIds } })
+  }
+}
+
 export const contactOperation: MigrateOperation = {
-  async migrate (client: MigrationClient, logger: ModelLogger): Promise<void> {
-    await tryMigrate(client, contactId, [
+  async migrate (client: MigrationClient, mode): Promise<void> {
+    await tryMigrate(mode, client, contactId, [
       {
         state: 'employees',
+        mode: 'upgrade',
         func: async (client) => {
           await client.update(
             DOMAIN_TX,
@@ -269,6 +297,7 @@ export const contactOperation: MigrateOperation = {
       },
       {
         state: 'removeEmployeeSpace',
+        mode: 'upgrade',
         func: async (client) => {
           await client.update(
             DOMAIN_CONTACT,
@@ -283,12 +312,14 @@ export const contactOperation: MigrateOperation = {
       },
       {
         state: 'avatars',
+        mode: 'upgrade',
         func: async (client) => {
           await migrateAvatars(client)
         }
       },
       {
         state: 'avatarsKind',
+        mode: 'upgrade',
         func: async (client) => {
           await client.update(
             DOMAIN_CONTACT,
@@ -302,16 +333,13 @@ export const contactOperation: MigrateOperation = {
         func: createPersonSpaces
       },
       {
-        state: 'fix-rename-backups',
-        func: async (client: MigrationClient): Promise<void> => {
-          await client.update(DOMAIN_CONTACT, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
-          await client.update(DOMAIN_CHANNEL, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
-        }
+        state: 'merge-person-spaces-v1',
+        func: mergePersonSpaces
       }
     ])
   },
-  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>): Promise<void> {
-    await tryUpgrade(state, client, contactId, [
+  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>, mode): Promise<void> {
+    await tryUpgrade(mode, state, client, contactId, [
       {
         state: 'createSpace-v2',
         func: async (client) => {

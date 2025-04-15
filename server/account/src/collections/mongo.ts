@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import { ObjectId as MongoObjectId } from 'mongodb'
+import { ObjectId as MongoObjectId, UUID } from 'mongodb'
 import type { Collection, CreateIndexesOptions, Db, Filter, OptionalUnlessRequiredId, Sort } from 'mongodb'
 import type { Data, Version } from '@hcengineering/core'
 
@@ -178,6 +178,14 @@ export class WorkspaceMongoDbCollection extends MongoDbCollection<Workspace> imp
     super('workspace', db)
   }
 
+  async insertOne<K extends keyof Workspace>(data: Partial<Workspace>, idKey?: K): Promise<any> {
+    if (data.uuid === undefined) {
+      data.uuid = new UUID().toJSON()
+    }
+
+    return await super.insertOne(data, idKey)
+  }
+
   async countWorkspacesInRegion (region: string, upToVersion?: Data<Version>, visitedSince?: number): Promise<number> {
     const regionQuery = region === '' ? { $or: [{ region: { $exists: false } }, { region: '' }] } : { region }
     const query: Filter<Workspace>['$and'] = [
@@ -217,6 +225,18 @@ export class WorkspaceMongoDbCollection extends MongoDbCollection<Workspace> imp
   ): Promise<WorkspaceInfo | undefined> {
     const pendingCreationQuery: Filter<Workspace>['$or'] = [{ mode: { $in: ['pending-creation', 'creating'] } }]
 
+    const migrationQuery: Filter<Workspace>['$or'] = [
+      { mode: { $in: ['migration-backup', 'migration-pending-backup', 'migration-clean', 'migration-pending-clean'] } }
+    ]
+
+    const archivingQuery: Filter<Workspace>['$or'] = [
+      { mode: { $in: ['archiving-pending-backup', 'archiving-backup', 'archiving-pending-clean', 'archiving-clean'] } }
+    ]
+
+    const deletingQuery: Filter<Workspace>['$or'] = [{ mode: { $in: ['pending-deletion', 'deleting'] } }]
+
+    const restoreQuery: Filter<Workspace>['$or'] = [{ mode: { $in: ['pending-restore', 'restoring'] } }]
+
     const versionQuery = {
       $or: [
         { 'version.major': { $lt: version.major } },
@@ -252,13 +272,30 @@ export class WorkspaceMongoDbCollection extends MongoDbCollection<Workspace> imp
     // to clear them with the worker.
 
     const defaultRegionQuery = { $or: [{ region: { $exists: false } }, { region: '' }] }
-    const operationQuery = {
-      $or:
-        operation === 'create'
-          ? pendingCreationQuery
-          : operation === 'upgrade'
-            ? pendingUpgradeQuery
-            : [...pendingCreationQuery, ...pendingUpgradeQuery]
+    let operationQuery: Filter<Workspace> = {}
+
+    switch (operation) {
+      case 'create':
+        operationQuery = { $or: pendingCreationQuery }
+        break
+      case 'upgrade':
+        operationQuery = { $or: pendingUpgradeQuery }
+        break
+      case 'all':
+        operationQuery = { $or: [...pendingCreationQuery, ...pendingUpgradeQuery] }
+        break
+      case 'all+backup':
+        operationQuery = {
+          $or: [
+            ...pendingCreationQuery,
+            ...pendingUpgradeQuery,
+            ...migrationQuery,
+            ...archivingQuery,
+            ...restoreQuery,
+            ...deletingQuery
+          ]
+        }
+        break
     }
     const attemptsQuery = { $or: [{ attempts: { $exists: false } }, { attempts: { $lte: 3 } }] }
 
@@ -267,6 +304,7 @@ export class WorkspaceMongoDbCollection extends MongoDbCollection<Workspace> imp
     // at the time of retrieval and not after some additional processing.
     const query: Filter<Workspace> = {
       $and: [
+        { mode: { $ne: 'manual-creation' } },
         operationQuery,
         attemptsQuery,
         region !== '' ? { region } : defaultRegionQuery,

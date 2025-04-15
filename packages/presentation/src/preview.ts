@@ -2,7 +2,7 @@ import type { Blob, Ref } from '@hcengineering/core'
 import { concatLink } from '@hcengineering/core'
 import { getMetadata } from '@hcengineering/platform'
 
-import { getFileUrl, getCurrentWorkspaceId } from './file'
+import { getFileUrl, getCurrentWorkspaceId, getBlobUrl } from './file'
 import presentation from './plugin'
 
 export interface PreviewConfig {
@@ -11,9 +11,12 @@ export interface PreviewConfig {
 }
 
 export interface VideoMeta {
-  status: 'ready' | 'error' | 'inprogress' | 'queued' | 'downloading' | 'pendingupload'
-  thumbnail: string
-  hls: string
+  hls?: HLSMeta
+}
+
+export interface HLSMeta {
+  thumbnail?: string
+  source?: string
 }
 
 const defaultImagePreview = (): string => `/files/${getCurrentWorkspaceId()}?file=:blobId&size=:size`
@@ -125,7 +128,7 @@ export function getFileSrcSet (_blob: Ref<Blob>, width?: number): string {
 export async function getVideoMeta (file: string, filename?: string): Promise<VideoMeta | undefined> {
   const cfg = getPreviewConfig()
 
-  const url = cfg.video
+  let url = cfg.video
     .replaceAll(':workspace', encodeURIComponent(getCurrentWorkspaceId()))
     .replaceAll(':blobId', encodeURIComponent(file))
 
@@ -133,10 +136,21 @@ export async function getVideoMeta (file: string, filename?: string): Promise<Vi
     return undefined
   }
 
+  const token = getMetadata(presentation.metadata.Token) ?? ''
+  const frontUrl = getMetadata(presentation.metadata.FrontUrl) ?? window.location.origin
+  if (!url.includes('://')) {
+    url = concatLink(frontUrl ?? '', url)
+  }
+
   try {
-    const response = await fetch(url)
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
     if (response.ok) {
-      return (await response.json()) as VideoMeta
+      const result = (await response.json()) as VideoMeta
+      if (result.hls !== undefined) {
+        result.hls.source = getBlobUrl(result.hls.source ?? '')
+        result.hls.thumbnail = getBlobUrl(result.hls.thumbnail ?? '')
+      }
+      return result
     }
   } catch {}
 }

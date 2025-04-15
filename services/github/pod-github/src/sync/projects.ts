@@ -33,6 +33,7 @@ import {
   ExternalSyncField,
   IntegrationContainer,
   IntegrationManager,
+  githubExternalSyncVersion,
   githubSyncVersion
 } from '../types'
 import {
@@ -129,9 +130,7 @@ export class ProjectsSyncManager implements DocSyncManager {
           await this.ctx.withLog(
             'Create Milestone projectV2',
             {},
-            async () => {
-              await this.createMilestone(container.container, container.project, okit, milestone, info)
-            },
+            () => this.createMilestone(container.container, container.project, okit, milestone, info),
             { label: milestone.label }
           )
         } catch (err: any) {
@@ -148,17 +147,9 @@ export class ProjectsSyncManager implements DocSyncManager {
         let { projectStructure, wasUpdates } = await this.ctx.withLog(
           'update project structure',
           {},
-          async () =>
-            await syncRunner.exec(
-              m._id,
-              async () =>
-                await this.updateFieldMappings(
-                  container.container,
-                  container.project,
-                  m,
-                  container.project.mixinClass,
-                  okit
-                )
+          () =>
+            syncRunner.exec(m._id, () =>
+              this.updateFieldMappings(container.container, container.project, m, container.project.mixinClass, okit)
             ),
           { label: milestone.label }
         )
@@ -168,7 +159,7 @@ export class ProjectsSyncManager implements DocSyncManager {
           projectStructure = (await this.ctx.withLog(
             'update project structure(sync/second step)',
             {},
-            async () => await this.queryProjectStructure(container.container, m),
+            () => this.queryProjectStructure(container.container, m),
             {
               label: m.label
             }
@@ -180,7 +171,7 @@ export class ProjectsSyncManager implements DocSyncManager {
 
       const messageData: MilestoneData = {
         label: milestoneExternal.label,
-        description: await this.provider.getMarkup(container.container, milestoneExternal.description)
+        description: await this.provider.getMarkupSafe(container.container, milestoneExternal.description)
       }
 
       await this.handleDiffUpdateMilestone(existing, info, messageData, container, milestoneExternal)
@@ -340,7 +331,7 @@ export class ProjectsSyncManager implements DocSyncManager {
       const projectStructure = (await this.ctx.withLog(
         'update project structure(handleEvent)',
         { prj: project.name },
-        async () => await this.queryProjectStructure(integration, project)
+        () => this.queryProjectStructure(integration, project)
       )) as GithubProjectV2
 
       integration.projectStructure.set(project._id, projectStructure)
@@ -353,7 +344,7 @@ export class ProjectsSyncManager implements DocSyncManager {
     derivedClient: TxOperations,
     deleteExisting: boolean
   ): Promise<boolean> {
-    return false
+    return true
   }
 
   async externalSync (
@@ -363,7 +354,16 @@ export class ProjectsSyncManager implements DocSyncManager {
     syncDocs: DocSyncInfo[],
     repository: GithubIntegrationRepository,
     project: GithubProject
-  ): Promise<void> {}
+  ): Promise<void> {
+    for (const d of syncDocs) {
+      if (d.objectClass === tracker.class.Milestone) {
+        // no external data for doc
+        await derivedClient.update<DocSyncInfo>(d, {
+          externalVersion: githubExternalSyncVersion
+        })
+      }
+    }
+  }
 
   repositoryDisabled (integration: IntegrationContainer, repo: GithubIntegrationRepository): void {
     integration.synchronized.delete(`${repo._id}:issues`)
@@ -423,20 +423,18 @@ export class ProjectsSyncManager implements DocSyncManager {
           let { projectStructure, wasUpdates } = await this.ctx.withLog(
             'update project structure',
             { prj: prj.name },
-            async () => await this.updateFieldMappings(integration, prj, prj, prj.mixinClass, okit)
+            () => this.updateFieldMappings(integration, prj, prj, prj.mixinClass, okit)
           )
 
           // Check if we have any changes in project, during our inactivity.
-          await this.ctx.withLog('check project v2 changes:', { prj: prj.name }, async () => {
-            await this.checkChanges(projectStructure, prj, prj._id, integration, derivedClient)
-          })
+          await this.ctx.withLog('check project v2 changes:', { prj: prj.name }, () =>
+            this.checkChanges(projectStructure, prj, prj._id, integration, derivedClient)
+          )
 
           // Retrieve updated field
           if (wasUpdates) {
-            projectStructure = (await this.ctx.withLog(
-              'update project structure(second pass)',
-              { prj: prj.name },
-              async () => await this.queryProjectStructure(integration, prj)
+            projectStructure = (await this.ctx.withLog('update project structure(second pass)', { prj: prj.name }, () =>
+              this.queryProjectStructure(integration, prj)
             )) as GithubProjectV2
           }
 
@@ -448,9 +446,9 @@ export class ProjectsSyncManager implements DocSyncManager {
 
       if (syncConfig.SupportMilestones && integration.type === 'Organization') {
         // Check project milestones and sync their structure as well.
-        const milestones = (await this.provider.liveQuery.queryFind(github.mixin.GithubMilestone, {})).filter(
-          (it) => it.space === prj._id
-        )
+        const milestones = await this.provider.liveQuery.findAll(github.mixin.GithubMilestone, {
+          space: prj._id
+        })
         for (const m of milestones) {
           if (this.provider.isClosing()) {
             break
@@ -459,24 +457,24 @@ export class ProjectsSyncManager implements DocSyncManager {
             let { projectStructure, wasUpdates } = await this.ctx.withLog(
               'update project structure',
               { prj: m.label },
-              async () =>
-                await syncRunner.exec(
+              () =>
+                syncRunner.exec(
                   m._id,
                   async () => await this.updateFieldMappings(integration, prj, m, prj.mixinClass, okit)
                 )
             )
 
             // Check if we have any changes in project, during our inactivity.
-            await this.ctx.withLog('check project v2 changes', { prj: prj.name }, async () => {
-              await this.checkChanges(projectStructure, m, prj._id, integration, derivedClient)
-            })
+            await this.ctx.withLog('check project v2 changes', { prj: prj.name }, () =>
+              this.checkChanges(projectStructure, m, prj._id, integration, derivedClient)
+            )
 
             // Retrieve updated field
             if (wasUpdates) {
               projectStructure = (await this.ctx.withLog(
                 'update project structure(second pass)',
                 { prj: prj.name },
-                async () => await this.queryProjectStructure(integration, m)
+                () => this.queryProjectStructure(integration, m)
               )) as GithubProjectV2
             }
 
@@ -610,7 +608,7 @@ export class ProjectsSyncManager implements DocSyncManager {
     okit: Octokit
   ): Promise<{ projectStructure: GithubProjectV2, wasUpdates: boolean, mappings: GithubFieldMapping[] }> {
     let projectStructure = await this.queryProjectStructure(integration, target)
-    let mappings = target.mappings
+    let mappings = target.mappings ?? []
 
     if (projectStructure === undefined) {
       if (this.client.getHierarchy().isDerived(tracker.class.Project, target._class)) {
@@ -653,7 +651,7 @@ export class ProjectsSyncManager implements DocSyncManager {
     const mHash = JSON.stringify(mappings)
     // Create any platform field into matching github field
     for (const [, f] of allFields.entries()) {
-      const existingField = (mappings ?? []).find((it) => it._id === f._id)
+      const existingField = mappings.find((it) => it._id === f._id)
       if (f.hidden === true) {
         continue
       }

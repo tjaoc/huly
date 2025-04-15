@@ -27,7 +27,7 @@ export async function createNotification (
   const existing = await client.findOne(notification.class.CommonInboxNotification, {
     user: data.user,
     message: data.message,
-    props: data.props
+    ...Object.fromEntries(Object.entries(data.props).map(([k, v]) => [`props.${k}`, v]))
   })
   if (existing !== undefined) {
     await client.update(existing, {
@@ -36,6 +36,8 @@ export async function createNotification (
   } else {
     await client.createDoc(notification.class.CommonInboxNotification, data.space, {
       user: data.user,
+      objectId: forDoc._id,
+      objectClass: forDoc._class,
       icon: github.icon.Github,
       message: data.message,
       props: data.props,

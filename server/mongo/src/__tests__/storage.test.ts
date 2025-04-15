@@ -15,11 +15,7 @@
 //
 import core, {
   type Client,
-  type ClientConnection,
   createClient,
-  type Doc,
-  type DocChunk,
-  type Domain,
   generateId,
   getWorkspaceId,
   Hierarchy,
@@ -30,9 +26,9 @@ import core, {
   type Space,
   TxOperations
 } from '@hcengineering/core'
-import { type DbAdapter } from '@hcengineering/server-core'
+import { type DbAdapter, wrapAdapterToClient } from '@hcengineering/server-core'
 import { createMongoAdapter, createMongoTxAdapter } from '..'
-import { getMongoClient, type MongoClientReference, shutdown } from '../utils'
+import { getMongoClient, type MongoClientReference, shutdownMongo } from '../utils'
 import { genMinModel } from './minmodel'
 import { createTaskModel, type Task, type TaskComment, taskPlugin } from './tasks'
 
@@ -56,7 +52,7 @@ describe('mongo operations', () => {
 
   afterAll(async () => {
     mongoClient.close()
-    await shutdown()
+    await shutdownMongo()
   })
 
   beforeEach(async () => {
@@ -84,6 +80,7 @@ describe('mongo operations', () => {
     const mctx = new MeasureMetricsContext('', {})
     const txStorage = await createMongoTxAdapter(
       new MeasureMetricsContext('', {}),
+      {},
       hierarchy,
       mongodbUri,
       getWorkspaceId(dbId),
@@ -92,6 +89,7 @@ describe('mongo operations', () => {
 
     serverStorage = await createMongoAdapter(
       new MeasureMetricsContext('', {}),
+      {},
       hierarchy,
       mongodbUri,
       getWorkspaceId(dbId),
@@ -108,22 +106,7 @@ describe('mongo operations', () => {
     const ctx = new MeasureMetricsContext('client', {})
 
     client = await createClient(async (handler) => {
-      const st: ClientConnection = {
-        isConnected: () => true,
-        findAll: async (_class, query, options) => await serverStorage.findAll(ctx, _class, query, options),
-        tx: async (tx) => await serverStorage.tx(ctx, tx),
-        searchFulltext: async () => ({ docs: [] }),
-        close: async () => {},
-        loadChunk: async (domain): Promise<DocChunk> => await Promise.reject(new Error('unsupported')),
-        closeChunk: async (idx) => {},
-        loadDocs: async (domain: Domain, docs: Ref<Doc>[]) => [],
-        upload: async (domain: Domain, docs: Doc[]) => {},
-        clean: async (domain: Domain, docs: Ref<Doc>[]) => {},
-        loadModel: async () => txes,
-        getAccount: async () => ({}) as any,
-        sendForceClose: async () => {}
-      }
-      return st
+      return wrapAdapterToClient(ctx, serverStorage, txes)
     })
 
     operations = new TxOperations(client, core.account.System)
@@ -134,7 +117,6 @@ describe('mongo operations', () => {
   })
 
   it('check add', async () => {
-    jest.setTimeout(500000)
     const times: number[] = []
     for (let i = 0; i < 50; i++) {
       const t = Date.now()
@@ -153,7 +135,6 @@ describe('mongo operations', () => {
   })
 
   it('check find by criteria', async () => {
-    jest.setTimeout(20000)
     for (let i = 0; i < 50; i++) {
       await operations.createDoc(taskPlugin.class.Task, '' as Ref<Space>, {
         name: `my-task-${i}`,
@@ -307,5 +288,40 @@ describe('mongo operations', () => {
     )
     expect((r4[0].$lookup?.attachedTo as TaskComment)?._id).toEqual(commentId)
     expect(((r4[0].$lookup?.attachedTo as any)?.$lookup.attachedTo as Task)?._id).toEqual(docId)
+  })
+
+  it('check associations', async () => {
+    const association = await operations.findOne(core.class.Association, {})
+    if (association == null) {
+      throw new Error('Association not found')
+    }
+
+    const firstTask = await operations.createDoc(taskPlugin.class.Task, '' as Ref<Space>, {
+      name: 'my-task',
+      description: 'Descr',
+      rate: 20
+    })
+
+    const secondTask = await operations.createDoc(taskPlugin.class.Task, '' as Ref<Space>, {
+      name: 'my-task2',
+      description: 'Descr',
+      rate: 20
+    })
+
+    await operations.createDoc(core.class.Relation, '' as Ref<Space>, {
+      docA: firstTask,
+      docB: secondTask,
+      association: association._id
+    })
+
+    const r = await client.findAll(
+      taskPlugin.class.Task,
+      { _id: firstTask },
+      {
+        associations: [[association._id, 1]]
+      }
+    )
+    expect(r.length).toEqual(1)
+    expect((r[0].$associations?.[association._id][0] as unknown as Task)?._id).toEqual(secondTask)
   })
 })

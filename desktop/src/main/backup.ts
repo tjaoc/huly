@@ -42,7 +42,6 @@ async function doBackup (dirName: string, token: string, endpoint: string, works
     ctx.info('do backup', { workspace, endpoint })
     await backup(ctx, endpoint, wsid, storage, {
       force: true,
-      recheck: false,
       skipDomains: [],
       timeout: 0,
       connectTimeout: 60 * 1000,
@@ -52,7 +51,7 @@ async function doBackup (dirName: string, token: string, endpoint: string, works
       isCanceled: (): boolean => {
         return runningBackup == null
       },
-      progress: (value: number): void => {
+      progress: async (value: number): Promise<void> => {
         notify('backup', value)
       },
       getConnection: async () => client

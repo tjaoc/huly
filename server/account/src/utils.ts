@@ -23,6 +23,7 @@ import { MongoAccountDB } from './collections/mongo'
 import { PostgresAccountDB } from './collections/postgres'
 import { accountPlugin } from './plugin'
 import type { Account, AccountDB, AccountInfo, RegionInfo, WorkspaceInfo } from './types'
+import { sharedPipelineContextVars } from '@hcengineering/server-pipeline'
 
 export async function getAccountDB (uri: string, dbNs?: string): Promise<[AccountDB, () => void]> {
   const isMongo = uri.startsWith('mongodb://')
@@ -41,7 +42,7 @@ export async function getAccountDB (uri: string, dbNs?: string): Promise<[Accoun
       }
     ]
   } else {
-    const client = getDBClient(uri)
+    const client = getDBClient(sharedPipelineContextVars, uri)
     const pgClient = await client.getClient()
     // TODO: if dbNs is provided put tables in that schema
     const pgAccount = new PostgresAccountDB(pgClient)
@@ -119,15 +120,29 @@ const getEndpoints = (): string[] => {
   return endpoints
 }
 
+// Info is static, so no need to calculate it every time.
+let regionInfo: RegionInfo[] = []
+
 export const getRegions = (): RegionInfo[] => {
-  if (process.env.REGION_INFO !== undefined) {
-    return process.env.REGION_INFO.split(';')
-      .map((it) => it.split('|'))
-      .map((it) => ({ region: it[0], name: it[1] }))
+  if (regionInfo.length === 0) {
+    const endpoints = getEndpoints()
+      .map(toTransactor)
+      .map((it) => ({ region: it.region.trim(), name: '' }))
+    if (process.env.REGION_INFO !== undefined) {
+      regionInfo = process.env.REGION_INFO.split(';')
+        .map((it) => it.split('|'))
+        .map((it) => ({ region: it[0].trim(), name: it[1].trim() }))
+      // We need to add all endpoints if they are not in info.
+      for (const endpoint of endpoints) {
+        if (regionInfo.find((it) => it.region === endpoint.region) === undefined) {
+          regionInfo.push(endpoint)
+        }
+      }
+    } else {
+      regionInfo = endpoints
+    }
   }
-  return getEndpoints()
-    .map(toTransactor)
-    .map((it) => ({ region: it.region, name: it.region }))
+  return regionInfo
 }
 
 export const getEndpoint = (ctx: MeasureContext, workspaceInfo: WorkspaceInfo, kind: EndpointKind): string => {

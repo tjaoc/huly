@@ -107,6 +107,7 @@ export interface ChatWidgetTab extends WidgetTab {
     thread?: Ref<ActivityMessage>
     channelName: string
     selectedMessageId?: Ref<ActivityMessage>
+    props?: Record<string, any>
   }
 }
 
@@ -148,7 +149,8 @@ export default plugin(chunterId, {
     ThreadMessagePresenter: '' as AnyComponent,
     ChatMessagePreview: '' as AnyComponent,
     ThreadMessagePreview: '' as AnyComponent,
-    DirectIcon: '' as AnyComponent
+    DirectIcon: '' as AnyComponent,
+    InlineCommentThread: '' as AnyComponent
   },
   activity: {
     MembersChangedMessage: '' as AnyComponent
@@ -252,7 +254,14 @@ export default plugin(chunterId, {
   function: {
     CanTranslateMessage: '' as Resource<(doc?: Doc | Doc[]) => Promise<boolean>>,
     OpenThreadInSidebar: '' as Resource<
-    (_id: Ref<ActivityMessage>, msg?: ActivityMessage, doc?: Doc, selectedId?: Ref<ActivityMessage>) => Promise<void>
+    (
+      _id: Ref<ActivityMessage>,
+      msg?: ActivityMessage,
+      doc?: Doc,
+      selectedId?: Ref<ActivityMessage>,
+      props?: Record<string, any>,
+      force?: boolean
+    ) => Promise<void>
     >,
     OpenChannelInSidebar: '' as Resource<
     (

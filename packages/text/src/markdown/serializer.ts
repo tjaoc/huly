@@ -1,8 +1,8 @@
+import { MarkupMark, MarkupNode, MarkupNodeType } from '@hcengineering/text-core'
 import { generateHTML } from '@tiptap/html'
+import { defaultExtensions } from '../extensions'
 import { isInSet, markEq } from './marks'
 import { messageContent, nodeAttrs } from './node'
-import { MarkupMark, MarkupNode, MarkupNodeType } from '../markup/model'
-import { defaultExtensions } from '../extensions'
 
 type FirstDelim = (i: number, attrs?: Record<string, any>, parentAttrs?: Record<string, any>) => string
 interface IState {
@@ -88,8 +88,18 @@ export const storeNodes: Record<string, NodeProcessor> = {
   },
   heading: (state, node) => {
     const attrs = nodeAttrs(node)
-    state.write(state.repeat('#', attrs.level !== undefined ? Number(attrs.level) : 1) + ' ')
-    state.renderInline(node)
+    if (attrs.marker === '=' && attrs.level === 1) {
+      state.renderInline(node)
+      state.ensureNewLine()
+      state.write('===\n')
+    } else if (attrs.marker === '-' && attrs.level === 2) {
+      state.renderInline(node)
+      state.ensureNewLine()
+      state.write('---\n')
+    } else {
+      state.write(state.repeat('#', attrs.level !== undefined ? Number(attrs.level) : 1) + ' ')
+      state.renderInline(node)
+    }
     state.closeBlock(node)
   },
   horizontalRule: (state, node) => {
@@ -140,7 +150,22 @@ export const storeNodes: Record<string, NodeProcessor> = {
 
   image: (state, node) => {
     const attrs = nodeAttrs(node)
-    if (attrs['file-id'] != null) {
+    if (attrs.token != null && attrs['file-id'] != null) {
+      // Convert image to token format
+      state.write(
+        '![' +
+          state.esc(`${attrs.alt ?? ''}`) +
+          '](' +
+          (state.imageUrl +
+            `${attrs['file-id']}` +
+            `?file=${attrs['file-id']}` +
+            (attrs.width != null ? '&width=' + state.esc(`${attrs.width}`) : '') +
+            (attrs.height != null ? '&height=' + state.esc(`${attrs.height}`) : '') +
+            (attrs.token != null ? '&token=' + state.esc(`${attrs.token}`) : '')) +
+          (attrs.title != null ? ' ' + state.quote(`${attrs.title}`) : '') +
+          ')'
+      )
+    } else if (attrs['file-id'] != null) {
       // Convert image to fileid format
       state.write(
         '![' +
@@ -196,6 +221,10 @@ export const storeNodes: Record<string, NodeProcessor> = {
         (attrs.title !== undefined ? ' ' + state.quote(`${attrs.title}`) : '') +
         ')'
     )
+  },
+  markdown: (state, node) => {
+    state.renderInline(node)
+    state.closeBlock(node)
   },
   comment: (state, node) => {
     state.write('<!--')
@@ -451,7 +480,11 @@ export class MarkdownState implements IState {
 
     for (let i = 0; i < len; i++) {
       const mark = state.marks[i]
-      if (!this.marks[mark.type].mixable) break
+      const mm = this.marks[mark.type]
+      if (mm == null) {
+        break
+      }
+      if (!mm.mixable) break
       this.reorderMixableMark(state, mark, i, len)
     }
   }
@@ -720,6 +753,9 @@ export class MarkdownState implements IState {
     let value = mark.attrs?.marker
     if (value === undefined) {
       const info = this.marks[mark.type]
+      if (info == null) {
+        throw new Error(`No info for mark ${mark.type}`)
+      }
       value = open ? info.open : info.close
     }
     return typeof value === 'string' ? value : value(this, mark, parent, index) ?? ''

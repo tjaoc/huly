@@ -16,7 +16,6 @@
 
 import type { Asset, IntlString, Plugin } from '@hcengineering/platform'
 import type { DocumentQuery } from './storage'
-import { CollaborativeDoc } from './collaboration'
 
 /**
  * @public
@@ -57,6 +56,13 @@ export type Rank = string
 
 /**
  * @public
+ *
+ * Reference to blob containing snapshot of collaborative doc.
+ */
+export type MarkupBlobRef = Ref<Blob>
+
+/**
+ * @public
  */
 export interface Obj {
   _class: Ref<Class<this>>
@@ -74,13 +80,6 @@ export interface Doc<S extends Space = Space> extends Obj {
   createdOn?: Timestamp // Marked as optional since it will be filled by platform.
 }
 
-export interface Card extends Doc {
-  title: string
-  description?: CollaborativeDoc | null
-  identifier?: string
-  parent?: Ref<Card> | null
-}
-
 /**
  * @public
  */
@@ -94,6 +93,26 @@ export interface UXObject extends Obj {
   icon?: Asset
   hidden?: boolean
   readonly?: boolean
+}
+
+/**
+ * @public
+ */
+export interface Association extends Doc {
+  classA: Ref<Class<Doc>>
+  classB: Ref<Class<Doc>>
+  nameA: string
+  nameB: string
+  type: '1:1' | '1:N' | 'N:N'
+}
+
+/**
+ * @public
+ */
+export interface Relation extends Doc {
+  docA: Ref<Doc>
+  docB: Ref<Doc>
+  association: Ref<Association>
 }
 
 /**
@@ -329,6 +348,11 @@ export const DOMAIN_MODEL = 'model' as Domain
 /**
  * @public
  */
+export const DOMAIN_MODEL_TX = 'model_tx' as Domain
+
+/**
+ * @public
+ */
 export const DOMAIN_SPACE = 'space' as Domain
 
 /**
@@ -347,22 +371,30 @@ export const DOMAIN_MIGRATION = '_migrations' as Domain
 export const DOMAIN_TRANSIENT = 'transient' as Domain
 
 /**
+ * @public
+ */
+export const DOMAIN_RELATION = 'relation' as Domain
+
+/**
+ * @public
+ */
+export interface TransientConfiguration extends Class<Doc> {
+  // If set will not store transient objects into memdb
+  broadcastOnly: boolean
+}
+
+/**
  * Special domain to access s3 blob data.
  * @public
  */
 export const DOMAIN_BLOB = 'blob' as Domain
 
-/**
- * Special domain to access s3 blob data.
- * @public
- */
-export const DOMAIN_FULLTEXT_BLOB = 'fulltext-blob' as Domain
+export const DOMAIN_DOC_INDEX_STATE = 'doc-index-state' as Domain
 
 /**
- * Special domain to access s3 blob data.
  * @public
  */
-export const DOMAIN_DOC_INDEX_STATE = 'doc-index-state' as Domain
+export const DOMAIN_SEQUENCE = 'sequence' as Domain
 
 // S P A C E
 
@@ -518,26 +550,22 @@ export function versionToString (version: Version | Data<Version>): string {
  */
 export interface DocIndexState extends Doc {
   objectClass: Ref<Class<Doc>>
-
-  attachedTo?: Ref<Doc>
-  attachedToClass?: Ref<Class<Doc>>
-
-  generationId?: string
-
-  // States for stages
-  stages: Record<string, boolean>
-
   needIndex: boolean
-
   removed: boolean
-
-  // Indexable attributes, including child ones.
-  attributes: Record<string, any>
-  mixins?: Ref<Class<Doc>>[]
-  // Full Summary
-  fullSummary?: string | null
-  shortSummary?: string | null
 }
+
+/**
+ * @public
+ */
+export interface Sequence extends Doc {
+  attachedTo: Ref<Class<Doc>>
+  sequence: number
+}
+
+/**
+ * @public
+ */
+export type BlobMetadata = Record<string, any>
 
 /**
  * @public
@@ -551,8 +579,6 @@ export interface Blob extends Doc {
   // Provider
   provider: string
   // A provider specific id
-  storageId: string
-  // A content type for blob
   contentType: string
   // A etag for blob
   etag: string
@@ -588,9 +614,6 @@ export interface FullTextSearchContext extends Doc {
   // If defined, will propagate all document from child's based on class
   propagateClasses?: Ref<Class<Doc>>[]
 
-  // Do we need to propagate child value to parent one. Default(true)
-  parentPropagate?: boolean
-
   childProcessingAllowed?: boolean
 }
 
@@ -603,6 +626,18 @@ export interface ConfigurationElement extends Class<Doc> {
   // Group for grouping.
   group: IntlString
 }
+
+export interface BlobType {
+  file: Ref<Blob>
+
+  type: string
+
+  name: string
+
+  metadata?: BlobMetadata
+}
+
+export type Blobs = Record<string, BlobType>
 
 /**
  * @public
@@ -666,7 +701,79 @@ export interface DomainIndexConfiguration extends Doc {
   skip?: string[]
 }
 
-export type WorkspaceMode = 'pending-creation' | 'creating' | 'upgrading' | 'pending-deletion' | 'deleting' | 'active'
+export type WorkspaceMode =
+  | 'manual-creation'
+  | 'pending-creation' // -> 'creating'
+  | 'creating' // -> 'active
+  | 'upgrading' // -> 'active'
+  | 'pending-deletion' // -> 'deleting'
+  | 'deleting' // -> "deleted"
+  | 'active'
+  | 'deleted'
+  | 'archiving-pending-backup' // -> 'cleaning'
+  | 'archiving-backup' // -> 'archiving-pending-clean'
+  | 'archiving-pending-clean' // -> 'archiving-clean'
+  | 'archiving-clean' // -> 'archived'
+  | 'archived'
+  | 'migration-pending-backup' // -> 'migration-backup'
+  | 'migration-backup' // -> 'migration-pending-cleanup'
+  | 'migration-pending-clean' // -> 'migration-pending-cleaning'
+  | 'migration-clean' // -> 'pending-restoring'
+  | 'pending-restore' // -> 'restoring'
+  | 'restoring' // -> 'active'
+
+export function isActiveMode (mode?: WorkspaceMode): boolean {
+  return mode === 'active'
+}
+export function isDeletingMode (mode: WorkspaceMode): boolean {
+  return mode === 'pending-deletion' || mode === 'deleting' || mode === 'deleted'
+}
+export function isArchivingMode (mode?: WorkspaceMode): boolean {
+  return (
+    mode === 'archiving-pending-backup' ||
+    mode === 'archiving-backup' ||
+    mode === 'archiving-pending-clean' ||
+    mode === 'archiving-clean' ||
+    mode === 'archived'
+  )
+}
+
+export function isMigrationMode (mode?: WorkspaceMode): boolean {
+  return (
+    mode === 'migration-pending-backup' ||
+    mode === 'migration-backup' ||
+    mode === 'migration-pending-clean' ||
+    mode === 'migration-clean'
+  )
+}
+export function isRestoringMode (mode?: WorkspaceMode): boolean {
+  return mode === 'restoring' || mode === 'pending-restore'
+}
+
+export function isUpgradingMode (mode?: WorkspaceMode): boolean {
+  return mode === 'upgrading'
+}
+
+export type WorkspaceUpdateEvent =
+  | 'ping'
+  | 'create-started'
+  | 'create-done'
+  | 'upgrade-started'
+  | 'upgrade-done'
+  | 'restore-started'
+  | 'restore-done'
+  | 'progress'
+  | 'migrate-backup-started' // -> state = 'migration-backup'
+  | 'migrate-backup-done' // -> state = 'migration-pending-cleaning'
+  | 'migrate-clean-started' // -> state = 'migration-cleaning'
+  | 'migrate-clean-done' // -> state = 'pending-restoring'
+  | 'archiving-backup-started' // -> state = 'archiving'
+  | 'archiving-backup-done' // -> state = 'archiving-pending-cleaning'
+  | 'archiving-clean-started'
+  | 'archiving-clean-done'
+  | 'archiving-done'
+  | 'delete-started'
+  | 'delete-done'
 
 export interface BackupStatus {
   dataSize: number
@@ -680,6 +787,8 @@ export interface BackupStatus {
 
 export interface BaseWorkspaceInfo {
   workspace: string // An uniq workspace name, Database names
+  uuid?: string // An uuid for a workspace to be used already for cockroach data
+
   disabled?: boolean
   version?: Data<Version>
   branding?: string
@@ -688,13 +797,24 @@ export interface BaseWorkspaceInfo {
   workspaceName?: string // An displayed workspace name
   createdOn: number
   lastVisit: number
-
   createdBy: string
-
   mode: WorkspaceMode
   progress?: number // Some progress
 
   endpoint: string
 
+  region?: string // Transactor group name
+  targetRegion?: string // Transactor region to move to
+
   backupInfo?: BackupStatus
+}
+
+/**
+ * @public
+ */
+export type ClientWorkspaceInfo = Omit<BaseWorkspaceInfo, 'workspaceUrl'> & {
+  lastProcessingTime?: number
+  attempts?: number
+  message?: string
+  workspaceId: string
 }

@@ -12,36 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import { derived, get, writable } from 'svelte/store'
 import core, {
   type Class,
   concatLink,
   type Doc,
-  getCurrentAccount,
-  type Ref,
   generateId,
-  reduceCalls
+  getCurrentAccount,
+  reduceCalls,
+  type Ref
 } from '@hcengineering/core'
-import { type Application, workbenchId, type WorkbenchTab } from '@hcengineering/workbench'
+import notification, { notificationId } from '@hcengineering/notification'
+import { type Asset, getMetadata, getResource, type IntlString, setMetadata, translate } from '@hcengineering/platform'
+import presentation, { configurationStore, getClient } from '@hcengineering/presentation'
 import {
-  location as locationStore,
-  locationToUrl,
-  parseLocation,
-  type Location,
-  navigate,
+  type AnyComponent,
   getCurrentLocation,
   languageStore,
-  type AnyComponent,
-  locationStorageKeyId
+  type Location,
+  locationStorageKeyId,
+  location as locationStore,
+  locationToUrl,
+  navigate,
+  parseLocation
 } from '@hcengineering/ui'
-import presentation, { getClient } from '@hcengineering/presentation'
 import view from '@hcengineering/view'
-import { type Asset, type IntlString, getMetadata, getResource, translate } from '@hcengineering/platform'
 import { parseLinkId } from '@hcengineering/view-resources'
-import notification, { notificationId } from '@hcengineering/notification'
+import { type Application, workbenchId, type WorkbenchTab } from '@hcengineering/workbench'
+import { derived, get, writable } from 'svelte/store'
 
-import { workspaceStore } from './utils'
+import setting from '@hcengineering/setting'
 import workbench from './plugin'
+import { locationWorkspaceStore } from './utils'
 
 export const tabIdStore = writable<Ref<WorkbenchTab> | undefined>()
 export const prevTabIdStore = writable<Ref<WorkbenchTab> | undefined>()
@@ -54,17 +55,16 @@ let prevTabId: Ref<WorkbenchTab> | undefined
 tabIdStore.subscribe((value) => {
   prevTabIdStore.set(prevTabId)
   prevTabId = value
+  saveTabToLocalStorage(value)
 })
 
-workspaceStore.subscribe((workspace) => {
+locationWorkspaceStore.subscribe((workspace) => {
   tabIdStore.set(getTabFromLocalStorage(workspace ?? ''))
 })
 
-tabIdStore.subscribe(saveTabToLocalStorage)
-
 const syncTabLoc = reduceCalls(async (): Promise<void> => {
   const loc = getCurrentLocation()
-  const workspace = get(workspaceStore)
+  const workspace = get(locationWorkspaceStore)
   if (workspace == null || workspace === '') return
   const tab = get(currentTabStore)
   if (tab == null) return
@@ -84,11 +84,14 @@ const syncTabLoc = reduceCalls(async (): Promise<void> => {
     if (t.name !== name) return false
 
     const tabLoc = getTabLocation(t)
+    if (tabLoc.path[2] !== loc.path[2]) return false
+    if (tabLoc.path[2] === notificationId) return true
 
-    return tabLoc.path[2] === loc.path[2] && tabLoc.path[3] === loc.path[3]
+    return tabLoc.path[3] === loc.path[3]
   })
 
   if (tab.name !== undefined && name !== tab.name && tab.isPinned) {
+    if (get(tabIdStore) !== tab._id) return
     if (tabByName !== undefined) {
       selectTab(tabByName._id)
       return
@@ -121,16 +124,18 @@ const syncTabLoc = reduceCalls(async (): Promise<void> => {
     //   return
     // }
 
-    await getClient().diffUpdate(tab, { location: url, name })
+    const op = getClient().apply(undefined, undefined, true)
+    await op.diffUpdate(tab, { location: url, name })
+    await op.commit()
   }
 })
 
-locationStore.subscribe((l: Location) => {
+locationStore.subscribe(() => {
   void syncTabLoc()
 })
 
 export function syncWorkbenchTab (): void {
-  const workspace = get(workspaceStore)
+  const workspace = get(locationWorkspaceStore)
   tabIdStore.set(getTabFromLocalStorage(workspace ?? ''))
 }
 
@@ -151,7 +156,7 @@ function getTabFromLocalStorage (workspace: string): Ref<WorkbenchTab> | undefin
 }
 
 function saveTabToLocalStorage (_id: Ref<WorkbenchTab> | undefined): void {
-  const workspace = get(workspaceStore)
+  const workspace = get(locationWorkspaceStore)
   if (workspace == null || workspace === '') return
 
   const localStorageKey = getTabIdLocalStorageKey(workspace)
@@ -294,3 +299,8 @@ async function getDefaultTabName (loc: Location): Promise<string | undefined> {
     console.error(err)
   }
 }
+
+configurationStore.subscribe((config) => {
+  const arePermissionsDisabled = config.get(setting.ids.DisablePermissionsConfiguration)?.enabled ?? false
+  setMetadata(core.metadata.DisablePermissions, arePermissionsDisabled)
+})

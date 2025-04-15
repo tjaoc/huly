@@ -18,8 +18,8 @@ import type { AnyAttribute, Class, Classifier, Doc, Domain, Interface, Mixin, Ob
 import { ClassifierKind } from './classes'
 import { clone as deepClone } from './clone'
 import core from './component'
-import { _createMixinProxy, _mixinClass, _toDoc } from './proxy'
-import type { Tx, TxCreateDoc, TxMixin, TxRemoveDoc, TxUpdateDoc } from './tx'
+import { _createMixinProxy, _mixinClass, _toDoc, PROXY_MIXIN_CLASS_KEY } from './proxy'
+import type { Tx, TxCreateDoc, TxCUD, TxMixin, TxRemoveDoc, TxUpdateDoc } from './tx'
 import { TxProcessor } from './tx'
 
 /**
@@ -53,7 +53,9 @@ export class Hierarchy {
   }
 
   as<D extends Doc, M extends D>(doc: D, mixin: Ref<Mixin<M>>): M {
-    return new Proxy(doc, this.getMixinProxyHandler(mixin)) as M
+    if ((doc as any)[PROXY_MIXIN_CLASS_KEY] === mixin) return doc as M
+
+    return new Proxy(Hierarchy.toDoc(doc), this.getMixinProxyHandler(mixin)) as M
   }
 
   asIf<D extends Doc, M extends D>(doc: D | undefined, mixin: Ref<Mixin<M>>): M | undefined {
@@ -80,9 +82,13 @@ export class Hierarchy {
     return m ?? doc._class
   }
 
-  hasMixin<D extends Doc, M extends D>(doc: D, mixin: Ref<Mixin<M>>): boolean {
+  static hasMixin<D extends Doc, M extends D>(doc: D, mixin: Ref<Mixin<M>>): boolean {
     const d = Hierarchy.toDoc(doc)
     return typeof (d as any)[mixin] === 'object'
+  }
+
+  hasMixin<D extends Doc, M extends D>(doc: D, mixin: Ref<Mixin<M>>): boolean {
+    return Hierarchy.hasMixin(doc, mixin)
   }
 
   classHierarchyMixin<D extends Doc, M extends D>(
@@ -177,6 +183,14 @@ export class Hierarchy {
     return data
   }
 
+  findClass<T extends Obj = Obj>(_class: Ref<Class<T>>): Class<T> | undefined {
+    const data = this.classifiers.get(_class)
+    if (data === undefined || this.isInterface(data)) {
+      return undefined
+    }
+    return data
+  }
+
   hasClass<T extends Obj = Obj>(_class: Ref<Class<T>>): boolean {
     const data = this.classifiers.get(_class)
 
@@ -208,14 +222,16 @@ export class Hierarchy {
   }
 
   public findDomain (_class: Ref<Class<Doc>>): Domain | undefined {
-    const klazz = this.getClass(_class)
+    const klazz = this.findClass(_class)
+    if (klazz === undefined) return
     if (klazz.domain !== undefined) {
       return klazz.domain
     }
 
-    let _klazz = klazz
+    let _klazz: Class<Doc> | undefined = klazz
     while (_klazz.extends !== undefined) {
-      _klazz = this.getClass(_klazz.extends)
+      _klazz = this.findClass(_klazz.extends)
+      if (_klazz === undefined) return
       if (_klazz.domain !== undefined) {
         // Cache for next requests
         klazz.domain = _klazz.domain
@@ -240,12 +256,13 @@ export class Hierarchy {
     }
   }
 
+  private isClassifierTx (tx: TxCUD<Doc>): boolean {
+    const base = [core.class.Class, core.class.Mixin, core.class.Interface]
+    return base.includes(tx.objectClass) || this.isDerived(tx.objectClass, core.class.Class)
+  }
+
   private txCreateDoc (tx: TxCreateDoc<Doc>): void {
-    if (
-      tx.objectClass === core.class.Class ||
-      tx.objectClass === core.class.Interface ||
-      tx.objectClass === core.class.Mixin
-    ) {
+    if (this.isClassifierTx(tx)) {
       const _id = tx.objectId as Ref<Classifier>
       this.classifiers.set(_id, TxProcessor.createDoc2Doc(tx as TxCreateDoc<Classifier>))
       this.updateAncestors(_id)
@@ -264,7 +281,7 @@ export class Hierarchy {
       this.addAttribute(TxProcessor.updateDoc2Doc(doc, updateTx))
 
       this.classifierProperties.delete(doc.attributeOf)
-    } else if (tx.objectClass === core.class.Mixin || tx.objectClass === core.class.Class) {
+    } else if (this.isClassifierTx(tx)) {
       const updateTx = tx as TxUpdateDoc<Mixin<Class<Doc>>>
       const doc = this.classifiers.get(updateTx.objectId)
       if (doc === undefined) return
@@ -281,7 +298,7 @@ export class Hierarchy {
       const map = this.attributes.get(doc.attributeOf)
       map?.delete(doc.name)
       this.attributesById.delete(removeTx.objectId)
-    } else if (tx.objectClass === core.class.Mixin) {
+    } else if (this.isClassifierTx(tx)) {
       const removeTx = tx as TxRemoveDoc<Mixin<Class<Doc>>>
       this.updateDescendant(removeTx.objectId, false)
       this.updateAncestors(removeTx.objectId, false)
@@ -290,7 +307,7 @@ export class Hierarchy {
   }
 
   private txMixin (tx: TxMixin<Doc, Doc>): void {
-    if (this.isDerived(tx.objectClass, core.class.Class)) {
+    if (this.isClassifierTx(tx)) {
       const obj = this.getClass(tx.objectId as Ref<Class<Obj>>) as any
       TxProcessor.updateMixin4Doc(obj, tx)
     }

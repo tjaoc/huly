@@ -25,6 +25,7 @@
   const currentAccount = getCurrentAccount()
 
   const items: DropdownIntlItem[] = [
+    { id: AccountRole.Guest, label: setting.string.Guest },
     { id: AccountRole.User, label: setting.string.User },
     { id: AccountRole.Maintainer, label: setting.string.Maintainer },
     { id: AccountRole.Owner, label: setting.string.Owner }
@@ -52,7 +53,7 @@
 </script>
 
 <div class="hulyComponent">
-  <Header>
+  <Header adaptive={'disabled'}>
     <Breadcrumb icon={setting.icon.Owners} label={setting.string.Owners} size={'large'} isCurrent />
     <svelte:fragment slot="search">
       <SearchInput bind:value={search} collapsed />

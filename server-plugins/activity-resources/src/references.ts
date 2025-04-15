@@ -14,21 +14,19 @@
 //
 
 import activity, { ActivityMessage, ActivityReference, UserMentionInfo } from '@hcengineering/activity'
-import { loadCollaborativeDoc, yDocToBuffer } from '@hcengineering/collaboration'
 import contact, { Employee, Person, PersonAccount } from '@hcengineering/contact'
 import core, {
   Account,
-  AttachedDoc,
+  Blob,
   Class,
-  CollaborativeDoc,
   Data,
   Doc,
   generateId,
   Hierarchy,
+  Markup,
   Ref,
   Space,
   Tx,
-  TxCollectionCUD,
   TxCreateDoc,
   TxCUD,
   TxFactory,
@@ -53,26 +51,13 @@ import {
   toReceiverInfo,
   type NotificationProviderControl
 } from '@hcengineering/server-notification-resources'
-import {
-  areEqualJson,
-  extractReferences,
-  markupToPmNode,
-  pmNodeToMarkup,
-  yDocContentToNodes
-} from '@hcengineering/text'
+import { areEqualJson, extractReferences, jsonToMarkup, markupToJSON } from '@hcengineering/text-core'
 
-export function isDocMentioned (doc: Ref<Doc>, content: string | Buffer): boolean {
+export function isDocMentioned (doc: Ref<Doc>, content: string): boolean {
   const references = []
 
-  if (content instanceof Buffer) {
-    const nodes = yDocContentToNodes(content)
-    for (const node of nodes) {
-      references.push(...extractReferences(node))
-    }
-  } else {
-    const doc = markupToPmNode(content)
-    references.push(...extractReferences(doc))
-  }
+  const node = markupToJSON(content)
+  references.push(...extractReferences(node))
 
   for (const ref of references) {
     if (ref.objectId === doc) {
@@ -166,6 +151,8 @@ export async function getPersonNotificationTxes (
     messageHtml: reference.message,
     mentionedIn: reference.attachedDocId ?? reference.srcDocId,
     mentionedInClass: reference.attachedDocClass ?? reference.srcDocClass,
+    objectId: reference.srcDocId,
+    objectClass: reference.srcDocClass,
     user: receiver[0]._id,
     isViewed: false,
     archived: false
@@ -253,20 +240,20 @@ export async function getPersonNotificationTxes (
         modifiedOn: originTx.modifiedOn,
         modifiedBy: sender._id
       }
-      const subscriptions = await control.findAll(control.ctx, notification.class.PushSubscription, {
-        user: receiverInfo._id
-      })
+
+      const msg = control.hierarchy.isDerived(data.mentionedInClass, activity.class.ActivityMessage)
+        ? (await control.findAll(control.ctx, data.mentionedInClass, { _id: data.mentionedIn }))[0]
+        : undefined
       await applyNotificationProviders(
         notificationData,
         notifyResult,
-        reference.srcDocId,
-        reference.srcDocClass,
         control,
         res,
         doc,
         receiverInfo,
         senderInfo,
-        subscriptions
+        notification.class.MentionInboxNotification,
+        msg as ActivityMessage
       )
     }
   }
@@ -353,12 +340,11 @@ async function getMessageNotifyResult (
   reference: Data<ActivityReference>,
   account: PersonAccount[],
   control: TriggerControl,
-  originTx: TxCUD<Doc>,
+  tx: TxCUD<Doc>,
   doc: Doc,
   notificationControl: NotificationProviderControl
 ): Promise<NotifyResult> {
   const { hierarchy } = control
-  const tx = TxProcessor.extractTx(originTx) as TxCUD<Doc>
 
   if (
     reference.attachedDocClass === undefined ||
@@ -378,7 +364,7 @@ async function getMessageNotifyResult (
     return new Map()
   }
 
-  return await isShouldNotifyTx(control, tx, originTx, doc, account, false, false, notificationControl, undefined)
+  return await isShouldNotifyTx(control, tx, doc, account, false, false, notificationControl, undefined)
 }
 
 function isMarkupType (type: Ref<Class<Type<any>>>): boolean {
@@ -408,26 +394,21 @@ async function getCreateReferencesTxes (
 
   for (const attr of attributes.values()) {
     if (isMarkupType(attr.type._class)) {
-      const content = (createdDoc as any)[attr.name]?.toString() ?? ''
+      const content: string = (createdDoc as any)[attr.name]?.toString() ?? ''
       const attrReferences = getReferencesData(srcDocId, srcDocClass, attachedDocId, attachedDocClass, content)
 
       refs.push(...attrReferences)
     } else if (attr.type._class === core.class.TypeCollaborativeDoc) {
-      const collaborativeDoc = (createdDoc as any)[attr.name] as CollaborativeDoc
-      try {
-        const ydoc = await loadCollaborativeDoc(storage, control.workspace, collaborativeDoc, control.ctx)
-        if (ydoc !== undefined) {
-          const attrReferences = getReferencesData(
-            srcDocId,
-            srcDocClass,
-            attachedDocId,
-            attachedDocClass,
-            yDocToBuffer(ydoc)
-          )
+      const blobId = (createdDoc as any)[attr.name] as Ref<Blob>
+      if (blobId != null) {
+        try {
+          const buffer = await storage.read(ctx, control.workspace, blobId)
+          const markup = Buffer.concat(buffer as any).toString()
+          const attrReferences = getReferencesData(srcDocId, srcDocClass, attachedDocId, attachedDocClass, markup)
           refs.push(...attrReferences)
+        } catch {
+          // do nothing, the collaborative doc does not sem to exist yet
         }
-      } catch {
-        // do nothing, the collaborative doc does not sem to exist yet
       }
     }
   }
@@ -460,22 +441,17 @@ async function getUpdateReferencesTxes (
   for (const attr of attributes.values()) {
     if (isMarkupType(attr.type._class)) {
       hasReferenceAttrs = true
-      const content = (updatedDoc as any)[attr.name]?.toString() ?? ''
+      const content: string = (updatedDoc as any)[attr.name]?.toString() ?? ''
       const attrReferences = getReferencesData(srcDocId, srcDocClass, attachedDocId, attachedDocClass, content)
       references.push(...attrReferences)
     } else if (attr.type._class === core.class.TypeCollaborativeDoc) {
       hasReferenceAttrs = true
       try {
-        const collaborativeDoc = (updatedDoc as any)[attr.name] as CollaborativeDoc
-        const ydoc = await loadCollaborativeDoc(storage, control.workspace, collaborativeDoc, control.ctx)
-        if (ydoc !== undefined) {
-          const attrReferences = getReferencesData(
-            srcDocId,
-            srcDocClass,
-            attachedDocId,
-            attachedDocClass,
-            yDocToBuffer(ydoc)
-          )
+        const blobId = (updatedDoc as any)[attr.name] as Ref<Blob>
+        if (blobId != null) {
+          const buffer = await storage.read(ctx, control.workspace, blobId)
+          const markup = Buffer.concat(buffer as any).toString()
+          const attrReferences = getReferencesData(srcDocId, srcDocClass, attachedDocId, attachedDocClass, markup)
           references.push(...attrReferences)
         }
       } catch {
@@ -512,20 +488,13 @@ export function getReferencesData (
   srcDocClass: Ref<Class<Doc>>,
   attachedDocId: Ref<Doc> | undefined,
   attachedDocClass: Ref<Class<Doc>> | undefined,
-  content: string | Buffer
+  content: Markup
 ): Array<Data<ActivityReference>> {
   const result: Array<Data<ActivityReference>> = []
   const references = []
 
-  if (content instanceof Buffer) {
-    const nodes = yDocContentToNodes(content)
-    for (const node of nodes) {
-      references.push(...extractReferences(node))
-    }
-  } else {
-    const doc = markupToPmNode(content)
-    references.push(...extractReferences(doc))
-  }
+  const node = markupToJSON(content)
+  references.push(...extractReferences(node))
 
   for (const ref of references) {
     if (ref.objectId !== attachedDocId && ref.objectId !== srcDocId) {
@@ -535,7 +504,7 @@ export function getReferencesData (
         collection: 'references',
         srcDocId,
         srcDocClass,
-        message: ref.parentNode !== null ? pmNodeToMarkup(ref.parentNode) : '',
+        message: ref.parentNode !== null ? jsonToMarkup(ref.parentNode) : '',
         attachedDocId,
         attachedDocClass
       })
@@ -662,24 +631,41 @@ async function getRemoveActivityReferenceTxes (
   return txes
 }
 
-function guessReferenceTx (hierarchy: Hierarchy, tx: TxCUD<Doc>): TxCUD<Doc> {
+function guessReferenceObj (
+  hierarchy: Hierarchy,
+  tx: TxCUD<Doc>
+): {
+    objectId: Ref<Doc>
+    objectClass: Ref<Class<Doc>>
+  } {
   // Try to guess reference target Tx for TxCollectionCUD txes based on collaborators availability
-  if (hierarchy.isDerived(tx._class, core.class.TxCollectionCUD)) {
-    const cltx = tx as TxCollectionCUD<Doc, AttachedDoc>
-    tx = TxProcessor.extractTx(cltx) as TxCUD<Doc>
-
+  if (tx.attachedToClass !== undefined && tx.attachedTo !== undefined) {
     if (hierarchy.isDerived(tx.objectClass, activity.class.ActivityMessage)) {
-      return cltx
+      return {
+        objectId: tx.attachedTo,
+        objectClass: tx.attachedToClass
+      }
     }
 
     const mixin = hierarchy.classHierarchyMixin(tx.objectClass, notification.mixin.ClassCollaborators)
-    return mixin !== undefined ? tx : cltx
+    return mixin !== undefined
+      ? {
+          objectId: tx.objectId,
+          objectClass: tx.objectClass
+        }
+      : {
+          objectId: tx.attachedTo,
+          objectClass: tx.attachedToClass
+        }
   }
-  return tx
+  return {
+    objectId: tx.objectId,
+    objectClass: tx.objectClass
+  }
 }
 
-async function ActivityReferenceCreate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
-  const ctx = etx as TxCreateDoc<Doc>
+async function ActivityReferenceCreate (tx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
+  const ctx = tx as TxCreateDoc<Doc>
 
   if (ctx._class !== core.class.TxCreateDoc) return []
   if (control.hierarchy.isDerived(ctx.objectClass, notification.class.InboxNotification)) return []
@@ -688,7 +674,7 @@ async function ActivityReferenceCreate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control
   const txFactory = new TxFactory(control.txFactory.account)
 
   const doc = TxProcessor.createDoc2Doc(ctx)
-  const targetTx = guessReferenceTx(control.hierarchy, tx)
+  const target = guessReferenceObj(control.hierarchy, tx)
 
   const txes: Tx[] = await getCreateReferencesTxes(
     control.ctx,
@@ -696,9 +682,9 @@ async function ActivityReferenceCreate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control
     control.storageAdapter,
     txFactory,
     doc,
-    targetTx.objectId,
-    targetTx.objectClass,
-    targetTx.objectSpace,
+    target.objectId,
+    target.objectClass,
+    tx.objectSpace,
     tx
   )
 
@@ -709,8 +695,8 @@ async function ActivityReferenceCreate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control
   return []
 }
 
-async function ActivityReferenceUpdate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
-  const ctx = etx as TxUpdateDoc<Doc>
+async function ActivityReferenceUpdate (tx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
+  const ctx = tx as TxUpdateDoc<Doc>
   const attributes = control.hierarchy.getAllAttributes(ctx.objectClass)
 
   let hasUpdates = false
@@ -736,7 +722,7 @@ async function ActivityReferenceUpdate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control
 
   const txFactory = new TxFactory(control.txFactory.account)
   const doc = TxProcessor.updateDoc2Doc(rawDoc, ctx)
-  const targetTx = guessReferenceTx(control.hierarchy, tx)
+  const target = guessReferenceObj(control.hierarchy, tx)
 
   const txes: Tx[] = await getUpdateReferencesTxes(
     control.ctx,
@@ -744,9 +730,9 @@ async function ActivityReferenceUpdate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control
     control.storageAdapter,
     txFactory,
     doc,
-    targetTx.objectId,
-    targetTx.objectClass,
-    targetTx.objectSpace,
+    target.objectId,
+    target.objectClass,
+    tx.objectSpace,
     tx
   )
 
@@ -757,8 +743,8 @@ async function ActivityReferenceUpdate (tx: TxCUD<Doc>, etx: TxCUD<Doc>, control
   return []
 }
 
-async function ActivityReferenceRemove (tx: Tx, etx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
-  const ctx = etx as TxRemoveDoc<Doc>
+async function ActivityReferenceRemove (tx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
+  const ctx = tx as TxRemoveDoc<Doc>
   const attributes = control.hierarchy.getAllAttributes(ctx.objectClass)
 
   let hasMarkdown = false
@@ -785,21 +771,26 @@ async function ActivityReferenceRemove (tx: Tx, etx: TxCUD<Doc>, control: Trigge
 /**
  * @public
  */
-export async function ReferenceTrigger (tx: TxCUD<Doc>, control: TriggerControl): Promise<Tx[]> {
+export async function ReferenceTrigger (txes: TxCUD<Doc>[], control: TriggerControl): Promise<Tx[]> {
   const result: Tx[] = []
 
-  const etx = TxProcessor.extractTx(tx) as TxCUD<Doc>
-  if (control.hierarchy.isDerived(etx.objectClass, activity.class.ActivityReference)) return []
-  if (control.hierarchy.isDerived(etx.objectClass, notification.class.InboxNotification)) return []
+  for (const tx of txes) {
+    if (control.hierarchy.isDerived(tx.objectClass, activity.class.ActivityReference)) {
+      continue
+    }
+    if (control.hierarchy.isDerived(tx.objectClass, notification.class.InboxNotification)) {
+      continue
+    }
 
-  if (etx._class === core.class.TxCreateDoc) {
-    result.push(...(await ActivityReferenceCreate(tx, etx, control)))
-  }
-  if (etx._class === core.class.TxUpdateDoc) {
-    result.push(...(await ActivityReferenceUpdate(tx, etx, control)))
-  }
-  if (etx._class === core.class.TxRemoveDoc) {
-    result.push(...(await ActivityReferenceRemove(tx, etx, control)))
+    if (tx._class === core.class.TxCreateDoc) {
+      result.push(...(await ActivityReferenceCreate(tx, control)))
+    }
+    if (tx._class === core.class.TxUpdateDoc) {
+      result.push(...(await ActivityReferenceUpdate(tx, control)))
+    }
+    if (tx._class === core.class.TxRemoveDoc) {
+      result.push(...(await ActivityReferenceRemove(tx, control)))
+    }
   }
   return result
 }

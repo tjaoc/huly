@@ -29,6 +29,11 @@ export class LoginPage {
     await (await this.page.goto(`${PlatformURI}/login/login`))?.finished()
   }
 
+  // ACTIONS
+  async gotoAdmin (): Promise<void> {
+    await (await this.page.goto(`${PlatformURI}/login/admin`))?.finished()
+  }
+
   async clickSignUp (): Promise<void> {
     await this.linkSignUp().click()
   }
@@ -58,14 +63,6 @@ export class LoginPage {
   }
 
   // ASSERTS
-
-  async checkingNeedReLogin (): Promise<void> {
-    if (await this.profileButton().isVisible()) {
-      await this.openProfileMenu()
-      await this.popupItemButton('Sign out').click()
-      await this.loginWithPassword().waitFor({ state: 'visible', timeout: 15000 })
-    }
-  }
 
   async checkIfErrorMessageIsShown (): Promise<void> {
     await expect(this.invalidPasswordMessage()).toContainText('Invalid password')

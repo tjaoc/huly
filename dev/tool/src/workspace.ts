@@ -16,16 +16,29 @@
 
 import contact from '@hcengineering/contact'
 import core, {
+  DOMAIN_TX,
+  getWorkspaceId,
+  TxOperations,
   type BackupClient,
+  type BaseWorkspaceInfo,
+  type Class,
   type Client as CoreClient,
   type Doc,
-  DOMAIN_DOC_INDEX_STATE,
-  DOMAIN_TX,
+  type MeasureContext,
   type Ref,
   type Tx,
-  type WorkspaceId
+  type WorkspaceId,
+  type WorkspaceIdWithUrl
 } from '@hcengineering/core'
 import { getMongoClient, getWorkspaceMongoDB } from '@hcengineering/mongo'
+import { createStorageBackupStorage, restore } from '@hcengineering/server-backup'
+import {
+  createDummyStorageAdapter,
+  wrapPipeline,
+  type PipelineFactory,
+  type StorageAdapter
+} from '@hcengineering/server-core'
+import { createStorageFromConfig, storageConfigFromEnv } from '@hcengineering/server-storage'
 import { connect } from '@hcengineering/server-tool'
 import { generateModelDiff, printDiff } from './mdiff'
 
@@ -72,7 +85,6 @@ export async function diffWorkspace (mongoUrl: string, workspace: WorkspaceId, r
 }
 
 export async function updateField (
-  mongoUrl: string,
   workspaceId: WorkspaceId,
   transactorUrl: string,
   cmd: { objectId: string, objectClass: string, type: string, attribute: string, value: string, domain: string }
@@ -80,33 +92,136 @@ export async function updateField (
   const connection = (await connect(transactorUrl, workspaceId, undefined, {
     mode: 'backup'
   })) as unknown as CoreClient & BackupClient
-  const client = getMongoClient(mongoUrl)
-  let valueToPut: string | number = cmd.value
-  if (cmd.type === 'number') valueToPut = parseFloat(valueToPut)
+
   try {
-    const _client = await client.getClient()
-    try {
-      const db = getWorkspaceMongoDB(_client, workspaceId)
-      await db
-        .collection(cmd.domain)
-        .updateOne({ _id: cmd.objectId as Ref<Doc> }, { $set: { [cmd.attribute]: valueToPut } })
-    } finally {
-      client.close()
+    const doc = await connection.findOne(cmd.objectClass as Ref<Class<Doc>>, { _id: cmd.objectId as Ref<Doc> })
+    if (doc === undefined) {
+      console.error('Document not found')
+      process.exit(1)
     }
+    let valueToPut: string | number = cmd.value
+    if (cmd.type === 'number') valueToPut = parseFloat(valueToPut)
+    ;(doc as any)[cmd.attribute] = valueToPut
+
+    await connection.upload(connection.getHierarchy().getDomain(doc?._class), [doc])
   } finally {
     await connection.close()
   }
 }
 
-export async function recreateElastic (mongoUrl: string, workspaceId: WorkspaceId): Promise<void> {
-  const client = getMongoClient(mongoUrl)
-  const _client = await client.getClient()
-  try {
-    const db = getWorkspaceMongoDB(_client, workspaceId)
-    await db
-      .collection(DOMAIN_DOC_INDEX_STATE)
-      .updateMany({ _class: core.class.DocIndexState }, { $set: { stages: {}, needIndex: true } })
-  } finally {
-    client.close()
+export async function backupRestore (
+  ctx: MeasureContext,
+  dbURL: string,
+  bucketName: string,
+  workspace: BaseWorkspaceInfo,
+  pipelineFactoryFactory: (mongoUrl: string, storage: StorageAdapter) => PipelineFactory,
+  skipDomains: string[]
+): Promise<boolean> {
+  const storageEnv = process.env.STORAGE
+  if (storageEnv === undefined) {
+    console.error('please provide STORAGE env')
+    process.exit(1)
   }
+  if (bucketName.trim() === '') {
+    console.error('please provide butket name env')
+    process.exit(1)
+  }
+  const backupStorageConfig = storageConfigFromEnv(storageEnv)
+
+  const storageAdapter = createStorageFromConfig(backupStorageConfig.storages[0])
+
+  const workspaceStorage = createDummyStorageAdapter()
+  const pipelineFactory = pipelineFactoryFactory(dbURL, workspaceStorage)
+
+  try {
+    const storage = await createStorageBackupStorage(
+      ctx,
+      storageAdapter,
+      getWorkspaceId(bucketName),
+      workspace.workspace
+    )
+    const wsUrl: WorkspaceIdWithUrl = {
+      name: workspace.workspace,
+      uuid: workspace.uuid,
+      workspaceName: workspace.workspaceName ?? '',
+      workspaceUrl: workspace.workspaceUrl ?? ''
+    }
+    const result: boolean = await ctx.with('restore', { workspace: workspace.workspace }, (ctx) =>
+      restore(ctx, '', getWorkspaceId(workspace.workspace), storage, {
+        date: -1,
+        skip: new Set(skipDomains),
+        recheck: false,
+        storageAdapter: workspaceStorage,
+        getConnection: async () => {
+          return wrapPipeline(ctx, await pipelineFactory(ctx, wsUrl, true, () => {}, null), wsUrl)
+        }
+      })
+    )
+    return result
+  } finally {
+    await storageAdapter.close()
+  }
+}
+
+export async function restoreRemovedDoc (
+  ctx: MeasureContext,
+  workspaceId: WorkspaceId,
+  transactorUrl: string,
+  idsVal: string
+): Promise<void> {
+  const ids = idsVal.split(';').map((it) => it.trim()) as Ref<Doc>[]
+  const connection = (await connect(transactorUrl, workspaceId, undefined, {
+    mode: 'backup',
+    model: 'upgrade', // Required for force all clients reload after operation will be complete.
+    admin: 'true'
+  })) as unknown as CoreClient & BackupClient
+  try {
+    for (const id of ids) {
+      try {
+        ctx.info('start restoring', { id })
+        const ops = new TxOperations(connection, core.account.System)
+        const processed = new Set<Ref<Doc>>()
+        const txes = await getObjectTxesAndRelatedTxes(ctx, ops, id, processed, true)
+        txes.filter((p) => p._class !== core.class.TxRemoveDoc).sort((a, b) => a.modifiedOn - b.modifiedOn)
+        for (const tx of txes) {
+          tx.space = core.space.DerivedTx
+          await ops.tx(tx)
+        }
+        ctx.info('success restored', { id })
+      } catch (err) {
+        ctx.error('error restoring', { id, err })
+      }
+    }
+  } finally {
+    await connection.sendForceClose()
+    await connection.close()
+  }
+}
+
+async function getObjectTxesAndRelatedTxes (
+  ctx: MeasureContext,
+  client: TxOperations,
+  objectId: Ref<Doc>,
+  processed: Set<Ref<Doc>>,
+  filterRemoved = false
+): Promise<Tx[]> {
+  ctx.info('Find txes for', { objectId })
+  const result: Tx[] = []
+  if (processed.has(objectId)) {
+    return result
+  }
+  processed.add(objectId)
+  let txes = (await client.findAll(core.class.TxCUD, { objectId })) as Tx[]
+  if (filterRemoved) {
+    txes = txes.filter((it) => it._class !== core.class.TxRemoveDoc)
+  }
+  result.push(...txes)
+  const relatedTxes = await client.findAll(core.class.TxCUD, { attachedTo: objectId })
+  result.push(...relatedTxes)
+  const relatedIds = new Set(relatedTxes.map((it) => it.objectId))
+  for (const relatedId of relatedIds) {
+    const rel = await getObjectTxesAndRelatedTxes(ctx, client, relatedId, processed)
+    result.push(...rel)
+  }
+  return result
 }

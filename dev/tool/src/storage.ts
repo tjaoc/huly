@@ -15,62 +15,22 @@
 
 import { type Attachment } from '@hcengineering/attachment'
 import { type Blob, type MeasureContext, type Ref, type WorkspaceId, RateLimiter } from '@hcengineering/core'
+import { type DatalakeClient } from '@hcengineering/datalake'
+import { type UploadObjectParams } from '@hcengineering/datalake/types/client'
 import { DOMAIN_ATTACHMENT } from '@hcengineering/model-attachment'
-import { type ListBlobResult, type StorageAdapter, type StorageAdapterEx } from '@hcengineering/server-core'
+import { type S3Config, type S3Service } from '@hcengineering/s3'
+import {
+  type ListBlobResult,
+  type StorageAdapter,
+  type StorageAdapterEx,
+  type UploadedObjectInfo
+} from '@hcengineering/server-core'
 import { type Db } from 'mongodb'
-import { PassThrough } from 'stream'
+import { PassThrough, type Readable } from 'stream'
 
 export interface MoveFilesParams {
   concurrency: number
   move: boolean
-}
-
-export async function syncFiles (
-  ctx: MeasureContext,
-  workspaceId: WorkspaceId,
-  exAdapter: StorageAdapterEx
-): Promise<void> {
-  if (exAdapter.adapters === undefined) return
-
-  for (const [name, adapter] of [...exAdapter.adapters.entries()].reverse()) {
-    await adapter.make(ctx, workspaceId)
-
-    await retryOnFailure(ctx, 5, async () => {
-      let time = Date.now()
-      let count = 0
-
-      const iterator = await adapter.listStream(ctx, workspaceId)
-      try {
-        while (true) {
-          const dataBulk = await iterator.next()
-          if (dataBulk.length === 0) break
-
-          for (const data of dataBulk) {
-            const blob = await exAdapter.stat(ctx, workspaceId, data._id)
-            if (blob !== undefined) {
-              if (blob.provider !== name && name === exAdapter.defaultAdapter) {
-                await exAdapter.syncBlobFromStorage(ctx, workspaceId, data._id, exAdapter.defaultAdapter)
-              }
-              continue
-            }
-
-            await exAdapter.syncBlobFromStorage(ctx, workspaceId, data._id, name)
-
-            count += 1
-            if (count % 100 === 0) {
-              const duration = Date.now() - time
-              time = Date.now()
-
-              console.log('...processed', count, Math.round(duration / 1000) + 's')
-            }
-          }
-        }
-        console.log('processed', count)
-      } finally {
-        await iterator.close()
-      }
-    })
-  }
 }
 
 export async function moveFiles (
@@ -81,15 +41,13 @@ export async function moveFiles (
 ): Promise<void> {
   if (exAdapter.adapters === undefined) return
 
-  const target = exAdapter.adapters.get(exAdapter.defaultAdapter)
+  const target = exAdapter.adapters[0].adapter
   if (target === undefined) return
 
   // We assume that the adapter moves all new files to the default adapter
   await target.make(ctx, workspaceId)
 
-  for (const [name, adapter] of exAdapter.adapters.entries()) {
-    if (name === exAdapter.defaultAdapter) continue
-
+  for (const { name, adapter } of exAdapter.adapters.slice(1).reverse()) {
     console.log('moving from', name, 'limit', 'concurrency', params.concurrency)
 
     // we attempt retry the whole process in case of failure
@@ -192,14 +150,9 @@ async function processAdapter (
       }
 
       for (const data of dataBulk) {
-        let targetBlob: Blob | ListBlobResult | undefined = targetBlobs.get(data._id)
+        const targetBlob: Blob | ListBlobResult | undefined = targetBlobs.get(data._id)
         if (targetBlob !== undefined) {
           console.log('Target blob already exists', targetBlob._id)
-
-          const aggrBlob = await exAdapter.stat(ctx, workspaceId, data._id)
-          if (aggrBlob === undefined || aggrBlob?.provider !== targetBlob.provider) {
-            targetBlob = await exAdapter.syncBlobFromStorage(ctx, workspaceId, targetBlob._id, exAdapter.defaultAdapter)
-          }
           // We could safely delete source blob
           toRemove.push(data._id)
         }
@@ -211,15 +164,13 @@ async function processAdapter (
             console.error('blob not found', data._id)
             continue
           }
-          targetBlob = await rateLimiter.exec(async () => {
+          const info = await rateLimiter.exec(async () => {
             try {
               const result = await retryOnFailure(
                 ctx,
                 5,
                 async () => {
-                  await processFile(ctx, source, target, workspaceId, sourceBlob)
-                  // We need to sync and update aggregator table for now.
-                  return await exAdapter.syncBlobFromStorage(ctx, workspaceId, sourceBlob._id, exAdapter.defaultAdapter)
+                  return await processFile(ctx, source, target, workspaceId, sourceBlob)
                 },
                 50
               )
@@ -232,8 +183,8 @@ async function processAdapter (
             }
           })
 
-          if (targetBlob !== undefined) {
-            // We could safely delete source blob
+          // We could safely delete source blob
+          if (info !== undefined) {
             toRemove.push(sourceBlob._id)
           }
           processedBytes += sourceBlob.size
@@ -266,14 +217,14 @@ async function processFile (
   target: Pick<StorageAdapter, 'put'>,
   workspaceId: WorkspaceId,
   blob: Blob
-): Promise<void> {
+): Promise<UploadedObjectInfo> {
   const readable = await source.get(ctx, workspaceId, blob._id)
   try {
     readable.on('end', () => {
       readable.destroy()
     })
     const stream = readable.pipe(new PassThrough())
-    await target.put(ctx, workspaceId, blob._id, stream, blob.contentType, blob.size)
+    return await target.put(ctx, workspaceId, blob._id, stream, blob.contentType, blob.size)
   } finally {
     readable.destroy()
   }
@@ -300,4 +251,247 @@ async function retryOnFailure<T> (
     }
   }
   throw lastError
+}
+
+export interface CopyDatalakeParams {
+  concurrency: number
+  existing: boolean
+}
+
+export async function copyToDatalake (
+  ctx: MeasureContext,
+  workspaceId: WorkspaceId,
+  config: S3Config,
+  adapter: S3Service,
+  datalake: DatalakeClient,
+  params: CopyDatalakeParams
+): Promise<void> {
+  console.log('copying from', config.name, 'concurrency:', params.concurrency)
+
+  const exists = await adapter.exists(ctx, workspaceId)
+  if (!exists) {
+    console.log('no files to copy')
+    return
+  }
+
+  let time = Date.now()
+  let processedCnt = 0
+  let processedSize = 0
+  let skippedCnt = 0
+  let existingCnt = 0
+  let failedCnt = 0
+
+  function printStats (): void {
+    const duration = Date.now() - time
+    console.log(
+      '...processed',
+      processedCnt,
+      'skipped',
+      skippedCnt,
+      'existing',
+      existingCnt,
+      'failed',
+      failedCnt,
+      Math.round(duration / 1000) + 's',
+      formatSize(processedSize)
+    )
+
+    time = Date.now()
+  }
+
+  const existing = new Set<string>()
+
+  let cursor: string | undefined = ''
+  let hasMore = true
+  while (hasMore) {
+    const res = await datalake.listObjects(ctx, workspaceId, cursor, 1000)
+    cursor = res.cursor
+    hasMore = res.cursor !== undefined
+    for (const blob of res.blobs) {
+      existing.add(blob.name)
+    }
+  }
+
+  console.info('found blobs in datalake:', existing.size)
+
+  const rateLimiter = new RateLimiter(params.concurrency)
+
+  const iterator = await adapter.listStream(ctx, workspaceId)
+
+  try {
+    while (true) {
+      const batch = await iterator.next()
+      if (batch.length === 0) break
+
+      for (const blob of batch) {
+        const objectName = blob._id
+        if (objectName.includes('%preview%') || objectName.includes('%size%') || objectName.endsWith('#history')) {
+          skippedCnt++
+          continue
+        }
+
+        if (!params.existing && existing.has(objectName)) {
+          // TODO handle mutable blobs
+          existingCnt++
+          continue
+        }
+
+        await rateLimiter.add(async () => {
+          try {
+            await retryOnFailure(
+              ctx,
+              5,
+              async () => {
+                await copyBlobToDatalake(ctx, workspaceId, blob, config, adapter, datalake)
+                processedCnt += 1
+                processedSize += blob.size
+              },
+              50
+            )
+          } catch (err) {
+            console.error('failed to process blob', objectName, err)
+            failedCnt++
+          }
+        })
+      }
+      await rateLimiter.waitProcessing()
+      printStats()
+    }
+
+    await rateLimiter.waitProcessing()
+    printStats()
+  } finally {
+    await iterator.close()
+  }
+}
+
+export async function copyBlobToDatalake (
+  ctx: MeasureContext,
+  workspaceId: WorkspaceId,
+  blob: ListBlobResult,
+  config: S3Config,
+  adapter: S3Service,
+  datalake: DatalakeClient
+): Promise<void> {
+  const objectName = blob._id
+
+  const stat = await adapter.stat(ctx, workspaceId, objectName)
+  if (stat !== undefined) {
+    const metadata = {
+      lastModified: stat.modifiedOn,
+      name: objectName,
+      type: stat.contentType,
+      size: stat.size
+    }
+
+    const readable = await adapter.get(ctx, workspaceId, objectName)
+    try {
+      if (blob.size < 1024 * 1024 * 10) {
+        await uploadBlob(ctx, datalake, workspaceId, objectName, readable, metadata)
+      } else {
+        console.log('uploading huge blob', objectName, Math.round(stat.size / 1024 / 1024), 'MB')
+        await uploadMultipart(ctx, datalake, workspaceId, objectName, readable, metadata)
+      }
+      console.log('done', objectName, stat.contentType)
+    } finally {
+      readable.destroy()
+    }
+  }
+}
+
+function uploadBlob (
+  ctx: MeasureContext,
+  datalake: DatalakeClient,
+  workspaceId: WorkspaceId,
+  objectName: string,
+  stream: Readable,
+  metadata: UploadObjectParams
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const passthrough = new PassThrough()
+
+    const cleanup = (): void => {
+      stream.removeAllListeners()
+      passthrough.removeAllListeners()
+      stream.destroy()
+      passthrough.destroy()
+    }
+
+    stream.on('error', (err) => {
+      ctx.error('error reading blob', { err })
+      cleanup()
+      reject(err)
+    })
+    passthrough.on('error', (err) => {
+      ctx.error('error reading blob', { err })
+      cleanup()
+      reject(err)
+    })
+
+    stream.pipe(passthrough)
+
+    datalake
+      .putObject(ctx, workspaceId, objectName, passthrough, metadata)
+      .then(() => {
+        cleanup()
+        resolve()
+      })
+      .catch((err) => {
+        ctx.error('failed to upload blob', { err })
+        cleanup()
+        reject(err)
+      })
+  })
+}
+
+function uploadMultipart (
+  ctx: MeasureContext,
+  datalake: DatalakeClient,
+  workspaceId: WorkspaceId,
+  objectName: string,
+  stream: Readable,
+  metadata: UploadObjectParams
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const passthrough = new PassThrough()
+
+    const cleanup = (): void => {
+      stream.removeAllListeners()
+      passthrough.removeAllListeners()
+      stream.destroy()
+      passthrough.destroy()
+    }
+
+    stream.on('error', (err) => {
+      ctx.error('error reading blob', { err })
+      cleanup()
+      reject(err)
+    })
+    passthrough.on('error', (err) => {
+      ctx.error('error reading blob', { err })
+      cleanup()
+      reject(err)
+    })
+
+    stream.pipe(passthrough)
+
+    datalake
+      .uploadWithMultipart(ctx, workspaceId, objectName, passthrough, metadata)
+      .then(() => {
+        cleanup()
+        resolve()
+      })
+      .catch((err) => {
+        ctx.error('failed to upload blob', { err })
+        cleanup()
+        reject(err)
+      })
+  })
+}
+
+export function formatSize (size: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+  const pow = size === 0 ? 0 : Math.floor(Math.log(size) / Math.log(1024))
+  const val = (1.0 * size) / Math.pow(1024, pow)
+  return `${val.toFixed(2)} ${units[pow]}`
 }

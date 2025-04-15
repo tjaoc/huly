@@ -545,13 +545,13 @@ A list of closed updated issues`
   })
 
   it('Check underline heading rule', () => {
-    const t1 = 'Hello\n---\nSome text'
+    const t1 = 'Hello\n---\n\nSome text'
     const msg = parseMessageMarkdown(t1, 'ref://', 'http://', 'http://')
     expect(msg.type).toEqual(MarkupNodeType.doc)
 
     const md = serializeMessage(msg, 'ref://', 'http://')
 
-    expect(md).toEqual('## Hello\n\nSome text')
+    expect(md).toEqual(t1)
   })
 
   it('Check horizontal line', () => {
@@ -660,6 +660,7 @@ A list of closed updated issues`
       content: [
         {
           type: MarkupNodeType.paragraph,
+          attrs: { textAlign: null },
           content: [
             {
               type: MarkupNodeType.text,
@@ -689,7 +690,7 @@ A list of closed updated issues`
       content: [
         {
           type: MarkupNodeType.heading,
-          attrs: { level: 1 },
+          attrs: { level: 1, textAlign: null },
           content: [
             {
               type: MarkupNodeType.text,
@@ -699,6 +700,7 @@ A list of closed updated issues`
         },
         {
           type: MarkupNodeType.paragraph,
+          attrs: { textAlign: null },
           content: [
             {
               text: '\n',
@@ -708,7 +710,7 @@ A list of closed updated issues`
         },
         {
           type: MarkupNodeType.heading,
-          attrs: { level: 2 },
+          attrs: { level: 2, textAlign: null },
           content: [
             {
               type: MarkupNodeType.text,

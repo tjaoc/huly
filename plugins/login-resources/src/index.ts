@@ -19,14 +19,18 @@ import InviteLink from './components/InviteLink.svelte'
 import LoginApp from './components/LoginApp.svelte'
 import {
   changePassword,
+  createMissingEmployee,
+  fetchWorkspace,
+  getInviteLink,
   getWorkspaces,
   leaveWorkspace,
+  resendInvite,
   selectWorkspace,
-  sendInvite,
-  fetchWorkspace,
-  createMissingEmployee,
-  getInviteLink
+  sendInvite
 } from './utils'
+
+import { type Pages, pages } from '@hcengineering/login'
+export { type Pages, pages }
 /*!
  * Anticrm Platform™ Login Plugin
  * © 2020, 2021 Anticrm Platform Contributors.
@@ -47,23 +51,10 @@ export default async () => ({
     CreateEmployee: createMissingEmployee,
     GetWorkspaces: getWorkspaces,
     SendInvite: sendInvite,
+    ResendInvite: resendInvite,
     GetInviteLink: getInviteLink
   }
 })
-
-export const pages = [
-  'login',
-  'signup',
-  'createWorkspace',
-  'password',
-  'recovery',
-  'selectWorkspace',
-  'join',
-  'confirm',
-  'confirmationSend',
-  'auth',
-  'login-password'
-] as const
 
 export enum OtpLoginSteps {
   Email = 'email',
@@ -74,7 +65,6 @@ export enum LoginMethods {
   Password = 'password',
   Otp = 'otp'
 }
-export type Pages = (typeof pages)[number]
 
 export interface BottomAction {
   i18n: IntlString

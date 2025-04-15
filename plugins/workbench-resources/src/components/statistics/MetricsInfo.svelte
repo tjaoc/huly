@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Metrics } from '@hcengineering/core'
+  import { Metrics, type MetricsData } from '@hcengineering/core'
   import { getEmbeddedLabel } from '@hcengineering/platform'
   import { Button, Expandable, showPopup } from '@hcengineering/ui'
   import { FixedColumn } from '@hcengineering/view-resources'
@@ -8,6 +8,7 @@
   export let metrics: Metrics
   export let level = 0
   export let name: string = 'System'
+  export let sortOrder: 'avg' | 'ops' | 'total'
 
   $: haschilds =
     Object.keys(metrics.measurements).length > 0 ||
@@ -22,6 +23,30 @@
       return `⏱️ ${time}`
     }
     return `${Math.floor((time / ops) * 100) / 100}`
+  }
+  const getSorted = (v: Record<string, MetricsData>, sortingOrder: 'avg' | 'ops' | 'total') => {
+    if (sortingOrder === 'avg') {
+      return Object.entries(v).sort((a, b) => b[1].value / (b[1].operations + 1) - a[1].value / (a[1].operations + 1))
+    } else if (sortingOrder === 'ops') {
+      return Object.entries(v).sort((a, b) => b[1].operations + 1 - (a[1].operations + 1))
+    } else {
+      return Object.entries(v).sort((a, b) => b[1].value - a[1].value)
+    }
+  }
+
+  function getSortedMeasurements (
+    m: Record<string, Metrics>,
+    sortingOrder: 'avg' | 'ops' | 'total'
+  ): [string, Metrics][] {
+    const ms = [...Object.entries(m)]
+    if (sortingOrder === 'avg') {
+      ms.sort((a, b) => b[1].value / (b[1].operations + 1) - a[1].value / (a[1].operations + 1))
+    } else if (sortingOrder === 'ops') {
+      ms.sort((a, b) => b[1].operations + 1 - (a[1].operations + 1))
+    } else {
+      ms.sort((a, b) => b[1].value - a[1].value)
+    }
+    return ms
   }
 </script>
 
@@ -91,14 +116,14 @@
       </Expandable>
     </div>
   {/if}
-  {#each Object.entries(metrics.measurements) as [k, v], i (k)}
+  {#each getSortedMeasurements(metrics.measurements, sortOrder) as [k, v], i (k)}
     <div style:margin-left={`${level * 0.5}rem`}>
-      <svelte:self metrics={v} name="{i}. {k}" level={level + 1} />
+      <svelte:self metrics={v} name="{i}. {k}" level={level + 1} {sortOrder} />
     </div>
   {/each}
-  {#each Object.entries(metrics.params) as [k, v], i}
+  {#each Object.entries(metrics.params) as [k, v]}
     <div style:margin-left={`${level * 0.5}rem`}>
-      {#each Object.entries(v).sort((a, b) => b[1].value / (b[1].operations + 1) - a[1].value / (a[1].operations + 1)) as [kk, vv]}
+      {#each getSorted(v, sortOrder) as [kk, vv]}
         {@const childExpandable =
           vv.topResult !== undefined &&
           vv.topResult.length > 0 &&

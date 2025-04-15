@@ -1,6 +1,6 @@
 //
 // Copyright © 2020, 2021 Anticrm Platform Contributors.
-// Copyright © 2021, 2024 Hardcore Engineering Inc.
+// Copyright © 2021-2025 Hardcore Engineering Inc.
 //
 // Licensed under the Eclipse Public License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License. You may
@@ -24,20 +24,16 @@ import { start } from '.'
 export function startFront (ctx: MeasureContext, extraConfig?: Record<string, string | undefined>): void {
   const SERVER_PORT = parseInt(process.env.SERVER_PORT ?? '8080')
 
-  const url = process.env.MONGO_URL
-  if (url === undefined) {
-    console.error('please provide mongodb url')
+  const serverSecret = process.env.SERVER_SECRET
+  if (serverSecret === undefined) {
+    console.log('Please provide server secret')
     process.exit(1)
   }
 
-  const elasticUrl = process.env.ELASTIC_URL
-  if (elasticUrl === undefined) {
-    console.error('please provide elastic url')
-    process.exit(1)
-  }
+  setMetadata(serverToken.metadata.Secret, serverSecret)
 
   const storageConfig: StorageConfiguration = storageConfigFromEnv()
-  const storageAdapter = buildStorageFromConfig(storageConfig, url)
+  const storageAdapter = buildStorageFromConfig(storageConfig)
 
   const accountsUrl = process.env.ACCOUNTS_URL
   if (accountsUrl === undefined) {
@@ -95,12 +91,6 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
     process.exit(1)
   }
 
-  const serverSecret = process.env.SERVER_SECRET
-  if (serverSecret === undefined) {
-    console.log('Please provide server secret')
-    process.exit(1)
-  }
-
   let uploadConfig = process.env.UPLOAD_CONFIG
   if (uploadConfig === undefined) {
     uploadConfig = ''
@@ -121,12 +111,11 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
 
   const brandingUrl = process.env.BRANDING_URL
 
-  setMetadata(serverToken.metadata.Secret, serverSecret)
+  const linkPreviewUrl = process.env.LINK_PREVIEW_URL
 
   const disableSignUp = process.env.DISABLE_SIGNUP
 
   const config = {
-    elasticUrl,
     storageAdapter,
     accountsUrl,
     uploadUrl,
@@ -143,7 +132,8 @@ export function startFront (ctx: MeasureContext, extraConfig?: Record<string, st
     previewConfig,
     uploadConfig,
     pushPublicKey,
-    disableSignUp
+    disableSignUp,
+    linkPreviewUrl
   }
   console.log('Starting Front service with', config)
   const shutdown = start(ctx, config, SERVER_PORT, extraConfig)

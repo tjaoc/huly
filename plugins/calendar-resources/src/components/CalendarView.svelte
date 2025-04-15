@@ -188,6 +188,7 @@
         break
       }
       case CalendarMode.Month: {
+        currentDate.setDate(1)
         currentDate.setMonth(currentDate.getMonth() + val)
         break
       }
@@ -263,6 +264,7 @@
           modifiedOn: Date.now(),
           date: e.detail.date.getTime(),
           space: calendar.space.Calendar,
+          user: me._id,
           dueDate: new Date(e.detail.date).setMinutes(new Date(e.detail.date).getMinutes() + 30)
         }
         raw.push(temp)

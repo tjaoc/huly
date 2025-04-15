@@ -16,7 +16,7 @@
 
 import { Class, Doc, DocumentQuery, FindOptions, Mixin, Ref } from '@hcengineering/core'
 import { Asset, IntlString, Plugin, Resource, plugin } from '@hcengineering/platform'
-import { AnyComponent, PopupAlignment, PopupPosAlignment } from '@hcengineering/ui'
+import { AnyComponent, PopupAlignment, PopupPosAlignment } from '@hcengineering/ui/src/types'
 import {
   Action,
   ActionCategory,
@@ -52,6 +52,7 @@ import {
   ObjectTitle,
   ObjectTooltip,
   ObjectValidator,
+  ReferenceObjectProvider,
   AttrPresenter,
   PreviewPresenter,
   SpaceHeader,
@@ -91,10 +92,12 @@ const view = plugin(viewId, {
     ObjectPresenter: '' as Ref<Mixin<ObjectPresenter>>,
     ObjectEditorHeader: '' as Ref<Mixin<ObjectEditorHeader>>,
     ObjectEditorFooter: '' as Ref<Mixin<ObjectEditorFooter>>,
+    ObjectPanelFooter: '' as Ref<Mixin<ObjectEditorFooter>>,
     ObjectValidator: '' as Ref<Mixin<ObjectValidator>>,
     ObjectFactory: '' as Ref<Mixin<ObjectFactory>>,
     ObjectTitle: '' as Ref<Mixin<ObjectTitle>>,
     ObjectIdentifier: '' as Ref<Mixin<ObjectIdentifier>>,
+    ReferenceObjectProvider: '' as Ref<Mixin<ReferenceObjectProvider>>,
     ObjectTooltip: '' as Ref<Mixin<ObjectTooltip>>,
     SpaceHeader: '' as Ref<Mixin<SpaceHeader>>,
     SpaceName: '' as Ref<Mixin<SpaceName>>,
@@ -147,7 +150,8 @@ const view = plugin(viewId, {
 
     // Edit document
     Open: '' as Ref<Action>,
-    OpenInNewTab: '' as Ref<Action>
+    OpenInNewTab: '' as Ref<Action>,
+    RemoveRelation: '' as Ref<Action>
   },
   viewlet: {
     Table: '' as Ref<ViewletDescriptor>,
@@ -165,7 +169,8 @@ const view = plugin(viewId, {
     IconWithEmoji: '' as AnyComponent,
     AttachedDocPanel: '' as AnyComponent,
     ObjectMention: '' as AnyComponent,
-    SearchSelector: '' as AnyComponent
+    SearchSelector: '' as AnyComponent,
+    FoldersBrowser: '' as AnyComponent
   },
   ids: {
     IconWithEmoji: '' as Asset
@@ -211,7 +216,12 @@ const view = plugin(viewId, {
     Join: '' as IntlString,
     Leave: '' as IntlString,
     Copied: '' as IntlString,
-    And: '' as IntlString
+    And: '' as IntlString,
+    Title: '' as IntlString,
+    DeleteObject: '' as IntlString,
+    DeleteObjectConfirm: '' as IntlString,
+    RemoveRelationConfirmation: '' as IntlString,
+    RemoveRelation: '' as IntlString
   },
   icon: {
     Table: '' as Asset,
@@ -258,7 +268,8 @@ const view = plugin(viewId, {
     Video: '' as Asset,
     Audio: '' as Asset,
     File: '' as Asset,
-    PinTack: '' as Asset
+    PinTack: '' as Asset,
+    Feather: '' as Asset
   },
   category: {
     General: '' as Ref<ActionCategory>,

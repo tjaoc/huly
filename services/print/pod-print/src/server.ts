@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 
-import { MeasureMetricsContext, generateId } from '@hcengineering/core'
-import { StorageConfiguration } from '@hcengineering/server-core'
+import { generateId } from '@hcengineering/core'
+import { StorageConfiguration, initStatisticsContext } from '@hcengineering/server-core'
 import { buildStorageFromConfig } from '@hcengineering/server-storage'
 import { Token, decodeToken } from '@hcengineering/server-token'
 import cors from 'cors'
@@ -110,9 +110,13 @@ const wrapRequest = (fn: AsyncRequestHandler) => (req: Request, res: Response, n
   handleRequest(fn, req, res, next)
 }
 
-export function createServer (dbUrl: string, storageConfig: StorageConfiguration): { app: Express, close: () => void } {
-  const storageAdapter = buildStorageFromConfig(storageConfig, dbUrl)
-  const measureCtx = new MeasureMetricsContext('print', {})
+export function createServer (
+  storageConfig: StorageConfiguration,
+  allowedHostnames: string[]
+): { app: Express, close: () => void } {
+  const storageAdapter = buildStorageFromConfig(storageConfig)
+  const measureCtx = initStatisticsContext('print', {})
+  const whitelistedHostnames = allowedHostnames.length > 0 ? new Set(allowedHostnames) : null
 
   const app = express()
   app.use(cors())
@@ -123,6 +127,16 @@ export function createServer (dbUrl: string, storageConfig: StorageConfiguration
     wrapRequest(async (req, res, token) => {
       const rawlink = req.query.link as string
       const link = decodeURIComponent(rawlink)
+
+      // Verify that link is from the same host and protocol is among the allowed
+      const url = new URL(link)
+      if (
+        !['http:', 'https:'].includes(url.protocol) ||
+        (whitelistedHostnames != null && !whitelistedHostnames.has(url.hostname))
+      ) {
+        console.error(`Rejected processing unexpected link: ${link}. Token: ${JSON.stringify(token)}`)
+        throw new ApiError(403, 'Cannot process provided link')
+      }
 
       const kind = req.query.kind as PrintOptions['kind']
 
@@ -187,7 +201,7 @@ export function createServer (dbUrl: string, storageConfig: StorageConfiguration
           throw new ApiError(404, `File ${file} not found`)
         }
 
-        const htmlRes = await convertToHtml(Buffer.concat(originalFile))
+        const htmlRes = await convertToHtml(Buffer.concat(originalFile as any))
 
         if (htmlRes === undefined) {
           throw new ApiError(400, 'Failed to convert')

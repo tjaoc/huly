@@ -33,7 +33,7 @@ import type {
   SidebarEvent,
   WorkbenchTab
 } from '@hcengineering/workbench'
-import { type AnyComponent } from '@hcengineering/ui'
+import { type AnyComponent } from '@hcengineering/ui/src/types'
 import core, { TClass, TDoc, TTx } from '@hcengineering/model-core'
 import presentation from '@hcengineering/model-presentation'
 
@@ -41,7 +41,8 @@ import workbench from './plugin'
 
 export { workbenchId } from '@hcengineering/workbench'
 export { workbenchOperation } from './migration'
-export type { Application }
+export type { Application, Widget }
+export { WidgetType } from '@hcengineering/workbench'
 
 @Model(workbench.class.Application, core.class.Doc, DOMAIN_MODEL)
 @UX(workbench.string.Application)
@@ -80,6 +81,7 @@ export class TWidget extends TDoc implements Widget {
 
   component!: AnyComponent
   tabComponent?: AnyComponent
+  switcherComponent?: AnyComponent
   headerLabel?: IntlString
 
   closeIfNoTabs?: boolean

@@ -4,17 +4,19 @@
 
 export interface Config {
   Port: number
-  DbURL: string
   Secret: string
+  AllowedHostnames: string[]
 }
 
 const parseNumber = (str: string | undefined): number | undefined => (str !== undefined ? Number(str) : undefined)
 
 const config: Config = (() => {
+  const allowedHostnames = process.env.ALLOWED_HOSTNAMES
+
   const params: Partial<Config> = {
     Port: parseNumber(process.env.PORT) ?? 4005,
-    DbURL: process.env.MONGO_URL,
-    Secret: process.env.SECRET
+    Secret: process.env.SECRET,
+    AllowedHostnames: allowedHostnames == null ? [] : allowedHostnames.split(',')
   }
 
   const missingEnv = (Object.keys(params) as Array<keyof Config>).filter((key) => params[key] === undefined)

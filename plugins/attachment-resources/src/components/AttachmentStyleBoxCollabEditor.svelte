@@ -1,5 +1,5 @@
 <!--
-// Copyright © 2023 Hardcore Engineering Inc.
+// Copyright © 2023 2025 Hardcore Engineering Inc.
 //
 // Licensed under the Eclipse Public License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License. You may
@@ -13,9 +13,9 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import attachment, { Attachment, BlobMetadata, AttachmentsEvents } from '@hcengineering/attachment'
+  import attachment, { Attachment, AttachmentsEvents } from '@hcengineering/attachment'
   import contact from '@hcengineering/contact'
-  import { Account, Doc, Ref, generateId, type Blob } from '@hcengineering/core'
+  import core, { Account, BlobMetadata, Doc, Ref, Space, generateId, type Blob } from '@hcengineering/core'
   import { IntlString, getResource, setPlatformStatus, unknownError } from '@hcengineering/platform'
   import {
     FileOrBlob,
@@ -173,13 +173,17 @@
     try {
       const _id: Ref<Attachment> = generateId()
 
+      const space = client.getHierarchy().isDerived(object._class, core.class.Space)
+        ? (object._id as Ref<Space>)
+        : object.space
+
       const attachmentDoc: Attachment = {
         _id,
         _class: attachment.class.Attachment,
         collection: 'attachments',
         modifiedOn: 0,
         modifiedBy: '' as Ref<Account>,
-        space: object.space,
+        space,
         attachedTo: object._id,
         attachedToClass: object._class,
         name,
@@ -192,7 +196,7 @@
 
       await client.addCollection(
         attachment.class.Attachment,
-        object.space,
+        space,
         object._id,
         object._class,
         'attachments',
@@ -333,7 +337,6 @@
         {attachments}
         {readonly}
         {progress}
-        {progressItems}
         {useAttachmentPreview}
         on:remove={async (evt) => {
           if (evt.detail !== undefined) {

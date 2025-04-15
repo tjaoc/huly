@@ -14,21 +14,25 @@
 // limitations under the License.
 -->
 <script lang="ts">
+  import { isActiveMode, isArchivingMode, isRestoringMode, isUpgradingMode } from '@hcengineering/core'
   import { LoginInfo, Workspace } from '@hcengineering/login'
   import { OK, Severity, Status } from '@hcengineering/platform'
-  import presentation, { NavLink, isAdminUser, reduceCalls } from '@hcengineering/presentation'
+  import presentation, { NavLink, reduceCalls } from '@hcengineering/presentation'
+  import MessageBox from '@hcengineering/presentation/src/components/MessageBox.svelte'
   import {
     Button,
     Label,
     Scroller,
     SearchEdit,
+    Spinner,
     deviceOptionsStore as deviceInfo,
     setMetadataLocalStorage,
+    showPopup,
     ticker
   } from '@hcengineering/ui'
   import { onMount } from 'svelte'
   import login from '../plugin'
-  import { getAccount, getHref, getWorkspaces, goTo, navigateToWorkspace, selectWorkspace } from '../utils'
+  import { getAccount, getHref, getWorkspaces, goTo, navigateToWorkspace, selectWorkspace, unArchive } from '../utils'
   import StatusControl from './StatusControl.svelte'
 
   export let navigateUrl: string | undefined = undefined
@@ -44,7 +48,8 @@
     account = await getAccount()
   }
 
-  const updateWorkspaces = reduceCalls(async function updateWorkspaces (time: number): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const updateWorkspaces = reduceCalls(async function updateWorkspaces (_time: number): Promise<void> {
     try {
       workspaces = await getWorkspaces()
     } catch (e) {
@@ -52,7 +57,9 @@
     }
   })
 
-  $: if (flagToUpdateWorkspaces) updateWorkspaces($ticker)
+  $: if (flagToUpdateWorkspaces) {
+    void updateWorkspaces($ticker)
+  }
 
   onMount(() => {
     void loadAccount()
@@ -62,6 +69,29 @@
     status = new Status(Severity.INFO, login.status.ConnectingToServer, {})
 
     const [loginStatus, result] = await selectWorkspace(workspace)
+    if (isArchivingMode(result?.mode) && result?.workspaceId !== undefined) {
+      const workspaceId = result?.workspaceId
+      showPopup(MessageBox, {
+        label: login.string.SelectWorkspace,
+        message: login.string.WorkspaceArchivedDesc,
+        canSubmit: true,
+        params: {},
+        okLabel: login.string.RestoreArchivedWorkspace,
+        action: async () => {
+          if (await unArchive(workspaceId, result.token)) {
+            workspaces = await getWorkspaces()
+            let info = workspaces.filter((it) => it.workspaceId === workspaceId).shift()
+            while (isRestoringMode(info?.mode) || isUpgradingMode(info?.mode)) {
+              await new Promise<void>((resolve) => setTimeout(resolve, 5000))
+              workspaces = await getWorkspaces()
+              info = workspaces.filter((it) => it.workspaceId === workspaceId).shift()
+            }
+          }
+        }
+      })
+      status = loginStatus
+      return
+    }
     status = loginStatus
 
     navigateToWorkspace(workspace, result, navigateUrl)
@@ -87,27 +117,33 @@
       throw err
     }
   }
-  $: isAdmin = isAdminUser()
-
   let search: string = ''
 </script>
 
 <form class="container" style:padding={$deviceInfo.docWidth <= 480 ? '1.25rem' : '5rem'}>
   <div class="grow-separator" />
   <div class="fs-title">
-    {account?.email}
+    {#if account?.email}
+      {account.email}
+    {:else}
+      <Label label={login.string.LoadingAccount} />
+    {/if}
   </div>
   <div class="title"><Label label={login.string.SelectWorkspace} /></div>
   <div class="status">
     <StatusControl {status} />
   </div>
-  {#if isAdmin}
+  {#if workspaces.length > 10}
     <div class="ml-2 mr-2 mb-2 flex-grow">
       <SearchEdit bind:value={search} width={'100%'} />
     </div>
   {/if}
-  {#await _getWorkspaces() then}
-    <Scroller padding={'.125rem 0'}>
+  {#await _getWorkspaces()}
+    <div class="workspace-loader">
+      <Spinner />
+    </div>
+  {:then}
+    <Scroller padding={'.125rem 0'} maxHeight={35}>
       <div class="form">
         {#each workspaces
           .slice(0, 500)
@@ -123,30 +159,18 @@
             <div class="flex flex-col flex-grow">
               <span class="label overflow-label flex-center">
                 {wsName}
-                {#if workspace.mode === 'creating'}
+                {#if isArchivingMode(workspace.mode)}
+                  - <Label label={presentation.string.Archived} />
+                {/if}
+                {#if !isActiveMode(workspace.mode) && !isArchivingMode(workspace.mode)}
                   ({workspace.progress}%)
                 {/if}
               </span>
-              {#if isAdmin}
-                <span class="text-xs flex-row-center flex-center">
-                  {workspace.workspace}
-                  {#if workspace.region !== undefined}
-                    at ({workspace.region})
-                  {/if}
-                  <div class="text-sm">
-                    {#if workspace.backupInfo != null}
-                      {@const sz = workspace.backupInfo.dataSize + workspace.backupInfo.blobsSize}
-                      {@const szGb = Math.round((sz * 100) / 1024) / 100}
-                      {#if szGb > 0}
-                        - {Math.round((sz * 100) / 1024) / 100}Gb -
-                      {:else}
-                        - {Math.round(sz)}Mb -
-                      {/if}
-                    {/if}
-                    ({lastUsageDays} days)
-                  </div>
-                </span>
-              {/if}
+              <span class="text-xs flex-row-center flex-center">
+                <div class="text-sm">
+                  ({lastUsageDays} days)
+                </div>
+              </span>
             </div>
           </div>
         {/each}
@@ -166,7 +190,7 @@
     </Scroller>
     <div class="grow-separator" />
     <div class="footer">
-      {#if workspaces.length}
+      {#if workspaces.length > 0}
         <div>
           <span><Label label={login.string.WantAnotherWorkspace} /></span>
           <NavLink
@@ -203,6 +227,13 @@
     justify-content: space-between;
     flex-grow: 1;
     overflow: hidden;
+
+    .workspace-loader {
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
 
     .title {
       font-weight: 600;

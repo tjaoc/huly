@@ -24,18 +24,14 @@ import {
   DOMAIN_STATUS,
   DOMAIN_TRANSIENT,
   DOMAIN_TX,
-  systemAccountEmail,
-  type AttachedDoc,
-  type Class,
-  type Doc,
-  type IndexingConfiguration,
-  type TxCollectionCUD
+  systemAccountEmail
 } from '@hcengineering/core'
 import { type Builder } from '@hcengineering/model'
 import { TBenchmarkDoc } from './benchmark'
 import core from './component'
 import {
   TArrOf,
+  TAssociation,
   TAttachedDoc,
   TAttribute,
   TBlob,
@@ -44,7 +40,6 @@ import {
   TConfiguration,
   TConfigurationElement,
   TDoc,
-  TCard,
   TDocIndexState,
   TDomainIndexConfiguration,
   TEnum,
@@ -57,12 +52,13 @@ import {
   TObj,
   TPluginConfiguration,
   TRefTo,
+  TRelation,
+  TTransientConfiguration,
   TType,
   TTypeAny,
   TTypeBlob,
   TTypeBoolean,
   TTypeCollaborativeDoc,
-  TTypeCollaborativeDocVersion,
   TTypeDate,
   TTypeFileSize,
   TTypeHyperlink,
@@ -74,7 +70,8 @@ import {
   TTypeRelatedDocument,
   TTypeString,
   TTypeTimestamp,
-  TVersion
+  TVersion,
+  TSequence
 } from './core'
 import { definePermissions } from './permissions'
 import {
@@ -90,17 +87,7 @@ import {
 import { defineSpaceType } from './spaceType'
 import { TDomainStatusPlaceholder, TStatus, TStatusCategory } from './status'
 import { TUserStatus } from './transient'
-import {
-  TTx,
-  TTxApplyIf,
-  TTxCollectionCUD,
-  TTxCreateDoc,
-  TTxCUD,
-  TTxMixin,
-  TTxRemoveDoc,
-  TTxUpdateDoc,
-  TTxWorkspaceEvent
-} from './tx'
+import { TTx, TTxApplyIf, TTxCreateDoc, TTxCUD, TTxMixin, TTxRemoveDoc, TTxUpdateDoc, TTxWorkspaceEvent } from './tx'
 
 export { coreId, DOMAIN_SPACE } from '@hcengineering/core'
 export * from './core'
@@ -121,7 +108,6 @@ export function createModel (builder: Builder): void {
     TTxCUD,
     TTxCreateDoc,
     TAttachedDoc,
-    TTxCollectionCUD,
     TTxMixin,
     TTxUpdateDoc,
     TTxRemoveDoc,
@@ -140,7 +126,6 @@ export function createModel (builder: Builder): void {
     TEnumOf,
     TTypeMarkup,
     TTypeCollaborativeDoc,
-    TTypeCollaborativeDocVersion,
     TArrOf,
     TRefTo,
     TTypeDate,
@@ -161,19 +146,22 @@ export function createModel (builder: Builder): void {
     TEnum,
     TTypeAny,
     TTypeRelatedDocument,
-    TCard,
     TDocIndexState,
     TFullTextSearchContext,
     TConfiguration,
     TConfigurationElement,
     TIndexConfiguration,
     TStatus,
+    TSequence,
     TDomainStatusPlaceholder,
     TStatusCategory,
     TMigrationState,
     TBlob,
+    TRelation,
+    TAssociation,
     TDomainIndexConfiguration,
-    TBenchmarkDoc
+    TBenchmarkDoc,
+    TTransientConfiguration
   )
 
   builder.createDoc(
@@ -186,14 +174,6 @@ export function createModel (builder: Builder): void {
     core.account.System
   )
 
-  builder.mixin<Class<TxCollectionCUD<Doc, AttachedDoc>>, IndexingConfiguration<TxCollectionCUD<Doc, AttachedDoc>>>(
-    core.class.TxCollectionCUD,
-    core.class.Class,
-    core.mixin.IndexConfiguration,
-    {
-      indexes: ['tx.objectId', 'tx.operations.attachedTo']
-    }
-  )
   builder.createDoc(core.class.DomainIndexConfiguration, core.space.Model, {
     domain: DOMAIN_TX,
     disabled: [
@@ -293,16 +273,20 @@ export function createModel (builder: Builder): void {
     domain: DOMAIN_DOC_INDEX_STATE,
     indexes: [
       {
-        keys: { needIndex: 1 }
+        keys: { needIndex: 1, objectClass: 1 }
       }
     ],
     disabled: [
       { attachedToClass: 1 },
       { stages: 1 },
-      { generationId: 1 },
       { space: 1 },
       { _class: 1 },
+      { needIndex: 1 },
+      { objectClass: 1 },
+      { _class: 1 },
+      { attachedTo: 1 },
       { modifiedBy: 1 },
+      { modifiedOn: 1 },
       { createdBy: 1 },
       { createdBy: -1 },
       { createdOn: -1 }
@@ -316,4 +300,17 @@ export function createModel (builder: Builder): void {
 
   definePermissions(builder)
   defineSpaceType(builder)
+
+  builder.createDoc(core.class.FullTextSearchContext, core.space.Model, {
+    toClass: core.class.MigrationState,
+    forceIndex: false
+  })
+  builder.mixin(core.class.Configuration, core.class.Class, core.mixin.IndexConfiguration, {
+    indexes: [],
+    searchDisabled: true
+  })
+  builder.mixin(core.class.MigrationState, core.class.Class, core.mixin.IndexConfiguration, {
+    indexes: [],
+    searchDisabled: true
+  })
 }

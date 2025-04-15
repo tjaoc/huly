@@ -13,7 +13,7 @@
 // limitations under the License.
 -->
 <script lang="ts">
-  import core, { Ref, Blob } from '@hcengineering/core'
+  import core, { Configuration } from '@hcengineering/core'
   import {
     Breadcrumb,
     Header,
@@ -37,11 +37,21 @@
   import { createQuery, getClient, MessageBox } from '@hcengineering/presentation'
   import { WorkspaceSetting } from '@hcengineering/setting'
   import { AvatarType } from '@hcengineering/contact'
+  import settingsRes from '../plugin'
 
   let loading = true
   let isEditingName = false
   let oldName: string
   let name: string = ''
+
+  const disabledSet = ['\n', '<', '>', '/', '\\']
+
+  $: editNameDisabled =
+    isEditingName &&
+    (name.trim().length > 40 ||
+      name.trim() === oldName ||
+      name.trim() === '' ||
+      disabledSet.some((it) => name.includes(it)))
 
   void loadWorkspaceName()
 
@@ -70,8 +80,6 @@
     isEditingName = false
   }
 
-  $: editNameDisabled = isEditingName && (name.trim() === oldName || name.trim() === '')
-
   async function handleDelete (): Promise<void> {
     showPopup(MessageBox, {
       label: setting.string.DeleteWorkspace,
@@ -89,7 +97,7 @@
   let workspaceSettings: WorkspaceSetting | undefined = undefined
 
   const client = getClient()
-  client.findOne(setting.class.WorkspaceSetting, {}).then((r) => {
+  void client.findOne(setting.class.WorkspaceSetting, {}).then((r) => {
     workspaceSettings = r
   })
 
@@ -114,10 +122,43 @@
       icon: avatar.avatar
     })
   }
+
+  const permissionConfigurationQuery = createQuery()
+  let disablePermissionsConfiguration: Configuration | undefined = undefined
+  $: arePermissionsDisabled = disablePermissionsConfiguration?.enabled ?? false
+
+  $: permissionConfigurationQuery.query(
+    core.class.Configuration,
+    { _id: setting.ids.DisablePermissionsConfiguration },
+    (result) => {
+      disablePermissionsConfiguration = result[0]
+    }
+  )
+
+  function handleTogglePermissions (): void {
+    const newState = !arePermissionsDisabled
+    showPopup(MessageBox, {
+      label: newState ? settingsRes.string.DisablePermissions : settingsRes.string.EnablePermissions,
+      message: newState ? setting.string.DisablePermissionsConfirmation : setting.string.EnablePermissionsConfirmation,
+      dangerous: true,
+      action: async () => {
+        if (disablePermissionsConfiguration === undefined) {
+          await client.createDoc(
+            core.class.Configuration,
+            core.space.Workspace,
+            { enabled: newState },
+            setting.ids.DisablePermissionsConfiguration
+          )
+        } else {
+          await client.update(disablePermissionsConfiguration, { enabled: newState })
+        }
+      }
+    })
+  }
 </script>
 
 <div class="hulyComponent">
-  <Header>
+  <Header adaptive={'disabled'}>
     <Breadcrumb icon={setting.icon.Setting} label={setting.string.General} size={'large'} isCurrent />
   </Header>
   <div class="hulyComponent-content__column content">
@@ -158,8 +199,21 @@
               <Button icon={IconClose} kind="ghost" size="small" on:click={handleCancelEditName} />
             {/if}
           </div>
+          <div>
+            <Label label={setting.string.WorkspaceNamePattern} />
+          </div>
           <div class="delete mt-6">
             <Button icon={IconDelete} kind="dangerous" label={setting.string.DeleteWorkspace} on:click={handleDelete} />
+          </div>
+          <div class="title mt-6"><Label label={setting.string.Permissions} /></div>
+          <div class="delete">
+            <Button
+              kind="regular"
+              label={arePermissionsDisabled
+                ? settingsRes.string.EnablePermissions
+                : settingsRes.string.DisablePermissions}
+              on:click={handleTogglePermissions}
+            />
           </div>
         </div>
       </Scroller>

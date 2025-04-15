@@ -1,11 +1,11 @@
-import { saveCollaborativeDoc } from '@hcengineering/collaboration'
+import { saveCollabJson } from '@hcengineering/collaboration'
 import core, {
   AttachedDoc,
   Class,
-  CollaborativeDoc,
   Data,
   Doc,
   generateId,
+  makeCollabId,
   MeasureContext,
   Mixin,
   Ref,
@@ -15,9 +15,11 @@ import core, {
 } from '@hcengineering/core'
 import { ModelLogger } from '@hcengineering/model'
 import { makeRank } from '@hcengineering/rank'
+import { HulyFormatImporter, StorageFileUploader } from '@hcengineering/importer'
 import type { StorageAdapter } from '@hcengineering/server-core'
-import { jsonToYDocNoSchema, parseMessageMarkdown } from '@hcengineering/text'
+import { jsonToMarkup, parseMessageMarkdown } from '@hcengineering/text'
 import { v4 as uuid } from 'uuid'
+import path from 'path'
 
 const fieldRegexp = /\${\S+?}/
 
@@ -35,7 +37,7 @@ export type InitStep<T extends Doc> =
   | UpdateStep<T>
   | FindStep<T>
   | UploadStep
-
+  | ImportStep
 export interface CreateStep<T extends Doc> {
   type: 'create'
   _class: Ref<Class<T>>
@@ -82,6 +84,11 @@ export interface UploadStep {
   resultVariable?: string
 }
 
+export interface ImportStep {
+  type: 'import'
+  path: string
+}
+
 export type Props<T extends Doc> = Data<T> & Partial<Doc> & { space: Ref<Space> }
 
 export class WorkspaceInitializer {
@@ -93,7 +100,8 @@ export class WorkspaceInitializer {
     private readonly ctx: MeasureContext,
     private readonly storageAdapter: StorageAdapter,
     private readonly wsUrl: WorkspaceIdWithUrl,
-    private readonly client: TxOperations
+    private readonly client: TxOperations,
+    private readonly initRepoDir: string
   ) {}
 
   async processScript (
@@ -118,6 +126,8 @@ export class WorkspaceInitializer {
           await this.processFind(step, vars)
         } else if (step.type === 'upload') {
           await this.processUpload(step, vars, logger)
+        } else if (step.type === 'import') {
+          await this.processImport(step, vars, logger)
         }
 
         await progress(Math.round(((index + 1) * 100) / script.steps.length))
@@ -148,6 +158,18 @@ export class WorkspaceInitializer {
       }
     } catch (error) {
       logger.error('Upload failed', error)
+      throw error
+    }
+  }
+
+  private async processImport (step: ImportStep, vars: Record<string, any>, logger: ModelLogger): Promise<void> {
+    try {
+      const uploader = new StorageFileUploader(this.ctx, this.storageAdapter, this.wsUrl)
+      const initPath = path.resolve(this.initRepoDir, step.path)
+      const importer = new HulyFormatImporter(this.client, uploader, logger)
+      await importer.importFolder(initPath)
+    } catch (error) {
+      logger.error('Import failed', error)
       throw error
     }
   }
@@ -199,7 +221,7 @@ export class WorkspaceInitializer {
     if (step.collabFields !== undefined) {
       for (const field of step.collabFields) {
         if ((data as any)[field] !== undefined) {
-          const res = await this.createCollab((data as any)[field], field, _id)
+          const res = await this.createCollab((data as any)[field], step._class, _id, field)
           ;(data as any)[field] = res
         }
       }
@@ -265,15 +287,18 @@ export class WorkspaceInitializer {
     return data
   }
 
-  private async createCollab (data: string, field: string, _id: Ref<Doc>): Promise<string> {
-    const id = `${_id}%${field}`
-    const collabId = `${id}:HEAD:0` as CollaborativeDoc
+  private async createCollab (
+    data: string,
+    objectClass: Ref<Class<Doc>>,
+    objectId: Ref<Doc>,
+    objectAttr: string
+  ): Promise<string> {
+    const doc = makeCollabId(objectClass, objectId, objectAttr)
 
     const json = parseMessageMarkdown(data ?? '', this.imageUrl)
-    const yDoc = jsonToYDocNoSchema(json, field)
+    const markup = jsonToMarkup(json)
 
-    await saveCollaborativeDoc(this.storageAdapter, this.wsUrl, collabId, yDoc, this.ctx)
-    return collabId
+    return await saveCollabJson(this.ctx, this.storageAdapter, this.wsUrl, doc, markup)
   }
 
   private async fillProps<T extends Doc, P extends Partial<T> | Props<T>>(

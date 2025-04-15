@@ -14,18 +14,21 @@
 -->
 <script lang="ts">
   import contact from '@hcengineering/contact'
+  import { isArchivingMode } from '@hcengineering/core'
   import login, { Workspace } from '@hcengineering/login'
   import { getMetadata, getResource } from '@hcengineering/platform'
   import presentation, { decodeTokenPayload, isAdminUser } from '@hcengineering/presentation'
   import {
     Icon,
     IconCheck,
+    Label,
     Loading,
     Location,
     SearchEdit,
     closePopup,
     fetchMetadataLocalStorage,
     getCurrentLocation,
+    isSameSegments,
     locationStorageKeyId,
     locationToUrl,
     navigate,
@@ -55,11 +58,19 @@
       e.preventDefault()
       closePopup()
       closePopup()
-      if (ws !== getCurrentLocation().path[1]) {
-        const last = localStorage.getItem(`${locationStorageKeyId}_${ws}`)
-        if (last !== null) {
-          navigate(JSON.parse(last))
-        } else navigate({ path: [workbenchId, ws] })
+      const current = getCurrentLocation()
+      if (ws !== current.path[1]) {
+        let last: Location | undefined
+        try {
+          last = JSON.parse(localStorage.getItem(`${locationStorageKeyId}_${ws}`) ?? '')
+        } catch (err: any) {
+          // Ignore
+        }
+        if (last != null && isSameSegments(last, current, 2)) {
+          navigate(last)
+        } else {
+          navigate({ path: [workbenchId, ws] })
+        }
       }
     }
   }
@@ -145,7 +156,7 @@
         {/if}
       </div>
       <div class="p-2 ml-2 mb-4 select-text flex-col bordered">
-        {decodeTokenPayload(getMetadata(presentation.metadata.Token) ?? '').workspace}
+        {decodeTokenPayload(getMetadata(presentation.metadata.Token) ?? '').workspace ?? ''}
       </div>
     {/if}
     <div class="ap-scroll">
@@ -178,13 +189,21 @@
               <div class="flex-col flex-grow">
                 <span class="label overflow-label flex flex-grow flex-between">
                   {wsName}
-                  {#if ws.region != null && ws.region !== ''}
-                    - ({ws.region})
+                  {#if isArchivingMode(ws.mode)}
+                    - <Label label={presentation.string.Archived} />
+                  {/if}
+                  {#if isAdmin}
+                    {#if ws.region != null && ws.region !== ''}
+                      - ({ws.region})
+                    {/if}
                   {/if}
                   {#if isAdmin && ws.lastVisit != null && ws.lastVisit !== 0}
                     <div class="text-sm">
                       {#if ws.backupInfo != null}
-                        {@const sz = ws.backupInfo.dataSize + ws.backupInfo.blobsSize}
+                        {@const sz = Math.max(
+                          ws.backupInfo.backupSize,
+                          ws.backupInfo.dataSize + ws.backupInfo.blobsSize
+                        )}
                         {@const szGb = Math.round((sz * 100) / 1024) / 100}
                         {#if szGb > 0}
                           {Math.round((sz * 100) / 1024) / 100}Gb -

@@ -5,6 +5,7 @@
   import view, { Viewlet, ViewletPreference } from '@hcengineering/view'
   import core, { DocumentQuery, Ref, WithLookup } from '@hcengineering/core'
   import { createQuery } from '@hcengineering/presentation'
+  import { deepEqual } from 'fast-equals'
 
   export let viewlet: WithLookup<Viewlet> | undefined
   export let viewlets: Array<WithLookup<Viewlet>> = []
@@ -12,6 +13,7 @@
   export let preference: ViewletPreference | undefined = undefined
   export let loading = true
   export let hidden = false
+  export let ignoreFragment = false
 
   const query = createQuery()
 
@@ -29,11 +31,11 @@
     }
   )
 
-  let key = makeViewletKey()
+  let key = makeViewletKey(undefined, ignoreFragment)
 
   onDestroy(
     resolvedLocationStore.subscribe((loc) => {
-      key = makeViewletKey(loc)
+      key = makeViewletKey(loc, ignoreFragment)
     })
   )
 
@@ -48,7 +50,7 @@
   ) {
     if (viewlets == null || viewlets.length === 0) return
     const newViewlet = viewlets.find((viewlet) => viewlet?._id === activeViewlet[key]) ?? viewlets[0]
-    if (viewlet?._id !== newViewlet?._id) {
+    if (viewlet?._id !== newViewlet?._id || !deepEqual(viewlet.config, newViewlet.config)) {
       viewlet = newViewlet
       setActiveViewletId(newViewlet._id)
       dispatch('viewlet', viewlet)

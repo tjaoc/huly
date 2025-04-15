@@ -67,6 +67,7 @@ import {
   type ListItemPresenter,
   type ObjectEditor,
   type ObjectEditorFooter,
+  type ObjectPanelFooter,
   type ObjectEditorHeader,
   type ObjectFactory,
   type ObjectPanel,
@@ -88,6 +89,7 @@ import {
   type ViewletDescriptor,
   type ViewletPreference,
   type ObjectIdentifier,
+  type ReferenceObjectProvider,
   type ObjectIcon,
   type ObjectTooltip,
   type AttrPresenter,
@@ -216,6 +218,11 @@ export class TObjectEditorFooter extends TClass implements ObjectEditorFooter {
   editor!: AnyComponent
 }
 
+@Mixin(view.mixin.ObjectPanelFooter, core.class.Class)
+export class TObjectPanelFooter extends TClass implements ObjectPanelFooter {
+  editor!: AnyComponent
+}
+
 @Mixin(view.mixin.SpaceHeader, core.class.Class)
 export class TSpaceHeader extends TClass implements SpaceHeader {
   header!: AnyComponent
@@ -245,6 +252,11 @@ export class TObjectTitle extends TClass implements ObjectTitle {
 @Mixin(view.mixin.ObjectIdentifier, core.class.Class)
 export class TObjectIdentifier extends TClass implements ObjectIdentifier {
   provider!: Resource<<T extends Doc>(client: Client, ref: Ref<T>, doc?: T) => Promise<string>>
+}
+
+@Mixin(view.mixin.ReferenceObjectProvider, core.class.Class)
+export class TReferenceObjectProvider extends TClass implements ReferenceObjectProvider {
+  provider!: Resource<<T extends Doc>(client: Client, ref: Ref<T>, doc?: T) => Promise<Doc | undefined>>
 }
 
 @Mixin(view.mixin.ObjectTooltip, core.class.Class)
@@ -445,6 +457,7 @@ export function createModel (builder: Builder): void {
     TObjectTitle,
     TObjectEditorHeader,
     TObjectEditorFooter,
+    TObjectPanelFooter,
     TSpaceHeader,
     TSpaceName,
     TSpacePresenter,
@@ -458,6 +471,7 @@ export function createModel (builder: Builder): void {
     TAggregation,
     TGroupping,
     TObjectIdentifier,
+    TReferenceObjectProvider,
     TObjectTooltip,
     TObjectIcon,
     TAttrPresenter,
@@ -505,10 +519,6 @@ export function createModel (builder: Builder): void {
 
   builder.mixin(core.class.TypeCollaborativeDoc, core.class.Class, view.mixin.ActivityAttributePresenter, {
     presenter: view.component.MarkupDiffPresenter
-  })
-
-  builder.mixin(core.class.TypeCollaborativeDocVersion, core.class.Class, view.mixin.InlineAttributEditor, {
-    editor: view.component.CollaborativeDocEditor
   })
 
   classPresenter(builder, core.class.TypeBoolean, view.component.BooleanPresenter, view.component.BooleanEditor)
@@ -681,6 +691,25 @@ export function createModel (builder: Builder): void {
       visibilityTester: view.function.CanDeleteObject
     },
     view.action.Delete
+  )
+
+  createAction(
+    builder,
+    {
+      action: view.actionImpl.Delete,
+      actionProps: {
+        confirmation: view.string.RemoveRelationConfirmation
+      },
+      label: view.string.RemoveRelation,
+      icon: view.icon.Delete,
+      keyBinding: ['Meta + Backspace'],
+      category: view.category.General,
+      override: [view.action.Delete],
+      input: 'any',
+      target: core.class.Relation,
+      context: { mode: ['context', 'browser'], group: 'remove' }
+    },
+    view.action.RemoveRelation
   )
 
   createAction(
@@ -863,7 +892,7 @@ export function createModel (builder: Builder): void {
       category: view.category.GeneralNavigation,
       input: 'none',
       target: core.class.Doc,
-      allowedForEditableContent: true,
+      allowedForEditableContent: 'noSelection',
       context: {
         mode: ['workbench', 'browser', 'panel', 'editor', 'input']
       }
@@ -1208,6 +1237,10 @@ export function createModel (builder: Builder): void {
 
   builder.mixin(core.class.Space, core.class.Class, view.mixin.IgnoreActions, {
     actions: [view.action.Open, view.action.OpenInNewTab, view.action.Delete]
+  })
+  builder.mixin(view.class.FilteredView, core.class.Class, core.mixin.IndexConfiguration, {
+    indexes: [],
+    searchDisabled: true
   })
 }
 

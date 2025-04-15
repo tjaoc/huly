@@ -20,6 +20,7 @@ import {
 } from '@hcengineering/model'
 import { DOMAIN_PREFERENCE } from '@hcengineering/preference'
 import workbench from '@hcengineering/workbench'
+import core, { DOMAIN_TX } from '@hcengineering/core'
 
 import { workbenchId } from '.'
 
@@ -28,11 +29,22 @@ async function removeTabs (client: MigrationClient): Promise<void> {
 }
 
 export const workbenchOperation: MigrateOperation = {
-  async migrate (client: MigrationClient): Promise<void> {
-    await tryMigrate(client, workbenchId, [
+  async migrate (client: MigrationClient, mode): Promise<void> {
+    await tryMigrate(mode, client, workbenchId, [
       {
         state: 'remove-wrong-tabs-v1',
+        mode: 'upgrade',
         func: removeTabs
+      },
+      {
+        state: 'remove-txes-update-tabs-v1',
+        mode: 'upgrade',
+        func: async () => {
+          await client.deleteMany(DOMAIN_TX, {
+            objectClass: workbench.class.WorkbenchTab,
+            _class: core.class.TxUpdateDoc
+          })
+        }
       }
     ])
   },

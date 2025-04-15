@@ -1,9 +1,9 @@
 import {
   AccountRole,
-  DOMAIN_TX,
+  DOMAIN_MODEL_TX,
+  type Account,
   type Ref,
   type Space,
-  type Account,
   type TxCreateDoc,
   type TxUpdateDoc
 } from '@hcengineering/core'
@@ -13,30 +13,30 @@ import {
   tryMigrate,
   type MigrateOperation,
   type MigrationClient,
-  type MigrationUpgradeClient,
-  type ModelLogger
+  type MigrationUpgradeClient
 } from '@hcengineering/model'
 import core from '@hcengineering/model-core'
 import { GUEST_DOMAIN } from '.'
 
 export const guestOperation: MigrateOperation = {
-  async migrate (client: MigrationClient, logger: ModelLogger): Promise<void> {
-    await tryMigrate(client, guestId, [
+  async migrate (client: MigrationClient, mode): Promise<void> {
+    await tryMigrate(mode, client, guestId, [
       {
         state: 'migrateRoles',
+        mode: 'upgrade',
         func: async (client) => {
           const stateMap = {
             0: AccountRole.User,
             1: AccountRole.Maintainer,
             2: AccountRole.Owner
           }
-          const createTxes = await client.find<TxCreateDoc<Account>>(DOMAIN_TX, {
+          const createTxes = await client.find<TxCreateDoc<Account>>(DOMAIN_MODEL_TX, {
             _class: core.class.TxCreateDoc,
             'attributes.role': { $in: [0, 1, 2] }
           })
           for (const tx of createTxes) {
             await client.update(
-              DOMAIN_TX,
+              DOMAIN_MODEL_TX,
               {
                 _id: tx._id
               },
@@ -47,13 +47,13 @@ export const guestOperation: MigrateOperation = {
               }
             )
           }
-          const updateTxes = await client.find<TxUpdateDoc<Account>>(DOMAIN_TX, {
+          const updateTxes = await client.find<TxUpdateDoc<Account>>(DOMAIN_MODEL_TX, {
             _class: core.class.TxUpdateDoc,
             'operations.role': { $in: [0, 1, 2] }
           })
           for (const tx of updateTxes) {
             await client.update(
-              DOMAIN_TX,
+              DOMAIN_MODEL_TX,
               {
                 _id: tx._id
               },
@@ -68,6 +68,7 @@ export const guestOperation: MigrateOperation = {
       },
       {
         state: 'removeDeprecatedSpace',
+        mode: 'upgrade',
         func: async (client: MigrationClient) => {
           await migrateSpace(client, 'guest:space:Links' as Ref<Space>, core.space.Workspace, [GUEST_DOMAIN])
         }

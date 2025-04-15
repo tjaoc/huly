@@ -14,7 +14,7 @@
 //
 
 import contact, { Channel, formatName } from '@hcengineering/contact'
-import {
+import core, {
   Account,
   Class,
   concatLink,
@@ -40,6 +40,7 @@ import serverNotification, {
 import { getContentByTemplate } from '@hcengineering/server-notification-resources'
 import { getMetadata } from '@hcengineering/platform'
 import { ActivityMessage } from '@hcengineering/activity'
+import aiBot from '@hcengineering/ai-bot'
 
 /**
  * @public
@@ -65,26 +66,27 @@ export async function FindMessages (
 /**
  * @public
  */
-export async function OnMessageCreate (tx: Tx, control: TriggerControl): Promise<Tx[]> {
-  const res: Tx[] = []
+export async function OnMessageCreate (txes: Tx[], control: TriggerControl): Promise<Tx[]> {
+  const result: Tx[] = []
+  for (const tx of txes) {
+    const createTx = tx as TxCreateDoc<Message>
 
-  const createTx = tx as TxCreateDoc<Message>
+    const message = TxProcessor.createDoc2Doc<Message>(createTx)
 
-  const message = TxProcessor.createDoc2Doc<Message>(createTx)
-
-  const channel = (
-    await control.findAll(control.ctx, contact.class.Channel, { _id: message.attachedTo }, { limit: 1 })
-  )[0]
-  if (channel !== undefined) {
-    if (channel.lastMessage === undefined || channel.lastMessage < message.sendOn) {
-      const tx = control.txFactory.createTxUpdateDoc(channel._class, channel.space, channel._id, {
-        lastMessage: message.sendOn
-      })
-      res.push(tx)
+    const channel = (
+      await control.findAll(control.ctx, contact.class.Channel, { _id: message.attachedTo }, { limit: 1 })
+    )[0]
+    if (channel !== undefined) {
+      if (channel.lastMessage === undefined || channel.lastMessage < message.sendOn) {
+        const tx = control.txFactory.createTxUpdateDoc(channel._class, channel.space, channel._id, {
+          lastMessage: message.sendOn
+        })
+        result.push(tx)
+      }
     }
   }
 
-  return res
+  return result
 }
 
 /**
@@ -97,7 +99,7 @@ export function IsIncomingMessageTypeMatch (
   type: NotificationType,
   control: TriggerControl
 ): boolean {
-  const message = TxProcessor.createDoc2Doc(TxProcessor.extractTx(tx) as TxCreateDoc<Message>)
+  const message = TxProcessor.createDoc2Doc(tx as TxCreateDoc<Message>)
   return message.incoming && message.sendOn > (doc.createdOn ?? doc.modifiedOn)
 }
 
@@ -109,15 +111,18 @@ export async function sendEmailNotification (
   receiver: string
 ): Promise<void> {
   try {
-    const sesURL = getMetadata(serverNotification.metadata.SesUrl)
-    if (sesURL === undefined || sesURL === '') {
+    const mailURL = getMetadata(serverNotification.metadata.MailUrl)
+    if (mailURL === undefined || mailURL === '') {
       ctx.error('Please provide email service url to enable email notifications.')
       return
     }
-    await fetch(concatLink(sesURL, '/send'), {
+    const mailAuth: string | undefined = getMetadata(serverNotification.metadata.MailAuthToken)
+    const response = await fetch(concatLink(mailURL, '/send'), {
       method: 'post',
+      keepalive: true,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...(mailAuth != null ? { Authorization: `Bearer ${mailAuth}` } : {})
       },
       body: JSON.stringify({
         text,
@@ -126,6 +131,9 @@ export async function sendEmailNotification (
         to: [receiver]
       })
     })
+    if (!response.ok) {
+      ctx.error(`Failed to send email notification: ${response.statusText}`)
+    }
   } catch (err) {
     ctx.error('Could not send email notification', { err, receiver })
   }
@@ -168,7 +176,11 @@ const SendEmailNotifications: NotificationProviderFunc = async (
     return []
   }
 
-  if (!receiver.person.active) {
+  if (
+    !receiver.person.active ||
+    receiver.account._id === core.account.System ||
+    receiver.account._id === aiBot.account.AIBot
+  ) {
     return []
   }
 

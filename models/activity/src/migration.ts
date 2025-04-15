@@ -14,6 +14,7 @@
 //
 
 import { type ActivityMessage, type DocUpdateMessage, type Reaction } from '@hcengineering/activity'
+import contact from '@hcengineering/contact'
 import core, { type Class, type Doc, type Domain, groupByArray, type Ref, type Space } from '@hcengineering/core'
 import {
   type MigrateOperation,
@@ -25,10 +26,8 @@ import {
   tryMigrate
 } from '@hcengineering/model'
 import { htmlToMarkup } from '@hcengineering/text'
-import contact from '@hcengineering/contact'
-
+import { activityId, DOMAIN_ACTIVITY, DOMAIN_REACTION, DOMAIN_USER_MENTION } from './index'
 import activity from './plugin'
-import { activityId, DOMAIN_ACTIVITY } from './index'
 
 const DOMAIN_CHUNTER = 'chunter' as Domain
 
@@ -183,18 +182,21 @@ async function migrateActivityMarkup (client: MigrationClient): Promise<void> {
 }
 
 export const activityOperation: MigrateOperation = {
-  async migrate (client: MigrationClient): Promise<void> {
-    await tryMigrate(client, activityId, [
+  async migrate (client: MigrationClient, mode): Promise<void> {
+    await tryMigrate(mode, client, activityId, [
       {
         state: 'reactions',
+        mode: 'upgrade',
         func: migrateReactions
       },
       {
         state: 'markup',
+        mode: 'upgrade',
         func: migrateMarkup
       },
       {
         state: 'migrate-doc-update-messages-space',
+        mode: 'upgrade',
         func: async (client) => {
           await migrateMessagesSpace(
             client,
@@ -206,6 +208,7 @@ export const activityOperation: MigrateOperation = {
       },
       {
         state: 'migrate-employee-space-v1',
+        mode: 'upgrade',
         func: async () => {
           await client.update<ActivityMessage>(
             DOMAIN_ACTIVITY,
@@ -216,12 +219,15 @@ export const activityOperation: MigrateOperation = {
       },
       {
         state: 'migrate-activity-markup',
+        mode: 'upgrade',
         func: migrateActivityMarkup
       },
       {
-        state: 'fix-rename-backups',
+        state: 'move-reactions',
+        mode: 'upgrade',
         func: async (client: MigrationClient): Promise<void> => {
-          await client.update(DOMAIN_ACTIVITY, { '%hash%': { $exists: true } }, { $set: { '%hash%': null } })
+          await client.move(DOMAIN_ACTIVITY, { _class: activity.class.Reaction }, DOMAIN_REACTION)
+          await client.move(DOMAIN_ACTIVITY, { _class: activity.class.UserMentionInfo }, DOMAIN_USER_MENTION)
         }
       }
     ])

@@ -14,9 +14,9 @@
 //
 
 import { Analytics } from '@hcengineering/analytics'
-import { AccountRole, concatLink, type Doc, type Ref } from '@hcengineering/core'
+import { AccountRole, concatLink, type BaseWorkspaceInfo, type Doc, type Ref } from '@hcengineering/core'
 import { loginId, type LoginInfo, type OtpInfo, type Workspace, type WorkspaceLoginInfo } from '@hcengineering/login'
-import {
+import platform, {
   OK,
   PlatformError,
   Severity,
@@ -27,10 +27,11 @@ import {
   unknownError,
   unknownStatus
 } from '@hcengineering/platform'
-import presentation from '@hcengineering/presentation'
+import presentation, { isAdminUser } from '@hcengineering/presentation'
 import {
   fetchMetadataLocalStorage,
   getCurrentLocation,
+  isSameSegments,
   locationStorageKeyId,
   locationToUrl,
   navigate,
@@ -208,13 +209,14 @@ export async function createWorkspace (
   }
 }
 
-function getLastVisitDays (it: Workspace): number {
+function getLastVisitDays (it: Pick<Workspace, 'lastVisit'>): number {
   return Math.floor((Date.now() - it.lastVisit) / (1000 * 3600 * 24))
 }
-function getWorkspaceSize (it: Workspace): number {
+function getWorkspaceSize (it: Pick<Workspace, 'backupInfo'>): number {
   let sz = 0
   sz += it.backupInfo?.dataSize ?? 0
   sz += it.backupInfo?.blobsSize ?? 0
+  sz += it.backupInfo?.backupSize ?? 0
   return sz
 }
 
@@ -264,7 +266,108 @@ export async function getWorkspaces (): Promise<Workspace[]> {
     })
 
     return workspaces
-  } catch (err) {
+  } catch (err: any) {
+    return []
+  }
+}
+
+// performWorkspaceOperation
+
+export async function performWorkspaceOperation (
+  workspace: string | string[],
+  operation: 'archive' | 'migrate-to' | 'unarchive' | 'delete',
+  ...params: any[]
+): Promise<boolean> {
+  const accountsUrl = getMetadata(login.metadata.AccountsUrl)
+
+  if (accountsUrl === undefined) {
+    throw new Error('accounts url not specified')
+  }
+
+  if (!isAdminUser()) {
+    throw new PlatformError(unknownError('Non admin user'))
+  }
+
+  const token = getMetadata(presentation.metadata.Token)
+  if (token === undefined) {
+    const loc = getCurrentLocation()
+    loc.path[1] = 'login'
+    loc.path.length = 2
+    navigate(loc)
+    return true
+  }
+
+  const request = {
+    method: 'performWorkspaceOperation',
+    params: [workspace, operation, ...params] as any[]
+  }
+
+  try {
+    const response = await fetch(accountsUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(request)
+    })
+    const result = await response.json()
+    if (result.error != null) {
+      throw new PlatformError(result.error)
+    }
+    return (result.result as boolean) ?? false
+  } catch (err: any) {
+    return false
+  }
+}
+
+export async function getAllWorkspaces (): Promise<BaseWorkspaceInfo[]> {
+  const accountsUrl = getMetadata(login.metadata.AccountsUrl)
+
+  if (accountsUrl === undefined) {
+    throw new Error('accounts url not specified')
+  }
+
+  const token = getMetadata(presentation.metadata.Token)
+  if (token === undefined) {
+    const loc = getCurrentLocation()
+    loc.path[1] = 'login'
+    loc.path.length = 2
+    navigate(loc)
+    return []
+  }
+
+  const request = {
+    method: 'getAllWorkspaces',
+    params: [] as any[]
+  }
+
+  try {
+    const response = await fetch(accountsUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(request)
+    })
+    const result = await response.json()
+    if (result.error != null) {
+      throw new PlatformError(result.error)
+    }
+    const workspaces: BaseWorkspaceInfo[] = result.result
+
+    workspaces.sort((a, b) => {
+      const adays = getLastVisitDays(a)
+      const bdays = getLastVisitDays(b)
+      if (adays === bdays) {
+        return getWorkspaceSize(b) - getWorkspaceSize(a)
+      }
+      return b.lastVisit - a.lastVisit
+    })
+
+    return workspaces
+  } catch (err: any) {
     return []
   }
 }
@@ -307,6 +410,20 @@ export async function getAccount (doNavigate: boolean = true): Promise<LoginInfo
     }
     return result.result
   } catch (err: any) {
+    if (err instanceof PlatformError && err.status.code === platform.status.Unauthorized) {
+      setMetadata(presentation.metadata.Token, null)
+      setMetadata(presentation.metadata.Workspace, null)
+      setMetadata(presentation.metadata.WorkspaceId, null)
+      setMetadataLocalStorage(login.metadata.LastToken, null)
+      setMetadataLocalStorage(login.metadata.LoginEndpoint, null)
+      setMetadataLocalStorage(login.metadata.LoginEmail, null)
+
+      const loc = getCurrentLocation()
+      loc.path[1] = 'login'
+      loc.path.length = 2
+      navigate(loc)
+      return
+    }
     Analytics.handleError(err)
   }
 }
@@ -447,6 +564,38 @@ export async function fetchWorkspace (workspace: string): Promise<[Status, Works
     return [unknownError(err), undefined]
   }
 }
+
+export async function unArchive (workspaceId: string, token: string): Promise<boolean> {
+  const accountsUrl = getMetadata(login.metadata.AccountsUrl)
+
+  if (accountsUrl === undefined) {
+    throw new Error('accounts url not specified')
+  }
+
+  if (token === undefined) {
+    return false
+  }
+
+  const request = {
+    method: 'performWorkspaceOperation',
+    params: [workspaceId, 'unarchive']
+  }
+
+  try {
+    const response = await fetch(accountsUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(request)
+    })
+    return (await response.json()).result
+  } catch (err: any) {
+    Analytics.handleError(err)
+    return false
+  }
+}
 export async function createMissingEmployee (workspace: string): Promise<[Status]> {
   const accountsUrl = getMetadata(login.metadata.AccountsUrl)
 
@@ -524,11 +673,18 @@ export function navigateToWorkspace (
       // Json parse error could be ignored
     }
   }
-  const last = localStorage.getItem(`${locationStorageKeyId}_${workspace}`)
-  if (last !== null) {
-    navigate(JSON.parse(last), replace)
+  const newLoc: Location = { path: [workbenchId, workspace] }
+  let last: Location | undefined
+  try {
+    last = JSON.parse(localStorage.getItem(`${locationStorageKeyId}_${workspace}`) ?? '')
+  } catch (err: any) {
+    // Ignore
+  }
+  if (last != null && isSameSegments(last, newLoc, 2)) {
+    // If last location in our workspace path, use it.
+    navigate(last, replace)
   } else {
-    navigate({ path: [workbenchId, workspace] }, replace)
+    navigate(newLoc, replace)
   }
 }
 
@@ -832,6 +988,32 @@ export async function sendInvite (email: string, personId?: Ref<Doc>, role?: Acc
   })
 }
 
+export async function resendInvite (email: string): Promise<void> {
+  const accountsUrl = getMetadata(login.metadata.AccountsUrl)
+
+  if (accountsUrl === undefined) {
+    throw new Error('accounts url not specified')
+  }
+
+  const token = getMetadata(presentation.metadata.Token) as string
+
+  const params = [email]
+
+  const request = {
+    method: 'resendInvite',
+    params
+  }
+
+  await fetch(accountsUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(request)
+  })
+}
+
 export async function requestPassword (email: string): Promise<Status> {
   const accountsUrl = getMetadata(login.metadata.AccountsUrl)
 
@@ -931,6 +1113,14 @@ export async function restorePassword (token: string, password: string): Promise
 }
 
 async function handleStatusError (message: string, err: Status): Promise<void> {
+  if (
+    err.code === platform.status.InvalidPassword ||
+    err.code === platform.status.AccountNotFound ||
+    err.code === platform.status.InvalidOtp
+  ) {
+    // No need to send to analytics
+    return
+  }
   const label = await translate(err.code, err.params, 'en')
   Analytics.handleError(new Error(`${message}: ${label}`))
 }

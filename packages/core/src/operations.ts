@@ -123,7 +123,7 @@ export class TxOperations implements Omit<Client, 'notify'> {
       modifiedBy
     )
     await this.tx(tx)
-    return tx.tx.objectId as unknown as Ref<P>
+    return tx.objectId as unknown as Ref<P>
   }
 
   async updateCollection<T extends Doc, P extends AttachedDoc>(
@@ -148,7 +148,7 @@ export class TxOperations implements Omit<Client, 'notify'> {
       modifiedBy
     )
     await this.tx(tx)
-    return tx.objectId
+    return attachedTo
   }
 
   async removeCollection<T extends Doc, P extends AttachedDoc>(
@@ -171,7 +171,7 @@ export class TxOperations implements Omit<Client, 'notify'> {
       modifiedBy
     )
     await this.tx(tx)
-    return tx.objectId
+    return attachedTo
   }
 
   updateDoc<T extends Doc>(
@@ -252,7 +252,7 @@ export class TxOperations implements Omit<Client, 'notify'> {
     if (hierarchy.isMixin(mixClass)) {
       const baseClass = hierarchy.getBaseClass(doc._class)
 
-      const byClass = this.splitMixinUpdate(update, mixClass, baseClass)
+      const byClass = splitMixinUpdate(hierarchy, update, mixClass, baseClass)
       const ops = this.apply(doc._id)
       for (const it of byClass) {
         if (hierarchy.isMixin(it[0])) {
@@ -313,8 +313,8 @@ export class TxOperations implements Omit<Client, 'notify'> {
     return this.removeDoc(doc._class, doc.space, doc._id)
   }
 
-  apply (scope?: string, measure?: string): ApplyOperations {
-    return new ApplyOperations(this, scope, measure, this.isDerived)
+  apply (scope?: string, measure?: string, derived?: boolean): ApplyOperations {
+    return new ApplyOperations(this, scope, measure, derived ?? this.isDerived)
   }
 
   async diffUpdate<T extends Doc = Doc>(
@@ -323,17 +323,7 @@ export class TxOperations implements Omit<Client, 'notify'> {
     date?: Timestamp,
     account?: Ref<Account>
   ): Promise<T> {
-    // We need to update fields if they are different.
-    const documentUpdate: DocumentUpdate<T> = {}
-    for (const [k, v] of Object.entries(update)) {
-      if (['_class', '_id', 'modifiedBy', 'modifiedOn', 'space', 'attachedTo', 'attachedToClass'].includes(k)) {
-        continue
-      }
-      const dv = (doc as any)[k]
-      if (!deepEqual(dv, v) && v !== undefined) {
-        ;(documentUpdate as any)[k] = v
-      }
-    }
+    const documentUpdate = getDiffUpdate(doc, update)
     if (Object.keys(documentUpdate).length > 0) {
       await this.update(doc, documentUpdate, false, date ?? Date.now(), account)
       TxProcessor.applyUpdate(doc, documentUpdate)
@@ -372,56 +362,71 @@ export class TxOperations implements Omit<Client, 'notify'> {
     }
     return doc
   }
+}
 
-  private splitMixinUpdate<T extends Doc>(
-    update: DocumentUpdate<T>,
-    mixClass: Ref<Class<T>>,
-    baseClass: Ref<Class<T>>
-  ): Map<Ref<Class<Doc>>, DocumentUpdate<T>> {
-    const hierarchy = this.getHierarchy()
-    const attributes = hierarchy.getAllAttributes(mixClass)
-
-    const updateAttrs = Object.fromEntries(
-      Object.entries(update).filter((it) => !it[0].startsWith('$'))
-    ) as DocumentUpdate<T>
-    const updateOps = Object.fromEntries(
-      Object.entries(update).filter((it) => it[0].startsWith('$'))
-    ) as DocumentUpdate<T>
-
-    const result: Map<Ref<Class<Doc>>, DocumentUpdate<T>> = this.splitObjectAttributes(
-      updateAttrs,
-      baseClass,
-      attributes
-    )
-
-    for (const [key, value] of Object.entries(updateOps)) {
-      const updates = this.splitObjectAttributes(value as object, baseClass, attributes)
-
-      for (const [opsClass, opsUpdate] of updates) {
-        const upd: DocumentUpdate<T> = result.get(opsClass) ?? {}
-        result.set(opsClass, { ...upd, [key]: opsUpdate })
-      }
+export function getDiffUpdate<T extends Doc> (doc: T, update: T | Data<T> | DocumentUpdate<T>): DocumentUpdate<T> {
+  // We need to update fields if they are different.
+  const documentUpdate: DocumentUpdate<T> = {}
+  for (const [k, v] of Object.entries(update)) {
+    if (['_class', '_id', 'modifiedBy', 'modifiedOn', 'space', 'attachedTo', 'attachedToClass'].includes(k)) {
+      continue
     }
+    const dv = (doc as any)[k]
+    if (!deepEqual(dv, v) && v !== undefined) {
+      ;(documentUpdate as any)[k] = v
+    }
+  }
+  return documentUpdate
+}
 
-    return result
+export function splitMixinUpdate<T extends Doc> (
+  hierarchy: Hierarchy,
+  update: DocumentUpdate<T>,
+  mixClass: Ref<Class<T>>,
+  baseClass: Ref<Class<T>>
+): Map<Ref<Class<Doc>>, DocumentUpdate<T>> {
+  const attributes = hierarchy.getAllAttributes(mixClass)
+
+  const updateAttrs = Object.fromEntries(
+    Object.entries(update).filter((it) => !it[0].startsWith('$'))
+  ) as DocumentUpdate<T>
+  const updateOps = Object.fromEntries(
+    Object.entries(update).filter((it) => it[0].startsWith('$'))
+  ) as DocumentUpdate<T>
+
+  const result: Map<Ref<Class<Doc>>, DocumentUpdate<T>> = splitObjectAttributes(
+    hierarchy,
+    updateAttrs,
+    baseClass,
+    attributes
+  )
+
+  for (const [key, value] of Object.entries(updateOps)) {
+    const updates = splitObjectAttributes(hierarchy, value as object, baseClass, attributes)
+
+    for (const [opsClass, opsUpdate] of updates) {
+      const upd: DocumentUpdate<T> = result.get(opsClass) ?? {}
+      result.set(opsClass, { ...upd, [key]: opsUpdate })
+    }
   }
 
-  private splitObjectAttributes<T extends object>(
-    obj: T,
-    objClass: Ref<Class<Doc>>,
-    attributes: Map<string, AnyAttribute>
-  ): Map<Ref<Class<Doc>>, object> {
-    const hierarchy = this.getHierarchy()
+  return result
+}
 
-    const result = new Map<Ref<Class<Doc>>, any>()
-    for (const [key, value] of Object.entries(obj)) {
-      const attributeOf = attributes.get(key)?.attributeOf
-      const clazz = attributeOf !== undefined && hierarchy.isMixin(attributeOf) ? attributeOf : objClass
-      result.set(clazz, { ...(result.get(clazz) ?? {}), [key]: value })
-    }
-
-    return result
+function splitObjectAttributes<T extends object> (
+  hierarchy: Hierarchy,
+  obj: T,
+  objClass: Ref<Class<Doc>>,
+  attributes: Map<string, AnyAttribute>
+): Map<Ref<Class<Doc>>, object> {
+  const result = new Map<Ref<Class<Doc>>, any>()
+  for (const [key, value] of Object.entries(obj)) {
+    const attributeOf = attributes.get(key)?.attributeOf
+    const clazz = attributeOf !== undefined && hierarchy.isMixin(attributeOf) ? attributeOf : objClass
+    result.set(clazz, { ...(result.get(clazz) ?? {}), [key]: value })
   }
+
+  return result
 }
 
 export interface CommitResult {

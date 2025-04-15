@@ -17,10 +17,10 @@
   import { getBlobRef, sizeToWidth } from '@hcengineering/presentation'
   import { IconSize } from '@hcengineering/ui'
 
-  import type { WithLookup } from '@hcengineering/core'
+  import type { BlobType, WithLookup } from '@hcengineering/core'
   import { AttachmentImageSize } from '../types'
 
-  export let value: WithLookup<Attachment>
+  export let value: WithLookup<Attachment> | BlobType
   export let size: AttachmentImageSize = 'auto'
 
   interface Dimensions {
@@ -42,8 +42,8 @@
   $: dimensions = getDimensions(value, size)
   $: urlSize = getUrlSize(size)
 
-  function getDimensions (value: Attachment, size: AttachmentImageSize): Dimensions {
-    if (size === 'auto') {
+  function getDimensions (value: Attachment | BlobType, size: AttachmentImageSize): Dimensions {
+    if (size === 'auto' || size == null) {
       return {
         width: 'auto',
         height: 'auto',

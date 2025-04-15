@@ -95,9 +95,11 @@ export { githubId } from '@hcengineering/github'
 export { githubOperation, githubOperationPreTime } from './migration'
 export { default } from './plugin'
 export const DOMAIN_GITHUB = 'github' as Domain
+export const DOMAIN_GITHUB_SYNC = 'github_sync' as Domain
+export const DOMAIN_GITHUB_USER = 'github_user' as Domain
 export const DOMAIN_GITHUB_COMMENTS = 'github_comments' as Domain
 
-@Model(github.class.DocSyncInfo, core.class.Doc, DOMAIN_GITHUB)
+@Model(github.class.DocSyncInfo, core.class.Doc, DOMAIN_GITHUB_SYNC)
 export class TDocSyncInfo extends TDoc implements DocSyncInfo {
   // _id === objectId
   @Prop(TypeNumber(), getEmbeddedLabel('Github number'))
@@ -152,7 +154,7 @@ export class TDocSyncInfo extends TDoc implements DocSyncInfo {
     deleted!: boolean
 }
 
-@Model(github.class.GithubUserInfo, core.class.Doc, DOMAIN_GITHUB)
+@Model(github.class.GithubUserInfo, core.class.Doc, DOMAIN_GITHUB_USER)
 export class TGithubUserInfo extends TDoc implements GithubUserInfo {
   @Prop(TypeString(), getEmbeddedLabel('ID'))
   @ReadOnly()
@@ -432,18 +434,20 @@ export class TGithubComponent extends TComponent implements GithubComponent {
 }
 
 @Mixin(github.mixin.GithubMilestone, tracker.class.Milestone)
-@UX(github.string.GithubIssue)
+@UX(github.string.GithubMilestone)
 export class TGithubMilestone extends TMilestone implements GithubMilestone {
-  @Prop(TypeHyperlink(), getEmbeddedLabel('Github URL'))
+  @Prop(TypeHyperlink(), getEmbeddedLabel('Github Project URL'))
   @Index(IndexKind.FullText)
   @ReadOnly()
     url!: Hyperlink
 
   @Prop(TypeString(), getEmbeddedLabel('NodeID'))
+  @Hidden()
   @ReadOnly()
     projectNodeId!: string
 
   @Prop(TypeNumber(), getEmbeddedLabel('Number'))
+  @Hidden()
   @ReadOnly()
     projectNumber!: number
 
@@ -912,23 +916,26 @@ export function createModel (builder: Builder): void {
     actions: [view.action.Delete, task.action.Move, tracker.action.MoveToProject]
   })
 
-  builder.createDoc(presentation.class.DocRules, core.space.Model, {
-    ofClass: tracker.class.Issue,
-    fieldRules: [
-      {
-        field: 'assignee',
-        query: {},
-        mixin: github.mixin.GithubIssue,
-        fieldQuery: {
-          [github.mixin.GithubUser + '.url']: { $exists: true }
-        },
-        fieldQueryFill: {},
-        allowConflict: false,
-        disableUnset: true,
-        disableEdit: true
-      }
-    ]
-  })
+  // TODO: Need rework this functionality, for now we need to allow set any user,
+  // and github integration will skip change of field if value is not have a proper mixin instead.
+
+  // builder.createDoc(presentation.class.DocRules, core.space.Model, {
+  //   ofClass: tracker.class.Issue,
+  //   fieldRules: [
+  //     {
+  //       field: 'assignee',
+  //       query: {},
+  //       mixin: github.mixin.GithubIssue,
+  //       fieldQuery: {
+  //         [github.mixin.GithubUser + '.url']: { $exists: true }
+  //       },
+  //       fieldQueryFill: {},
+  //       allowConflict: false,
+  //       disableUnset: true,
+  //       disableEdit: true
+  //     }
+  //   ]
+  // })
 
   builder.mixin(github.class.DocSyncInfo, core.class.Class, core.mixin.IndexConfiguration, {
     indexes: [],
@@ -949,7 +956,7 @@ export function createModel (builder: Builder): void {
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: github.class.GithubPullRequest,
     components: {
-      input: chunter.component.ChatMessageInput
+      input: { component: chunter.component.ChatMessageInput }
     }
   })
 

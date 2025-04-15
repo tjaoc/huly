@@ -16,11 +16,10 @@
 import { getAccountDB, listWorkspacesRaw } from '@hcengineering/account'
 import calendar from '@hcengineering/calendar'
 import chunter, { type ChatMessage } from '@hcengineering/chunter'
-import { loadCollaborativeDoc, saveCollaborativeDoc, yDocToBuffer } from '@hcengineering/collaboration'
+import { loadCollabYdoc, saveCollabYdoc, yDocToBuffer } from '@hcengineering/collaboration'
 import contact from '@hcengineering/contact'
 import core, {
   type ArrOf,
-  type AttachedDoc,
   type BackupClient,
   type Class,
   ClassifierKind,
@@ -47,7 +46,6 @@ import core, {
   type StatusCategory,
   type Tx,
   type TxCUD,
-  type TxCollectionCUD,
   type TxCreateDoc,
   type TxMixin,
   TxOperations,
@@ -58,6 +56,7 @@ import core, {
   generateId,
   getObjectValue,
   getWorkspaceId,
+  makeDocCollabId,
   systemAccountEmail,
   toIdMap,
   updateAttribute
@@ -73,7 +72,7 @@ import { generateToken } from '@hcengineering/server-token'
 import { connect } from '@hcengineering/server-tool'
 import tags, { type TagCategory, type TagElement, type TagReference } from '@hcengineering/tags'
 import task, { type ProjectType, type Task, type TaskType } from '@hcengineering/task'
-import { updateYDocContent } from '@hcengineering/text'
+import { updateYDocContent } from '@hcengineering/text-ydoc'
 import tracker from '@hcengineering/tracker'
 import { deepEqual } from 'fast-equals'
 import { type Db } from 'mongodb'
@@ -83,7 +82,6 @@ export async function cleanWorkspace (
   mongoUrl: string,
   workspaceId: WorkspaceId,
   storageAdapter: StorageAdapter,
-  elasticUrl: string,
   transactorUrl: string,
   opt: { recruit: boolean, tracker: boolean, removedTx: boolean }
 ): Promise<void> {
@@ -158,16 +156,6 @@ export async function cleanWorkspace (
               await db.collection(DOMAIN_TX).deleteMany({ objectId: (tx as TxRemoveDoc<Doc>).objectId })
               processed++
             }
-            if (
-              tx._class === core.class.TxCollectionCUD &&
-              (tx as TxCollectionCUD<Doc, AttachedDoc>).tx._class === core.class.TxRemoveDoc
-            ) {
-              // We need to remove all update and create operations for document
-              await db.collection(DOMAIN_TX).deleteMany({
-                'tx.objectId': ((tx as TxCollectionCUD<Doc, AttachedDoc>).tx as TxRemoveDoc<Doc>).objectId
-              })
-              processed++
-            }
           }
           if (processed % 1000 === 0) {
             console.log('processed', processed)
@@ -219,18 +207,13 @@ export async function cleanRemovedTransactions (workspaceId: WorkspaceId, transa
   try {
     let count = 0
     while (true) {
-      const removedDocs = await connection.findAll(
-        core.class.TxCollectionCUD,
-        { 'tx._class': core.class.TxRemoveDoc },
-        { limit: 1000 }
-      )
+      const removedDocs = await connection.findAll(core.class.TxRemoveDoc, {}, { limit: 1000 })
       if (removedDocs.length === 0) {
         break
       }
 
-      const toRemove = await connection.findAll(core.class.TxCollectionCUD, {
-        'tx._class': { $in: [core.class.TxCreateDoc, core.class.TxRemoveDoc, core.class.TxUpdateDoc] },
-        'tx.objectId': { $in: removedDocs.map((it) => it.tx.objectId) }
+      const toRemove = await connection.findAll(core.class.TxCUD, {
+        objectId: { $in: removedDocs.map((it) => it.objectId) }
       })
       await connection.clean(
         DOMAIN_TX,
@@ -368,20 +351,18 @@ export async function fixCommentDoubleIdCreate (workspaceId: WorkspaceId, transa
     mode: 'backup'
   })) as unknown as CoreClient & BackupClient
   try {
-    const commentTxes = await connection.findAll(core.class.TxCollectionCUD, {
-      'tx._class': core.class.TxCreateDoc,
-      'tx.objectClass': chunter.class.ChatMessage
+    const commentTxes = await connection.findAll(core.class.TxCreateDoc, {
+      objectClass: chunter.class.ChatMessage
     })
-    const commentTxesRemoved = await connection.findAll(core.class.TxCollectionCUD, {
-      'tx._class': core.class.TxRemoveDoc,
-      'tx.objectClass': chunter.class.ChatMessage
+    const commentTxesRemoved = await connection.findAll(core.class.TxRemoveDoc, {
+      objectClass: chunter.class.ChatMessage
     })
-    const removed = new Map(commentTxesRemoved.map((it) => [it.tx.objectId, it]))
+    const removed = new Map(commentTxesRemoved.map((it) => [it.objectId, it]))
     // Do not checked removed
     const objSet = new Set<Ref<Doc>>()
     const oldValue = new Map<Ref<Doc>, string>()
     for (const c of commentTxes) {
-      const cid = c.tx.objectId
+      const cid = c.objectId
       if (removed.has(cid)) {
         continue
       }
@@ -389,7 +370,7 @@ export async function fixCommentDoubleIdCreate (workspaceId: WorkspaceId, transa
       objSet.add(cid)
       if (has) {
         // We have found duplicate one, let's rename it.
-        const doc = TxProcessor.createDoc2Doc<ChatMessage>(c.tx as unknown as TxCreateDoc<ChatMessage>)
+        const doc = TxProcessor.createDoc2Doc<ChatMessage>(c as unknown as TxCreateDoc<ChatMessage>)
         if (doc.message !== '' && doc.message.trim() !== '<p></p>') {
           await connection.clean(DOMAIN_TX, [c._id])
           if (oldValue.get(cid) === doc.message.trim()) {
@@ -398,8 +379,8 @@ export async function fixCommentDoubleIdCreate (workspaceId: WorkspaceId, transa
             oldValue.set(doc._id, doc.message)
             console.log('renaming', cid, doc.message)
             // Remove previous transaction.
-            c.tx.objectId = generateId()
-            doc._id = c.tx.objectId as Ref<ChatMessage>
+            c.objectId = generateId()
+            doc._id = c.objectId as Ref<ChatMessage>
             await connection.upload(DOMAIN_TX, [c])
             // Also we need to create snapsot
             await connection.upload(DOMAIN_ACTIVITY, [doc])
@@ -1170,7 +1151,9 @@ function isPersonAccount (tx: TxCUD<Doc>): boolean {
 }
 
 async function update<T extends Doc> (h: Hierarchy, db: Db, doc: T, update: DocumentUpdate<T>): Promise<void> {
-  await db.collection(h.getDomain(doc._class)).updateOne({ _id: doc._id }, { $set: { ...update, '%hash%': null } })
+  await db
+    .collection(h.getDomain(doc._class))
+    .updateOne({ _id: doc._id }, { $set: { ...update, '%hash%': Date.now().toString(16) } })
 }
 
 async function updateId (
@@ -1191,12 +1174,14 @@ async function updateId (
     const newId = generateId()
 
     // update txes
-    await db.collection(DOMAIN_TX).updateMany({ objectId: doc._id }, { $set: { objectId: newId, '%hash%': null } })
+    await db
+      .collection(DOMAIN_TX)
+      .updateMany({ objectId: doc._id }, { $set: { objectId: newId, '%hash%': Date.now().toString(16) } })
 
     // update nested txes
     await db
       .collection(DOMAIN_TX)
-      .updateMany({ 'tx.objectId': doc._id }, { $set: { 'tx.objectId': newId, '%hash%': null } })
+      .updateMany({ 'tx.objectId': doc._id }, { $set: { 'tx.objectId': newId, '%hash%': Date.now().toString(16) } })
 
     // we have generated ids for calendar, let's update in
     if (h.isDerived(doc._class, core.class.Account)) {
@@ -1220,8 +1205,8 @@ async function updateId (
             const newMarkup = markup.replaceAll(doc._id, newId)
             await update(h, db, contentDoc, { [attrName]: newMarkup })
           } else if (attr.type._class === core.class.TypeCollaborativeDoc) {
-            const collaborativeDoc = (contentDoc as any)[attr.name] as CollaborativeDoc
-            await updateYDoc(ctx, collaborativeDoc, storage, workspaceId, contentDoc, newId, doc)
+            const collabId = makeDocCollabId(contentDoc, attr.name)
+            await updateYDoc(ctx, collabId, storage, workspaceId, contentDoc, newId, doc)
           }
         }
       }
@@ -1240,7 +1225,6 @@ async function updateId (
       const { _id, space, modifiedBy, modifiedOn, createdBy, createdOn, _class, ...data } = docIndexState
       await txop.createDoc(docIndexState._class, docIndexState.space, {
         ...data,
-        stages: {},
         removed: false
       })
       await txop.update(docIndexState, { removed: true, needIndex: true })
@@ -1251,7 +1235,7 @@ async function updateId (
       await db.collection(domain).insertOne({
         ...raw,
         _id: newId as any,
-        '%hash%': null
+        '%hash%': Date.now().toString(16)
       })
       await db.collection(domain).deleteOne({ _id: doc._id })
     }
@@ -1270,7 +1254,7 @@ async function updateYDoc (
   doc: RelatedDocument
 ): Promise<void> {
   try {
-    const ydoc = await loadCollaborativeDoc(storage, workspaceId, _id, ctx)
+    const ydoc = await loadCollabYdoc(ctx, storage, workspaceId, _id)
     if (ydoc === undefined) {
       ctx.error('document content not found', { document: contentDoc._id })
       return
@@ -1284,7 +1268,7 @@ async function updateYDoc (
     })
 
     if (updatedYDoc !== undefined) {
-      await saveCollaborativeDoc(storage, workspaceId, _id, updatedYDoc, ctx)
+      await saveCollabYdoc(ctx, storage, workspaceId, _id, updatedYDoc)
     }
   } catch {
     // do nothing, the collaborative doc does not sem to exist yet

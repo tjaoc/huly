@@ -5,12 +5,12 @@ import {
   type ReccuringInstance,
   generateEventId
 } from '@hcengineering/calendar'
-import { type IdMap, type Timestamp, getCurrentAccount, toIdMap, type DocumentUpdate } from '@hcengineering/core'
-import { createQuery, getClient } from '@hcengineering/presentation'
-import { showPopup, closePopup, DAY } from '@hcengineering/ui'
+import { type DocumentUpdate, type IdMap, type Timestamp, getCurrentAccount, toIdMap } from '@hcengineering/core'
+import { createQuery, getClient, onClient } from '@hcengineering/presentation'
+import { closePopup, DAY, showPopup } from '@hcengineering/ui'
 import { writable } from 'svelte/store'
-import calendar from './plugin'
 import UpdateRecInstancePopup from './components/UpdateRecInstancePopup.svelte'
+import calendar from './plugin'
 
 export function saveUTC (date: Timestamp): Timestamp {
   const utcdate = new Date(date)
@@ -29,7 +29,7 @@ export function hidePrivateEvents (events: Event[], calendars: IdMap<Calendar>, 
   const me = getCurrentAccount()._id
   const res: Event[] = []
   for (const event of events) {
-    if ((event.createdBy ?? event.modifiedBy) === me && allowMe) {
+    if (event.user === me && allowMe) {
       res.push(event)
     } else {
       if (event.visibility !== undefined) {
@@ -49,14 +49,14 @@ export function hidePrivateEvents (events: Event[], calendars: IdMap<Calendar>, 
 
 export function isReadOnly (value: Event): boolean {
   const me = getCurrentAccount()._id
-  if (value.createdBy !== me) return true
+  if (value.user !== me) return true
   if (['owner', 'writer'].includes(value.access)) return false
   return true
 }
 
 export function isVisible (value: Event, calendars: IdMap<Calendar>): boolean {
   const me = getCurrentAccount()._id
-  if (value.createdBy === me) return true
+  if (value.user === me) return true
   if (value.visibility === 'freeBusy') {
     return false
   } else if (value.visibility === 'public') {
@@ -74,24 +74,14 @@ export const calendarByIdStore = writable<IdMap<Calendar>>(new Map())
 export const calendarStore = writable<Calendar[]>([])
 export const visibleCalendarStore = writable<Calendar[]>([])
 
-function fillStores (): void {
-  const client = getClient()
-
-  if (client !== undefined) {
-    const query = createQuery(true)
-    query.query(calendar.class.Calendar, {}, (res) => {
-      calendarStore.set(res)
-      visibleCalendarStore.set(res.filter((p) => !p.hidden))
-      calendarByIdStore.set(toIdMap(res))
-    })
-  } else {
-    setTimeout(() => {
-      fillStores()
-    }, 50)
-  }
-}
-
-fillStores()
+const query = createQuery(true)
+onClient((client, account) => {
+  query.query(calendar.class.Calendar, {}, (res) => {
+    calendarStore.set(res)
+    visibleCalendarStore.set(res.filter((p) => !p.hidden))
+    calendarByIdStore.set(toIdMap(res))
+  })
+})
 
 export async function updatePast (ops: DocumentUpdate<Event>, object: ReccuringInstance): Promise<void> {
   const client = getClient()
@@ -168,6 +158,7 @@ export async function updateReccuringInstance (
                   exdate: object.exdate,
                   rdate: object.rdate,
                   timeZone: object.timeZone,
+                  user: object.user,
                   ...ops
                 },
                 object._id

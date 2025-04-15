@@ -15,6 +15,9 @@
 
 import { CopyObjectCommand, PutObjectCommand, S3 } from '@aws-sdk/client-s3'
 import { Upload } from '@aws-sdk/lib-storage'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
+import { Agent as HttpAgent } from 'http'
+import { Agent as HttpsAgent } from 'https'
 
 import core, {
   toWorkspaceString,
@@ -26,6 +29,7 @@ import core, {
 } from '@hcengineering/core'
 import { getMetadata } from '@hcengineering/platform'
 import serverCore, {
+  NoSuchKeyError,
   type BlobStorageIterator,
   type ListBlobResult,
   type StorageAdapter,
@@ -56,11 +60,12 @@ export interface S3Config extends StorageConfig {
   expireTime?: string
 }
 
+export const CONFIG_KIND = 's3'
+
 /**
  * @public
  */
 export class S3Service implements StorageAdapter {
-  static config = 's3'
   expireTime: number
   client: S3
   constructor (readonly opt: S3Config) {
@@ -70,7 +75,13 @@ export class S3Service implements StorageAdapter {
         accessKeyId: opt.accessKey,
         secretAccessKey: opt.secretKey
       },
-      region: opt.region ?? 'auto'
+      region: opt.region ?? 'auto',
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 5000,
+        socketTimeout: 120000,
+        httpAgent: new HttpAgent({ maxSockets: 500, keepAlive: true }),
+        httpsAgent: new HttpsAgent({ maxSockets: 500, keepAlive: true })
+      })
     })
 
     this.expireTime = parseInt(this.opt.expireTime ?? '168') * 3600 // use 7 * 24 - hours as default value for expireF
@@ -263,8 +274,7 @@ export class S3Service implements StorageAdapter {
                 provider: this.opt.name,
                 space: core.space.Configuration,
                 modifiedBy: core.account.ConfigUser,
-                modifiedOn: data.LastModified?.getTime() ?? 0,
-                storageId: _id
+                modifiedOn: data.LastModified?.getTime() ?? 0
               })
             }
           }
@@ -289,7 +299,6 @@ export class S3Service implements StorageAdapter {
         provider: '',
         _class: core.class.Blob,
         _id: this.stripPrefix(rootPrefix, objectName) as Ref<Blob>,
-        storageId: this.stripPrefix(rootPrefix, objectName),
         contentType: result.ContentType ?? '',
         size: result.ContentLength ?? 0,
         etag: result.ETag ?? '',
@@ -299,7 +308,9 @@ export class S3Service implements StorageAdapter {
         version: result.VersionId ?? null
       }
     } catch (err: any) {
-      ctx.warn('no object found', { error: err, objectName, workspaceId: workspaceId.name })
+      if (err?.$metadata?.httpStatusCode !== 404) {
+        ctx.warn('no object found', { error: err, objectName, workspaceId: workspaceId.name })
+      }
     }
   }
 
@@ -309,26 +320,31 @@ export class S3Service implements StorageAdapter {
   }
 
   async doGet (ctx: MeasureContext, workspaceId: WorkspaceId, objectName: string, range?: string): Promise<Readable> {
-    const res = await this.client.getObject({
-      Bucket: this.getBucketId(workspaceId),
-      Key: this.getDocumentKey(workspaceId, objectName),
-      Range: range
-    })
+    try {
+      const res = await this.client.getObject({
+        Bucket: this.getBucketId(workspaceId),
+        Key: this.getDocumentKey(workspaceId, objectName),
+        Range: range
+      })
 
-    const stream = res.Body?.transformToWebStream()
+      const stream = res.Body?.transformToWebStream()
 
-    if (stream !== undefined) {
-      return Readable.fromWeb(stream as ReadableStream<any>)
-    } else {
-      const readable = new Readable()
-      readable._read = () => {}
-      readable.push(null)
-      return readable
+      if (stream !== undefined) {
+        return Readable.fromWeb(stream as ReadableStream<any>)
+      } else {
+        const readable = new Readable()
+        readable._read = () => {}
+        readable.push(null)
+        return readable
+      }
+    } catch (err: any) {
+      // In case of error return undefined
+      throw new NoSuchKeyError(`${workspaceId.name} missing ${objectName}`, err)
     }
   }
 
   @withContext('put')
-  async put (
+  put (
     ctx: MeasureContext,
     workspaceId: WorkspaceId,
     objectName: string,
@@ -337,7 +353,7 @@ export class S3Service implements StorageAdapter {
     size?: number
   ): Promise<UploadedObjectInfo> {
     if (size !== undefined && size < 1024 * 1024 * 5) {
-      return await ctx.with(
+      return ctx.with(
         'simple-put',
         {},
         async () => {
@@ -358,7 +374,7 @@ export class S3Service implements StorageAdapter {
       )
       // Less 5Mb
     } else {
-      return await ctx.with(
+      return ctx.with(
         'multipart-upload',
         {},
         async () => {

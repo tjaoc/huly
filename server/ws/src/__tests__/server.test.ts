@@ -39,12 +39,13 @@ import {
   type Tx,
   type TxResult
 } from '@hcengineering/core'
-import { createDummyStorageAdapter } from '@hcengineering/server-core'
 import { ClientSession, startSessionManager } from '@hcengineering/server'
+import { createDummyStorageAdapter } from '@hcengineering/server-core'
 import { startHttpServer } from '../server_http'
 import { genMinModel } from './minmodel'
 
 describe('server', () => {
+  const port = 10000
   const handler = new RPCHandler()
   async function getModelDb (): Promise<{ modelDb: ModelDb, hierarchy: Hierarchy }> {
     const txes = genMinModel()
@@ -80,7 +81,7 @@ describe('server', () => {
         ],
         close: async () => {},
         domains: async () => [],
-        groupBy: async () => new Set(),
+        groupBy: async () => new Map(),
         find: (ctx: MeasureContext, domain: Domain) => ({
           next: async (ctx: MeasureContext) => undefined,
           close: async (ctx: MeasureContext) => {}
@@ -94,9 +95,8 @@ describe('server', () => {
         loadModel: async (ctx, lastModelTx, hash) => []
       }
     },
-    sessionFactory: (token, pipeline, workspaceId, branding) =>
-      new ClientSession(token, pipeline, workspaceId, branding, true),
-    port: 3335,
+    sessionFactory: (token, workspace) => new ClientSession(token, workspace, true),
+    port,
     brandingMap: {},
     serverFactory: startHttpServer,
     accountsUrl: '',
@@ -105,11 +105,11 @@ describe('server', () => {
 
   function connect (): WebSocket {
     const token: string = generateToken('', getWorkspaceId('latest'))
-    return new WebSocket(`ws://localhost:3335/${token}`)
+    return new WebSocket(`ws://localhost:${port}/${token}`)
   }
 
   afterAll(async () => {
-    await cancelOp()
+    await cancelOp.shutdown()
   })
 
   it('should connect to server', (done) => {
@@ -123,7 +123,7 @@ describe('server', () => {
   })
 
   it('should not connect to server without token', (done) => {
-    const conn = new WebSocket('ws://localhost:3335/xyz')
+    const conn = new WebSocket(`ws://localhost:${port}/xyz`)
     conn.on('error', () => {
       conn.close(1000)
     })
@@ -190,7 +190,7 @@ describe('server', () => {
             [],
             undefined
           ],
-          groupBy: async () => new Set(),
+          groupBy: async () => new Map(),
           close: async () => {},
           domains: async () => [],
           find: (ctx: MeasureContext, domain: Domain) => ({
@@ -206,9 +206,8 @@ describe('server', () => {
           loadModel: async (ctx, lastModelTx, hash) => []
         }
       },
-      sessionFactory: (token, pipeline, workspaceId, branding) =>
-        new ClientSession(token, pipeline, workspaceId, branding, true),
-      port: 3336,
+      sessionFactory: (token, workspace) => new ClientSession(token, workspace, true),
+      port: port + 1,
       brandingMap: {},
       serverFactory: startHttpServer,
       accountsUrl: '',
@@ -216,7 +215,7 @@ describe('server', () => {
     })
 
     async function findClose (token: string, timeoutPromise: Promise<void>, code: number): Promise<string> {
-      const newConn = new WebSocket(`ws://localhost:3336/${token}?sessionId=s1`)
+      const newConn = new WebSocket(`ws://localhost:${port + 1}/${token}?sessionId=s1`)
 
       await Promise.race([
         timeoutPromise,
@@ -278,7 +277,7 @@ describe('server', () => {
       console.error(err)
     } finally {
       console.log('calling shutdown')
-      await cancelOp()
+      await cancelOp.shutdown()
     }
   })
 })

@@ -60,6 +60,14 @@ if (typeof localStorage !== 'undefined') {
       resolve(db)
     }
   })
+  void dbPromise.then((res) => {
+    if (res !== undefined) {
+      res.onclose = () => {
+        dbRequest = undefined
+        dbPromise = Promise.resolve(undefined)
+      }
+    }
+  })
 }
 
 /**
@@ -106,7 +114,7 @@ export default async () => {
           const tokenPayload: { workspace: string, email: string } = decodeTokenPayload(token)
 
           const newOpt = { ...opt }
-          const connectTimeout = getMetadata(clientPlugin.metadata.ConnectionTimeout)
+          const connectTimeout = opt?.connectionTimeout ?? getMetadata(clientPlugin.metadata.ConnectionTimeout)
           let connectPromise: Promise<void> | undefined
           if ((connectTimeout ?? 0) > 0) {
             connectPromise = new Promise<void>((resolve, reject) => {
@@ -118,9 +126,10 @@ export default async () => {
                   reject(new Error(`Connection timeout, and no connection established to ${endpoint}`))
                 }
               }, connectTimeout)
-              newOpt.onConnect = (event) => {
+              newOpt.onConnect = async (event, lastTx, data) => {
                 // Any event is fine, it means server is alive.
                 clearTimeout(connectTO)
+                await opt?.onConnect?.(event, lastTx, data)
                 resolve()
               }
             })
@@ -132,7 +141,7 @@ export default async () => {
           return await Promise.resolve(clientConnection)
         }
 
-        const modelFilter: ModelFilter = async (txes) => {
+        const modelFilter: ModelFilter = (txes) => {
           if (filterModel === 'client') {
             return returnClientTxes(txes)
           }
@@ -176,7 +185,18 @@ function returnClientTxes (txes: Tx[]): Tx[] {
     'templates:class:TemplateField' as Ref<Class<Doc>>,
     'activity:class:DocUpdateMessageViewlet' as Ref<Class<Doc>>,
     'core:class:PluginConfiguration' as Ref<Class<Doc>>,
-    'core:class:DomainIndexConfiguration' as Ref<Class<Doc>>
+    'core:class:DomainIndexConfiguration' as Ref<Class<Doc>>,
+    'view:class:ViewletDescriptor' as Ref<Class<Doc>>,
+    'presentation:class:ComponentPointExtension' as Ref<Class<Doc>>,
+    'activity:class:ActivityMessagesFilter' as Ref<Class<Doc>>,
+    'view:class:ActionCategory' as Ref<Class<Doc>>,
+    'activity:class:ActivityExtension' as Ref<Class<Doc>>,
+    'chunter:class:ChatMessageViewlet' as Ref<Class<Doc>>,
+    'activity:class:ActivityMessageControl' as Ref<Class<Doc>>,
+    'notification:class:ActivityNotificationViewlet' as Ref<Class<Doc>>,
+    'setting:class:SettingsCategory' as Ref<Class<Doc>>,
+    'setting:class:WorkspaceSettingCategory' as Ref<Class<Doc>>,
+    'notification:class:NotificationProvider' as Ref<Class<Doc>>
   ])
 
   const result = pluginFilterTx(excludedPlugins, configs, txes).filter((tx) => {

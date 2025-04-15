@@ -13,8 +13,8 @@
 // limitations under the License.
 //
 
-import { calendarId, type Event, type ReccuringEvent } from '@hcengineering/calendar'
-import { type Ref, type Space } from '@hcengineering/core'
+import { type Calendar, calendarId, type Event, type ReccuringEvent } from '@hcengineering/calendar'
+import core, { groupByArray, toIdMap, type Ref, type Space } from '@hcengineering/core'
 import {
   createDefaultSpace,
   tryMigrate,
@@ -24,7 +24,7 @@ import {
   type MigrationUpgradeClient
 } from '@hcengineering/model'
 import { DOMAIN_SPACE } from '@hcengineering/model-core'
-import { DOMAIN_CALENDAR } from '.'
+import { DOMAIN_CALENDAR, DOMAIN_EVENT } from '.'
 import calendar from './plugin'
 
 async function migrateCalendars (client: MigrationClient): Promise<void> {
@@ -106,6 +106,40 @@ async function migrateSync (client: MigrationClient): Promise<void> {
   )
 }
 
+async function removeEventDuplicates (client: MigrationClient): Promise<void> {
+  const calendars = await client.find<Calendar>(DOMAIN_CALENDAR, { hidden: false })
+  const groupByUser = groupByArray(calendars, (it) => it.createdBy ?? it.modifiedBy)
+  for (const calendars of groupByUser.values()) {
+    const events = await client.find<Event>(DOMAIN_EVENT, { calendar: { $in: calendars.map((it) => it._id) } })
+    const groupByEventId = groupByArray(events, (it) => it.eventId)
+    for (const events of groupByEventId.values()) {
+      if (events.length === 1) continue
+      // ok, we have duplicates, let take the first one as origin, by modifiedOn, and remove others
+      events.sort((a, b) => (a.createdOn ?? a.modifiedOn) - (b.createdOn ?? b.modifiedOn))
+      const toRemove = events.slice(1)
+      await client.deleteMany(DOMAIN_EVENT, { _id: { $in: toRemove.map((it) => it._id) } })
+    }
+  }
+}
+
+async function fillUser (client: MigrationClient): Promise<void> {
+  const calendars = await client.find<Calendar>(DOMAIN_CALENDAR, {})
+  const events = await client.find<Event>(DOMAIN_EVENT, {
+    user: { $exists: false }
+  })
+  const map = toIdMap(calendars)
+  for (const event of events) {
+    const calendar = map.get(event.calendar)
+    if (calendar !== undefined) {
+      await client.update(
+        DOMAIN_EVENT,
+        { _id: event._id },
+        { user: event.createdBy !== core.account.System ? event.createdBy : calendar.createdBy }
+      )
+    }
+  }
+}
+
 async function migrateTimezone (client: MigrationClient): Promise<void> {
   await client.update(
     DOMAIN_CALENDAR,
@@ -118,10 +152,11 @@ async function migrateTimezone (client: MigrationClient): Promise<void> {
 }
 
 export const calendarOperation: MigrateOperation = {
-  async migrate (client: MigrationClient): Promise<void> {
-    await tryMigrate(client, calendarId, [
+  async migrate (client: MigrationClient, mode): Promise<void> {
+    await tryMigrate(mode, client, calendarId, [
       {
         state: 'calendar001',
+        mode: 'upgrade',
         func: async (client) => {
           await fixEventDueDate(client)
           await migrateReminders(client)
@@ -131,16 +166,39 @@ export const calendarOperation: MigrateOperation = {
       },
       {
         state: 'timezone',
+        mode: 'upgrade',
         func: migrateTimezone
       },
       {
         state: 'migrate_calendars',
+        mode: 'upgrade',
         func: migrateCalendars
+      },
+      {
+        state: 'move-events',
+        mode: 'upgrade',
+        func: async (client) => {
+          await client.move(
+            DOMAIN_CALENDAR,
+            { _class: { $in: client.hierarchy.getDescendants(calendar.class.Event) } },
+            DOMAIN_EVENT
+          )
+        }
+      },
+      {
+        state: 'remove-duplicates',
+        mode: 'upgrade',
+        func: removeEventDuplicates
+      },
+      {
+        state: 'fill-user-v2',
+        mode: 'upgrade',
+        func: fillUser
       }
     ])
   },
-  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>): Promise<void> {
-    await tryUpgrade(state, client, calendarId, [
+  async upgrade (state: Map<string, Set<string>>, client: () => Promise<MigrationUpgradeClient>, mode): Promise<void> {
+    await tryUpgrade(mode, state, client, calendarId, [
       {
         state: 'default-space',
         func: (client) =>

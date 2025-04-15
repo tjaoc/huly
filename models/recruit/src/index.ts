@@ -56,17 +56,17 @@ export function createModel (builder: Builder): void {
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: recruit.class.Vacancy,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: recruit.class.Applicant,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.createDoc(activity.class.ActivityExtension, core.space.Model, {
     ofClass: recruit.class.Review,
-    components: { input: chunter.component.ChatMessageInput }
+    components: { input: { component: chunter.component.ChatMessageInput } }
   })
 
   builder.mixin(recruit.class.Vacancy, core.class.Class, workbench.mixin.SpaceView, {
@@ -186,7 +186,31 @@ export function createModel (builder: Builder): void {
               createEvent: RecruitEvents.PlusTalentButtonClicked,
               createLabel: recruit.string.TalentCreateLabel,
               createComponent: recruit.component.CreateCandidate,
-              createComponentProps: { shouldSaveDraft: false }
+              createComponentProps: { shouldSaveDraft: false },
+              actionVisible: true,
+              actionConfig: {
+                skipAttributes: ['_class', 'avatarType', 'space'],
+                attributeKeyMap: { city: 'location' },
+                attributeTransforms: {
+                  channels: {
+                    operations: [
+                      {
+                        type: 'group_by',
+                        config: {
+                          keyField: 'data.provider',
+                          valueField: 'data.value'
+                        }
+                      },
+                      {
+                        type: 'join',
+                        config: {
+                          delimiter: ', '
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
             },
             position: 'vacancy'
           },
@@ -213,7 +237,8 @@ export function createModel (builder: Builder): void {
                 ['assigned', view.string.Assigned, {}],
                 ['created', view.string.Created, {}],
                 ['subscribed', view.string.Subscribed, {}]
-              ]
+              ],
+              descriptors: [view.viewlet.List, view.viewlet.Table, task.viewlet.Kanban]
             }
           },
           {
@@ -331,7 +356,9 @@ export function createModel (builder: Builder): void {
     key: 'hideArchived',
     type: 'toggle',
     defaultValue: true,
-    label: recruit.string.HideArchivedVacancies
+    actionTarget: 'options',
+    action: view.function.HideArchived,
+    label: view.string.HideArchived
   }
 
   builder.createDoc(
@@ -355,13 +382,14 @@ export function createModel (builder: Builder): void {
         }
       ],
       configOptions: {
-        hiddenKeys: ['name', 'space', 'modifiedOn'],
+        hiddenKeys: ['name', 'space', 'modifiedOn', 'company'],
         sortable: true
       },
       viewOptions: {
         groupBy: [],
         orderBy: [],
-        other: [vacancyHideArchivedOption]
+        other: [vacancyHideArchivedOption],
+        storageKey: 'vacancyViewOptions'
       }
     },
     recruit.viewlet.TableVacancy
@@ -431,10 +459,36 @@ export function createModel (builder: Builder): void {
       configOptions: {
         hiddenKeys: ['name', 'attachedTo'],
         sortable: true
+      },
+      viewOptions: {
+        groupBy: [],
+        orderBy: [],
+        other: [vacancyHideArchivedOption],
+        storageKey: 'vacancyViewOptions'
       }
     },
     recruit.viewlet.TableApplicant
   )
+
+  const applicationDoneOption: ViewOptionModel = {
+    key: 'hideDoneState',
+    type: 'toggle',
+    defaultValue: true,
+    actionTarget: 'query',
+    action: recruit.function.HideDoneState,
+    label: recruit.string.HideDoneState
+  }
+
+  // hiding applicants related to archived vacancies from applicants view
+  const hideApplicantsFromArchivedVacanciesOption: ViewOptionModel = {
+    key: 'hideArchivedVacancies',
+    type: 'toggle',
+    defaultValue: true,
+    actionTarget: 'options',
+    action: view.function.HideArchived,
+    label: recruit.string.HideApplicantsFromArchivedVacancies
+  }
+
   builder.createDoc(
     view.class.Viewlet,
     core.space.Model,
@@ -479,9 +533,11 @@ export function createModel (builder: Builder): void {
         hiddenKeys: ['name', 'attachedTo'],
         sortable: true
       },
-      baseQuery: {
-        isDone: false,
-        '$lookup.space.archived': false
+      viewOptions: {
+        groupBy: [],
+        orderBy: [],
+        other: [applicationDoneOption, hideApplicantsFromArchivedVacanciesOption],
+        storageKey: 'applicantViewOptions'
       }
     },
     recruit.viewlet.ApplicantTable
@@ -500,8 +556,7 @@ export function createModel (builder: Builder): void {
         }
       },
       baseQuery: {
-        isDone: false,
-        '$lookup.space.archived': false
+        isDone: false
       }
     },
     recruit.viewlet.TableApplicantMatch
@@ -517,25 +572,6 @@ export function createModel (builder: Builder): void {
         space: recruit.class.Vacancy
       }
     ]
-  }
-
-  const applicationDoneOption: ViewOptionModel = {
-    key: 'hideDoneState',
-    type: 'toggle',
-    defaultValue: true,
-    actionTarget: 'query',
-    action: recruit.function.HideDoneState,
-    label: recruit.string.HideDoneState
-  }
-
-  // hiding applicants related to archived vacancies from applicants view
-  const hideApplicantsFromArchivedVacanciesOption: ViewOptionModel = {
-    key: 'hideArchivedVacancies',
-    type: 'toggle',
-    defaultValue: true,
-    actionTarget: 'query',
-    action: recruit.function.HideArchivedVacancies,
-    label: recruit.string.HideApplicantsFromArchivedVacancies
   }
 
   const applicantViewOptions = (colors: boolean, hides: boolean): ViewOptionsModel => {
@@ -556,8 +592,10 @@ export function createModel (builder: Builder): void {
           actionTarget: 'category',
           action: view.function.ShowEmptyGroups,
           label: view.string.ShowEmptyGroups
-        }
-      ]
+        },
+        vacancyHideArchivedOption
+      ],
+      storageKey: 'applicantViewOptions'
     }
     if (colors) {
       model.other.push(showColorsViewOption)
@@ -579,6 +617,13 @@ export function createModel (builder: Builder): void {
         {
           key: 'status',
           props: { kind: 'list', size: 'small', shouldShowName: false }
+        },
+        {
+          key: 'kind',
+          label: task.string.TaskType,
+          presenter: task.component.TaskTypeListPresenter,
+          props: { kind: 'list', size: 'small', justify: 'center' },
+          displayProps: { key: 'applicant_kind' }
         },
         {
           key: '$lookup.attachedTo',
@@ -771,9 +816,6 @@ export function createModel (builder: Builder): void {
         strict: true,
         hiddenKeys: ['name', 'space', 'modifiedOn']
       },
-      baseQuery: {
-        '$lookup.space.archived': false
-      },
       viewOptions: {
         groupBy: ['company', 'dueTo', 'createdBy'],
         orderBy: [
@@ -782,7 +824,8 @@ export function createModel (builder: Builder): void {
           ['modifiedOn', SortingOrder.Descending],
           ['createdOn', SortingOrder.Descending]
         ],
-        other: [vacancyHideArchivedOption]
+        other: [vacancyHideArchivedOption],
+        storageKey: 'vacancyViewOptions'
       }
     },
     recruit.viewlet.ListVacancy
@@ -794,13 +837,8 @@ export function createModel (builder: Builder): void {
     {
       attachTo: recruit.class.Applicant,
       descriptor: task.viewlet.Kanban,
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      baseQuery: {
-        isDone: false,
-        '$lookup.space.archived': false
-      },
       viewOptions: {
-        ...applicantViewOptions(false, false),
+        ...applicantViewOptions(false, true),
         groupDepth: 1
       },
       options: {
@@ -1467,26 +1505,6 @@ export function createModel (builder: Builder): void {
     forceIndex: true,
     childProcessingAllowed: true,
     propagate: []
-  })
-
-  createAction(builder, {
-    label: recruit.string.MatchVacancy,
-    icon: recruit.icon.Vacancy,
-    action: view.actionImpl.ShowPopup,
-    actionProps: {
-      component: recruit.component.MatchVacancy,
-      element: 'top',
-      fillProps: {
-        _objects: 'objects'
-      }
-    },
-    input: 'any',
-    category: recruit.category.Recruit,
-    target: recruit.mixin.Candidate,
-    context: {
-      mode: ['context', 'browser'],
-      group: 'create'
-    }
   })
 
   builder.mixin(recruit.mixin.Candidate, core.class.Class, view.mixin.ObjectEditorFooter, {

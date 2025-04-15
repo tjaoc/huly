@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-import { getEmbeddedLabel, IntlString } from '@hcengineering/platform'
+import { getEmbeddedLabel, getMetadata, IntlString } from '@hcengineering/platform'
 import { deepEqual } from 'fast-equals'
 import { DOMAIN_BENCHMARK } from './benchmark'
 import {
@@ -26,7 +26,6 @@ import {
   Collection,
   Doc,
   DocData,
-  DocIndexState,
   DOMAIN_BLOB,
   DOMAIN_DOC_INDEX_STATE,
   DOMAIN_MODEL,
@@ -41,6 +40,7 @@ import {
   Space,
   TypedSpace,
   WorkspaceMode,
+  type Domain,
   type PluginConfiguration
 } from './classes'
 import core from './component'
@@ -125,6 +125,7 @@ export function toFindResult<T extends Doc> (docs: T[], total?: number, lookupMa
  */
 export interface WorkspaceId {
   name: string
+  uuid?: string
 }
 
 /**
@@ -165,72 +166,11 @@ export function isWorkspaceCreating (mode?: WorkspaceMode): boolean {
   return ['pending-creation', 'creating'].includes(mode)
 }
 
-const attributesPrefix = 'attributes.'
-
 /**
  * @public
  */
-export interface IndexKeyOptions {
-  _class?: Ref<Class<Obj>>
-  docId?: Ref<DocIndexState>
-  extra?: string[]
-  digest?: boolean
-}
-/**
- * @public
- */
-
-export function docUpdKey (name: string, opt?: IndexKeyOptions): string {
-  return attributesPrefix + docKey(name, opt)
-}
-/**
- * @public
- */
-export function docKey (name: string, opt?: IndexKeyOptions): string {
-  const extra = opt?.extra !== undefined && opt?.extra?.length > 0 ? `#${opt.extra?.join('#') ?? ''}` : ''
-  const digestName = opt?.digest === true ? name + '^digest' : name
-  return opt?._class === undefined ? digestName : `${opt?._class}%${digestName}${extra}`
-}
-
-/**
- * @public
- */
-export function extractDocKey (key: string): {
-  _class?: Ref<Class<Doc>>
-  attr: string
-  docId?: Ref<DocIndexState>
-  extra: string[]
-  digest: boolean
-} {
-  let k = key
-  if (k.startsWith(attributesPrefix)) {
-    k = k.slice(attributesPrefix.length)
-  }
-  let docId: Ref<DocIndexState> | undefined
-  let _class: Ref<Class<Doc>> | undefined
-  let attr = ''
-  const docSepPos = k.indexOf('|')
-  if (docSepPos !== -1) {
-    docId = k.substring(0, docSepPos).replace('_', '.') as Ref<DocIndexState>
-    k = k.substring(docSepPos + 1)
-  }
-  const clPos = k.indexOf('%')
-  if (clPos !== -1) {
-    _class = k.substring(0, clPos) as Ref<Class<Doc>>
-    attr = k.substring(clPos + 1)
-  } else {
-    attr = k
-  }
-  const extra = attr.split('#')
-  attr = extra.splice(0, 1)[0]
-  const digestPos = attr.indexOf('^digest')
-  let digest = false
-  if (digestPos !== -1) {
-    attr = attr.substring(0, digestPos)
-    digest = true
-  }
-
-  return { docId, attr, _class, extra, digest }
+export function docKey (name: string, _class?: Ref<Class<Doc>>): string {
+  return _class === undefined || _class !== core.class.Doc ? name : `${_class}%${name}`
 }
 
 /**
@@ -413,7 +353,11 @@ export class RateLimiter {
   }
 
   async waitProcessing (): Promise<void> {
-    await Promise.all(this.processingQueue.values())
+    while (this.processingQueue.size > 0) {
+      await new Promise<void>((resolve) => {
+        this.notify.push(resolve)
+      })
+    }
   }
 }
 
@@ -623,6 +567,9 @@ export async function checkPermission (
   _space: Ref<TypedSpace>,
   space?: TypedSpace
 ): Promise<boolean> {
+  const arePermissionsDisabled = getMetadata(core.metadata.DisablePermissions) ?? false
+  if (arePermissionsDisabled) return true
+
   space = space ?? (await client.findOne(core.class.TypedSpace, { _id: _space }))
   const type = await client
     .getModel()
@@ -744,7 +691,9 @@ export function isClassIndexable (
     domain === DOMAIN_TX ||
     domain === DOMAIN_MODEL ||
     domain === DOMAIN_BLOB ||
+    domain === ('preference' as Domain) ||
     domain === DOMAIN_TRANSIENT ||
+    domain === ('settings' as Domain) ||
     domain === DOMAIN_BENCHMARK
   ) {
     hierarchy.setClassifierProp(c, 'class_indexed', false)
@@ -892,4 +841,82 @@ export function pluginFilterTx (
   console.log('exclude plugin', msg)
   systemTx = systemTx.filter((t) => !totalExcluded.has(t._id))
   return systemTx
+}
+
+/**
+ * @public
+ */
+
+export class TimeRateLimiter {
+  idCounter: number = 0
+  active: number = 0
+  last: number = 0
+  rate: number
+  period: number
+  executions: { time: number, running: boolean }[] = []
+
+  queue: (() => Promise<void>)[] = []
+  notify: (() => void)[] = []
+
+  constructor (rate: number, period: number = 1000) {
+    this.rate = rate
+    this.period = period
+  }
+
+  private cleanupExecutions (): void {
+    const now = Date.now()
+    this.executions = this.executions.filter((time) => time.running || now - time.time < this.period)
+  }
+
+  async exec<T, B extends Record<string, any> = any>(op: (args?: B) => Promise<T>, args?: B): Promise<T> {
+    while (this.active >= this.rate || this.executions.length >= this.rate) {
+      this.cleanupExecutions()
+      if (this.executions.length < this.rate) {
+        break
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, this.period / this.rate)
+      })
+    }
+
+    const v = { time: Date.now(), running: true }
+    try {
+      this.executions.push(v)
+      const p = op(args)
+      this.active++
+      return await p
+    } finally {
+      v.running = false
+      this.active--
+      this.cleanupExecutions()
+      const n = this.notify.shift()
+      if (n !== undefined) {
+        n()
+      }
+    }
+  }
+
+  async waitProcessing (): Promise<void> {
+    while (this.active > 0) {
+      console.log('wait', this.active)
+      await new Promise<void>((resolve) => {
+        this.notify.push(resolve)
+      })
+    }
+  }
+}
+
+export function combineAttributes (
+  attributes: any[],
+  key: string,
+  operator: '$push' | '$pull',
+  arrayKey: '$each' | '$in'
+): any[] {
+  return Array.from(
+    new Set(
+      attributes.flatMap((attr) =>
+        Array.isArray(attr[operator]?.[key]?.[arrayKey]) ? attr[operator]?.[key]?.[arrayKey] : attr[operator]?.[key]
+      )
+    )
+  ).filter((v) => v != null)
 }

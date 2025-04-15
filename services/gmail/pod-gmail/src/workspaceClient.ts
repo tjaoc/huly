@@ -16,13 +16,12 @@
 import contact, { type Employee, type PersonAccount, type Channel as PlatformChannel } from '@hcengineering/contact'
 import core, {
   type Account,
-  type AttachedDoc,
   type Client,
   type Doc,
   MeasureContext,
   type Ref,
+  systemAccountEmail,
   type Tx,
-  type TxCollectionCUD,
   type TxCreateDoc,
   TxProcessor,
   type TxRemoveDoc,
@@ -33,7 +32,6 @@ import type { StorageAdapter } from '@hcengineering/server-core'
 import { generateToken } from '@hcengineering/server-token'
 import { type Db } from 'mongodb'
 import { getClient } from './client'
-import config from './config'
 import { GmailClient } from './gmail'
 import { type Channel, type ProjectCredentials, type User } from './types'
 
@@ -123,7 +121,7 @@ export class WorkspaceClient {
   }
 
   private async initClient (workspace: string): Promise<Client> {
-    const token = generateToken(config.SystemEmail, { name: workspace })
+    const token = generateToken(systemAccountEmail, { name: workspace })
     console.log('token', token, workspace)
     const client = await getClient(token)
     client.notify = (...tx: Tx[]) => {
@@ -273,10 +271,6 @@ export class WorkspaceClient {
         await this.txCreateChannel(tx as TxCreateDoc<Doc>)
         return
       }
-      case core.class.TxCollectionCUD: {
-        await this.txCollectionCUD(tx as TxCollectionCUD<Doc, AttachedDoc>)
-        return
-      }
       case core.class.TxUpdateDoc: {
         await this.txUpdateChannel(tx as TxUpdateDoc<Doc>)
         return
@@ -285,10 +279,6 @@ export class WorkspaceClient {
         await this.txRemoveChannel(tx as TxRemoveDoc<Doc>)
       }
     }
-  }
-
-  private async txCollectionCUD (tx: TxCollectionCUD<Doc, AttachedDoc>): Promise<void> {
-    await this.txHandler(tx.tx)
   }
 
   private async txCreateChannel (tx: TxCreateDoc<Doc>): Promise<void> {

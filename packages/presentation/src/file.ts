@@ -158,6 +158,21 @@ export function getFileUploadParams (blobId: string, blob: Blob): FileUploadPara
 /**
  * @public
  */
+export function getBlobUrl (file: string): string {
+  if (file.includes('://')) {
+    return file
+  }
+  const fileUrl = getFileUrl(file)
+  const u = new URL(fileUrl)
+  if (u.searchParams.has('file')) {
+    return u.toString()
+  }
+  return fileUrl.split('/').slice(0, -1).join('/')
+}
+
+/**
+ * @public
+ */
 export function getFileUrl (file: string, filename?: string): string {
   if (file.includes('://')) {
     return file
@@ -173,17 +188,18 @@ export function getFileUrl (file: string, filename?: string): string {
 /**
  * @public
  */
-export async function uploadFile (file: File): Promise<Ref<PlatformBlob>> {
-  const id = generateFileId()
-  const params = getFileUploadParams(id, file)
+export async function uploadFile (file: File, uuid?: Ref<PlatformBlob>): Promise<Ref<PlatformBlob>> {
+  uuid ??= generateFileId() as Ref<PlatformBlob>
+
+  const params = getFileUploadParams(uuid, file)
 
   if (params.method === 'signed-url') {
-    await uploadFileWithSignedUrl(file, id, params.url)
+    await uploadFileWithSignedUrl(file, uuid, params.url)
   } else {
-    await uploadFileWithFormData(file, id, params.url)
+    await uploadFileWithFormData(file, uuid, params.url)
   }
 
-  return id as Ref<PlatformBlob>
+  return uuid
 }
 
 /**
@@ -199,7 +215,7 @@ export async function deleteFile (id: string): Promise<void> {
     }
   })
 
-  if (resp.status !== 200) {
+  if (!resp.ok) {
     throw new Error('Failed to delete file')
   }
 }
@@ -216,7 +232,7 @@ async function uploadFileWithFormData (file: File, uuid: string, uploadUrl: stri
     body: data
   })
 
-  if (resp.status !== 200) {
+  if (!resp.ok) {
     if (resp.status === 413) {
       throw new PlatformError(new Status(Severity.ERROR, plugin.status.FileTooLarge, {}))
     } else {
@@ -257,8 +273,8 @@ async function uploadFileWithSignedUrl (file: File, uuid: string, uploadUrl: str
       method: 'PUT',
       headers: {
         'Content-Type': file.type,
-        'Content-Length': file.size.toString(),
-        'x-amz-meta-last-modified': file.lastModified.toString()
+        'Content-Length': file.size.toString()
+        // 'x-amz-meta-last-modified': file.lastModified.toString()
       }
     })
 
@@ -281,5 +297,15 @@ async function uploadFileWithSignedUrl (file: File, uuid: string, uploadUrl: str
         Authorization: 'Bearer ' + (getMetadata(plugin.metadata.Token) as string)
       }
     })
+  }
+}
+
+export async function getJsonOrEmpty (file: string, name: string): Promise<any> {
+  try {
+    const fileUrl = getFileUrl(file, name)
+    const resp = await fetch(fileUrl)
+    return await resp.json()
+  } catch {
+    return {}
   }
 }

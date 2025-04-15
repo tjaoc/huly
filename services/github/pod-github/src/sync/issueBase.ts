@@ -14,7 +14,6 @@ import core, {
   Account,
   AttachedDoc,
   Class,
-  CollaborativeDoc,
   Doc,
   DocumentUpdate,
   Markup,
@@ -22,7 +21,8 @@ import core, {
   Ref,
   Space,
   Status,
-  TxOperations
+  TxOperations,
+  makeDocCollabId
 } from '@hcengineering/core'
 import github, {
   DocSyncInfo,
@@ -35,7 +35,8 @@ import github, {
 } from '@hcengineering/github'
 import { IntlString } from '@hcengineering/platform'
 import { LiveQuery } from '@hcengineering/query'
-import task, { TaskType } from '@hcengineering/task'
+import { getPublicLink } from '@hcengineering/server-guest-resources'
+import task, { TaskType, type Task } from '@hcengineering/task'
 import { MarkupNode, MarkupNodeType, areEqualMarkups, markupToJSON, traverseNode } from '@hcengineering/text'
 import time, { type ToDo } from '@hcengineering/time'
 import tracker, { Issue, IssuePriority } from '@hcengineering/tracker'
@@ -59,7 +60,7 @@ import {
   projectValue,
   supportedGithubTypes
 } from './githubTypes'
-import { appendGuestLink, stripGuestLink } from './guest'
+import { stripGuestLink } from './guest'
 import { syncConfig } from './syncConfig'
 import {
   collectUpdate,
@@ -74,8 +75,8 @@ import {
 /**
  * @public
  */
-export type WithMarkup<T> = {
-  [P in keyof T]: T[P] extends CollaborativeDoc ? Markup : T[P]
+export type WithMarkup<T extends Issue> = Omit<T, 'description'> & {
+  description: Markup
 }
 
 /**
@@ -206,14 +207,14 @@ export abstract class IssueSyncManagerBase {
           })
 
           if (syncData !== undefined) {
-            const milestone = (
-              await this.provider.liveQuery.queryFind<GithubMilestone>(github.mixin.GithubMilestone, {})
-            ).find((it) => it.projectNodeId === projectId)
+            const milestone = await this.client.findOne<GithubMilestone>(github.mixin.GithubMilestone, {
+              projectNodeId: projectId
+            })
 
             const target: IssueSyncTarget | undefined =
               milestone !== undefined
                 ? {
-                    mappings: milestone.mappings,
+                    mappings: milestone.mappings ?? [],
                     project: prj,
                     target: milestone
                   }
@@ -259,14 +260,9 @@ export abstract class IssueSyncManagerBase {
             }
 
             let needProjectRefresh = false
-            const update: DocumentUpdate<Issue> & Record<string, any> = {}
+            const update: DocumentUpdate<WithMarkup<Issue>> & Record<string, any> = {}
 
             let structure = integration.projectStructure.get(target.target._id)
-
-            const repositories = await this.provider.liveQuery.queryFind<GithubIntegrationRepository>(
-              github.class.GithubIntegrationRepository,
-              {}
-            )
 
             for (const f of target.prjData.fieldValues?.nodes ?? []) {
               if (!('id' in f)) {
@@ -280,8 +276,13 @@ export abstract class IssueSyncManagerBase {
                   needProjectRefresh = true
                 }
               }
-              if (needProjectRefresh) {
-                const repo = repositories.find((it) => it._id === syncData.repository)
+              if (needProjectRefresh && syncData.repository != null) {
+                const repo = await this.provider.liveQuery.findOne<GithubIntegrationRepository>(
+                  github.class.GithubIntegrationRepository,
+                  {
+                    _id: syncData.repository
+                  }
+                )
 
                 if (repo !== undefined) {
                   await this.provider.handleEvent(github.class.GithubIntegration, integration.installationId, repo, {})
@@ -372,7 +373,8 @@ export abstract class IssueSyncManagerBase {
           !areEqualMarkups(update.description, syncData.current?.description ?? '')
         ) {
           try {
-            await this.collaborator.updateContent(doc.description, { description: update.description })
+            const collabId = makeDocCollabId(doc, 'description')
+            await this.collaborator.updateMarkup(collabId, update.description)
           } catch (err: any) {
             Analytics.handleError(err)
             this.ctx.error(err)
@@ -495,7 +497,15 @@ export abstract class IssueSyncManagerBase {
     return (pField.node.options ?? []).find((it) => it.id === field.optionId)
   }
 
-  findOptionId (container: ContainerFocus, fieldId: string, value: string, target: IssueSyncTarget): string | undefined {
+  findOptionId (
+    container: ContainerFocus,
+    fieldId: string,
+    value: string | null,
+    target: IssueSyncTarget
+  ): string | undefined {
+    if (value == null) {
+      return
+    }
     const structure = container.container.projectStructure.get(target.target._id)
     if (structure === undefined) {
       return
@@ -504,7 +514,7 @@ export abstract class IssueSyncManagerBase {
     if (pField === undefined) {
       return undefined
     }
-    return (pField.node.options ?? []).find((it) => it.name.toLowerCase() === value.toLowerCase())?.id
+    return (pField.node.options ?? []).find((it) => it.name?.toLowerCase() === value.toLowerCase())?.id
   }
 
   async toPlatformField (
@@ -734,8 +744,8 @@ export abstract class IssueSyncManagerBase {
       await this.ctx.withLog(
         'create mixin issue',
         {},
-        async () =>
-          await this.client.createMixin<Issue, Issue>(
+        () =>
+          this.client.createMixin<Issue, Issue>(
             existing._id as Ref<GithubIssueP>,
             existing._class,
             existing.space,
@@ -772,7 +782,7 @@ export abstract class IssueSyncManagerBase {
     }
 
     if (update.description !== undefined) {
-      if (areEqualMarkups(update.description, existingIssue.description)) {
+      if (update.description === existingIssue.description) {
         delete update.description
       }
     }
@@ -782,7 +792,7 @@ export abstract class IssueSyncManagerBase {
 
       if (k === 'description' && pv != null) {
         const mdown = await this.provider.getMarkdown(pv)
-        pv = await this.provider.getMarkup(container.container, mdown, this.stripGuestLink)
+        pv = await this.provider.getMarkupSafe(container.container, mdown, this.stripGuestLink)
       }
       if (pv != null && pv !== v) {
         // We have conflict of values, assume platform is more proper one.
@@ -924,8 +934,10 @@ export abstract class IssueSyncManagerBase {
         workspace: this.provider.getWorkspaceId().name
       })
       try {
-        issueData.description = update.description
-        await this.collaborator.updateContent(existingIssue.description, { description: update.description })
+        const description = update.description as Markup
+        issueData.description = description
+        const collabId = makeDocCollabId(existingIssue, 'description')
+        await this.collaborator.updateMarkup(collabId, description)
       } catch (err: any) {
         Analytics.handleError(err)
         this.ctx.error('error during description update', err)
@@ -995,14 +1007,8 @@ export abstract class IssueSyncManagerBase {
     }
     if (platformUpdate.description != null) {
       // Need to convert to markdown
-      const pp = async (nodes: MarkupNode): Promise<void> => {
-        await appendGuestLink(this.client, doc, nodes, this.provider.getWorkspaceId(), this.provider.getBranding())
-      }
-      issueUpdate.body = await this.provider.getMarkdown(
-        platformUpdate.description ?? '',
-        info.allowOpenInHuly === true ? pp : undefined
-      )
-      issueData.description = await this.provider.getMarkup(
+      issueUpdate.body = await this.provider.getMarkdown(platformUpdate.description ?? '')
+      issueData.description = await this.provider.getMarkupSafe(
         container.container,
         issueUpdate.body ?? '',
         this.stripGuestLink
@@ -1155,15 +1161,15 @@ export abstract class IssueSyncManagerBase {
     if (existingIssue !== undefined) {
       // Select a milestone project
       if (existingIssue.milestone != null) {
-        const milestone = (
-          await this.provider.liveQuery.queryFind<GithubMilestone>(github.mixin.GithubMilestone, {})
-        ).find((it) => it._id === existingIssue.milestone)
+        const milestone = await this.provider.liveQuery.findOne<GithubMilestone>(github.mixin.GithubMilestone, {
+          _id: existingIssue.milestone as Ref<GithubMilestone>
+        })
         if (milestone === undefined) {
           return
         }
         return {
           project,
-          mappings: milestone.mappings,
+          mappings: milestone.mappings ?? [],
           target: milestone,
           prjData: external.projectItems.nodes.find((it) => it.project.id === milestone.projectNodeId)
         }
@@ -1174,7 +1180,7 @@ export abstract class IssueSyncManagerBase {
   getProjectIssueTarget (project: GithubProject, external?: IssueExternalData): IssueSyncTarget {
     return {
       project,
-      mappings: project.mappings,
+      mappings: project.mappings ?? [],
       target: project,
       prjData: external?.projectItems.nodes.find((it) => it.project.id === project.projectNodeId)
     }
@@ -1259,14 +1265,15 @@ export abstract class IssueSyncManagerBase {
         if (!cnt) {
           Analytics.handleError(err)
           this.ctx.error('Error', { err })
-          await derivedClient.update(info, { error: errorToObj(err) })
+          await derivedClient.update(info, { error: errorToObj(err), needSync: githubSyncVersion })
+          return false
         }
       }
     }
 
     if (existing !== undefined && deleteExisting) {
       const childItems = await derivedClient.findAll(github.class.DocSyncInfo, {
-        parentUrl: (issueExternal.url ?? '').toLowerCase()
+        parent: (issueExternal.url ?? '').toLowerCase()
       })
       for (const u of childItems) {
         // We need just to clean all of them, since child's for issue are comments for now.
@@ -1309,6 +1316,37 @@ export abstract class IssueSyncManagerBase {
         await derivedClient?.update(child, { needSync: '' })
       }
       this.provider.sync()
+    }
+  }
+
+  async addHulyLink (
+    info: DocSyncInfo,
+    syncResult: DocumentUpdate<DocSyncInfo>,
+    object: Doc,
+    external: IssueExternalData,
+    container: ContainerFocus
+  ): Promise<void> {
+    const repository = await this.provider.getRepositoryById(info.repository)
+    if (repository !== undefined) {
+      syncResult.addHulyLink = false
+      const publicLink = await getPublicLink(
+        object,
+        this.client,
+        this.provider.getWorkspaceId(),
+        false,
+        this.provider.getBranding()
+      )
+      // We need to create comment on Github about issue is connected.
+      await container.container.octokit.rest.issues.createComment({
+        owner: repository.owner?.login as string,
+        repo: repository.name,
+        issue_number: external.number,
+
+        body: `<p>Connected to <b><a href="${publicLink}">Huly&reg;: ${(object as Task).identifier}</a></b></p>`,
+        headers: {
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      })
     }
   }
 }

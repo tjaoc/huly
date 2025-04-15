@@ -13,14 +13,17 @@
 // limitations under the License.
 //
 
-import { Token, decodeToken } from '@hcengineering/server-token'
+import { MeasureContext } from '@hcengineering/core'
+import { translate } from '@hcengineering/platform'
+import { extractToken } from '@hcengineering/server-client'
+import { Token } from '@hcengineering/server-token'
+import telegram, { TelegramNotificationRequest } from '@hcengineering/telegram'
 import cors from 'cors'
 import express, { type Express, type NextFunction, type Request, type Response } from 'express'
-import { IncomingHttpHeaders, type Server } from 'http'
-import { MeasureContext } from '@hcengineering/core'
+import { type Server } from 'http'
 import { Telegraf } from 'telegraf'
-import telegram, { TelegramNotificationRequest } from '@hcengineering/telegram'
-import { translate } from '@hcengineering/platform'
+import { Readable } from 'stream'
+import type { ReadableStream } from 'stream/web'
 
 import { ApiError } from './error'
 import { PlatformWorker } from './worker'
@@ -28,52 +31,6 @@ import { Limiter } from './limiter'
 import config from './config'
 import { toTelegramHtml, toMediaGroups } from './utils'
 import { TgContext } from './telegraf/types'
-
-const extractCookieToken = (cookie?: string): Token | null => {
-  if (cookie === undefined || cookie === null) {
-    return null
-  }
-
-  const cookies = cookie.split(';')
-  const tokenCookie = cookies.find((cookie) => cookie.toLocaleLowerCase().includes('token'))
-  if (tokenCookie === undefined) {
-    return null
-  }
-
-  const encodedToken = tokenCookie.split('=')[1]
-  if (encodedToken === undefined) {
-    return null
-  }
-
-  return decodeToken(encodedToken)
-}
-
-const extractAuthorizationToken = (authorization?: string): Token | null => {
-  if (authorization === undefined || authorization === null) {
-    return null
-  }
-  const encodedToken = authorization.split(' ')[1]
-
-  if (encodedToken === undefined) {
-    return null
-  }
-
-  return decodeToken(encodedToken)
-}
-
-const extractToken = (headers: IncomingHttpHeaders): Token => {
-  try {
-    const token = extractCookieToken(headers.cookie) ?? extractAuthorizationToken(headers.authorization)
-
-    if (token === null) {
-      throw new ApiError(401)
-    }
-
-    return token
-  } catch {
-    throw new ApiError(401)
-  }
-}
 
 type AsyncRequestHandler = (req: Request, res: Response, token: Token, next: NextFunction) => Promise<void>
 
@@ -83,11 +40,14 @@ const handleRequest = async (
   res: Response,
   next: NextFunction
 ): Promise<void> => {
+  const token = extractToken(req.headers)
+  if (token === undefined) {
+    throw new ApiError(401)
+  }
   try {
-    const token = extractToken(req.headers)
     await fn(req, res, token, next)
   } catch (err: unknown) {
-    console.error('Error during extract token', err)
+    console.error(err)
     next(err)
   }
 }
@@ -191,18 +151,37 @@ export function createServer (
 
   app.get(
     '/info',
-    wrapRequest(async (_, res) => {
+    wrapRequest(async (req, res) => {
       const me = await bot.telegram.getMe()
       const profilePhotos = await bot.telegram.getUserProfilePhotos(me.id)
-      const photoId = profilePhotos.photos[0]?.[0]?.file_id
+      const photoId = profilePhotos.photos[0]?.[0]?.file_id ?? ''
 
-      let photoUrl = ''
-
-      if (photoId !== undefined) {
-        photoUrl = (await bot.telegram.getFileLink(photoId)).toString()
-      }
       res.status(200)
-      res.json({ username: me.username, name: me.first_name, photoUrl })
+      res.json({ username: me.username, name: me.first_name, photoId })
+    })
+  )
+
+  app.get(
+    '/photo/:fileId',
+    wrapRequest(async (req, res) => {
+      const { fileId } = req.params
+      const fileLink = await bot.telegram.getFileLink(fileId)
+
+      const response = await fetch(fileLink.toString())
+      if (!response.ok) {
+        res.status(response.status).send(response.statusText)
+        return
+      }
+
+      if (response.body != null) {
+        res.setHeader('Content-Type', response.headers.get('Content-Type') ?? 'application/octet-stream')
+        res.setHeader('Content-Length', response.headers.get('Content-Length') ?? '0')
+
+        const stream = Readable.fromWeb(response.body as ReadableStream<any>)
+        stream.pipe(res)
+      } else {
+        res.status(500).send('Failed to fetch photo')
+      }
     })
   )
 
@@ -250,6 +229,7 @@ export function createServer (
 
           for (const messageId of messageIds) {
             await worker.addNotificationRecord({
+              messageId: request.messageId,
               notificationId: request.notificationId,
               email: userRecord.email,
               workspace: request.workspace,

@@ -50,11 +50,12 @@ export interface MinioConfig extends StorageConfig {
   bucketPrefix?: string
 }
 
+export const CONFIG_KIND = 'minio'
+
 /**
  * @public
  */
 export class MinioService implements StorageAdapter {
-  static config = 'minio'
   client: Client
   constructor (readonly opt: MinioConfig) {
     this.client = new Client({
@@ -225,8 +226,7 @@ export class MinioService implements StorageAdapter {
                   provider: this.opt.name,
                   space: core.space.Configuration,
                   modifiedBy: core.account.ConfigUser,
-                  modifiedOn: data.lastModified.getTime(),
-                  storageId: _id
+                  modifiedOn: data.lastModified.getTime()
                 })
               }
               onNext()
@@ -279,7 +279,6 @@ export class MinioService implements StorageAdapter {
         provider: '',
         _class: core.class.Blob,
         _id: this.stripPrefix(rootPrefix, objectName) as Ref<Blob>,
-        storageId: this.stripPrefix(rootPrefix, objectName),
         contentType: result.metaData['content-type'],
         size: result.size,
         etag: result.etag,
@@ -293,7 +292,8 @@ export class MinioService implements StorageAdapter {
         err?.code === 'NoSuchKey' ||
         err?.code === 'NotFound' ||
         err?.message === 'No such key' ||
-        err?.Code === 'NoSuchKey'
+        err?.Code === 'NoSuchKey' ||
+        err?.code === 'ECONNRESET'
       ) {
         // Do not print error in this case
         return

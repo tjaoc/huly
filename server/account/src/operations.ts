@@ -16,7 +16,6 @@
 import { Analytics } from '@hcengineering/analytics'
 import contact, {
   AvatarType,
-  buildGravatarId,
   checkHasGravatar,
   combineName,
   Employee,
@@ -27,10 +26,13 @@ import contact, {
 import core, {
   AccountRole,
   Client,
+  ClientWorkspaceInfo,
   concatLink,
   Data,
   generateId,
   getWorkspaceId,
+  isActiveMode,
+  isArchivingMode,
   isWorkspaceCreating,
   MeasureContext,
   RateLimiter,
@@ -42,22 +44,31 @@ import core, {
   versionToString,
   WorkspaceId,
   type BackupStatus,
-  type Branding
+  type BaseWorkspaceInfo,
+  type Branding,
+  type WorkspaceMode,
+  type WorkspaceUpdateEvent
 } from '@hcengineering/core'
-import platform, { getMetadata, PlatformError, Severity, Status, translate } from '@hcengineering/platform'
+import platform, {
+  getMetadata,
+  PlatformError,
+  Severity,
+  Status,
+  translate,
+  unknownError
+} from '@hcengineering/platform'
 import { type StorageAdapter } from '@hcengineering/server-core'
 import { decodeToken as decodeTokenRaw, generateToken, type Token } from '@hcengineering/server-token'
 import { connect } from '@hcengineering/server-tool'
 import { randomBytes } from 'crypto'
-import { type MongoClient } from 'mongodb'
 import otpGenerator from 'otp-generator'
 
+import { getWorkspaceDestroyAdapter, sharedPipelineContextVars } from '@hcengineering/server-pipeline'
 import { accountPlugin } from './plugin'
 import type {
   Account,
   AccountDB,
   AccountInfo,
-  ClientWorkspaceInfo,
   Invite,
   LoginInfo,
   ObjectId,
@@ -66,7 +77,6 @@ import type {
   RegionInfo,
   UpgradeStatistic,
   Workspace,
-  WorkspaceEvent,
   WorkspaceInfo,
   WorkspaceLoginInfo,
   WorkspaceOperation
@@ -83,6 +93,14 @@ import {
   verifyPassword
 } from './utils'
 
+import MD5 from 'crypto-js/md5'
+
+const workspaceLimitPerUser =
+  process.env.WORKSPACE_LIMIT_PER_USER != null ? parseInt(process.env.WORKSPACE_LIMIT_PER_USER) : 10
+
+function buildGravatarId (email: string): string {
+  return MD5(email.trim().toLowerCase()).toString()
+}
 /**
  * @public
  */
@@ -131,6 +149,16 @@ export async function getWorkspaceById (db: AccountDB, workspace: string): Promi
   return await db.workspace.findOne({ workspace })
 }
 
+/**
+ * @public
+ * @param db -
+ * @param workspace -
+ * @returns
+ */
+export async function getWorkspacesById (db: AccountDB, workspace: string | string[]): Promise<Workspace[]> {
+  return await db.workspace.find(Array.isArray(workspace) ? { workspace: { $in: workspace } } : { workspace })
+}
+
 async function getAccountInfo (
   ctx: MeasureContext,
   db: AccountDB,
@@ -151,9 +179,9 @@ async function getAccountInfo (
   return toAccountInfo(account)
 }
 
-async function sendOtpEmail (branding: Branding | null, otp: string, email: string): Promise<void> {
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
-  if (sesURL === undefined || sesURL === '') {
+async function sendOtpEmail (ctx: MeasureContext, branding: Branding | null, otp: string, email: string): Promise<void> {
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
+  if (mailURL === undefined || mailURL === '') {
     console.info('Please provide email service url to enable email otp.')
     return
   }
@@ -166,7 +194,7 @@ async function sendOtpEmail (branding: Branding | null, otp: string, email: stri
   const subject = await translate(accountPlugin.string.OtpSubject, { code: otp, app }, lang)
 
   const to = email
-  await fetch(concatLink(sesURL, '/send'), {
+  const response = await fetch(concatLink(mailURL, '/send'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -178,6 +206,12 @@ async function sendOtpEmail (branding: Branding | null, otp: string, email: stri
       to
     })
   })
+  if (!response.ok) {
+    ctx.error('Failed to send OTP email', {
+      email,
+      error: response.statusText
+    })
+  }
 }
 
 export async function getAccountInfoByToken (
@@ -290,7 +324,7 @@ export async function sendOtp (
   const expires = now + timeToLive
   const otp = await getNewOtp(db)
 
-  await sendOtpEmail(branding, otp, email)
+  await sendOtpEmail(ctx, branding, otp, email)
   await db.otp.insertOne({ account: account._id, otp, expires, createdOn: now })
 
   return { sent: true, retryOn: now + retryDelay * 1000 }
@@ -405,13 +439,25 @@ export async function selectWorkspace (
   branding: Branding | null,
   token: string,
   workspaceUrl: string,
-  kind: 'external' | 'internal',
-  allowAdmin: boolean = true
+  kind: 'external' | 'internal' | 'byregion',
+  allowAdmin: boolean = true,
+  externalRegions: string[] = []
 ): Promise<WorkspaceLoginInfo> {
   const decodedToken = decodeToken(ctx, token)
   const email = cleanEmail(decodedToken.email)
 
-  const endpointKind = kind === 'external' ? EndpointKind.External : EndpointKind.Internal
+  const getKind = (region: string | undefined): EndpointKind => {
+    switch (kind) {
+      case 'external':
+        return EndpointKind.External
+      case 'internal':
+        return EndpointKind.Internal
+      case 'byregion':
+        return externalRegions.includes(region ?? '') ? EndpointKind.External : EndpointKind.Internal
+      default:
+        return EndpointKind.External
+    }
+  }
 
   if (email === guestAccountEmail && decodedToken.extra?.guest === 'true') {
     const workspaceInfo = await getWorkspaceByUrl(db, workspaceUrl)
@@ -420,9 +466,10 @@ export async function selectWorkspace (
         new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: workspaceUrl })
       )
     }
+
     // Guest mode select workspace
     return {
-      endpoint: getEndpoint(ctx, workspaceInfo, kind === 'external' ? EndpointKind.External : EndpointKind.Internal),
+      endpoint: getEndpoint(ctx, workspaceInfo, getKind(workspaceInfo.region)),
       email,
       token,
       workspace: workspaceUrl,
@@ -454,7 +501,7 @@ export async function selectWorkspace (
 
   if ((accountInfo?.admin === true || email === systemAccountEmail) && allowAdmin) {
     return {
-      endpoint: getEndpoint(ctx, workspaceInfo, endpointKind),
+      endpoint: getEndpoint(ctx, workspaceInfo, getKind(workspaceInfo.region)),
       email,
       token: generateToken(email, getWorkspaceId(workspaceInfo.workspace), getExtra(accountInfo)),
       workspace: workspaceUrl,
@@ -465,7 +512,7 @@ export async function selectWorkspace (
   }
 
   if (workspaceInfo !== null) {
-    if (workspaceInfo.disabled === true && workspaceInfo.mode === 'active') {
+    if (workspaceInfo.disabled === true && isActiveMode(workspaceInfo.mode)) {
       ctx.error('workspace disabled', { workspaceUrl, email })
       throw new PlatformError(
         new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: workspaceUrl })
@@ -476,7 +523,7 @@ export async function selectWorkspace (
     for (const w of workspaces) {
       if (areDbIdsEqual(w, workspaceInfo._id)) {
         const result = {
-          endpoint: getEndpoint(ctx, workspaceInfo, endpointKind),
+          endpoint: getEndpoint(ctx, workspaceInfo, getKind(workspaceInfo.region)),
           email,
           token: generateToken(email, getWorkspaceId(workspaceInfo.workspace), getExtra(accountInfo)),
           workspace: workspaceUrl,
@@ -544,7 +591,7 @@ export async function join (
   const invite = await getInvite(db, inviteId)
   const workspace = await checkInvite(ctx, invite, email)
   ctx.info(`join attempt:${email}, ${workspace.name}`)
-  const ws = await assignWorkspace(
+  const ws = await assignAccountToWs(
     ctx,
     db,
     branding,
@@ -608,8 +655,8 @@ export async function confirm (
 }
 
 async function sendConfirmation (branding: Branding | null, account: Account): Promise<void> {
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
-  if (sesURL === undefined || sesURL === '') {
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
+  if (mailURL === undefined || mailURL === '') {
     console.info('Please provide email service url to enable email confirmations.')
     return
   }
@@ -634,9 +681,9 @@ async function sendConfirmation (branding: Branding | null, account: Account): P
   const html = await translate(accountPlugin.string.ConfirmationHTML, { name, link }, lang)
   const subject = await translate(accountPlugin.string.ConfirmationSubject, { name }, lang)
 
-  if (sesURL !== undefined && sesURL !== '') {
+  if (mailURL !== undefined && mailURL !== '') {
     const to = account.email
-    await fetch(concatLink(sesURL, '/send'), {
+    await fetch(concatLink(mailURL, '/send'), {
       method: 'post',
       headers: {
         'Content-Type': 'application/json'
@@ -668,7 +715,7 @@ export async function signUpJoin (
   console.log(`signup join:${email} ${first} ${last}`)
   const invite = await getInvite(db, inviteId)
   const workspace = await checkInvite(ctx, invite, email)
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
   await createAcc(
     ctx,
     db,
@@ -677,9 +724,9 @@ export async function signUpJoin (
     password,
     first,
     last,
-    invite?.emailMask === email || invite?.personId !== undefined || sesURL === undefined || sesURL === ''
+    invite?.emailMask === email || invite?.personId !== undefined || mailURL === undefined || mailURL === ''
   )
-  const ws = await assignWorkspace(
+  const ws = await assignAccountToWs(
     ctx,
     db,
     branding,
@@ -714,8 +761,7 @@ export async function createAcc (
   const salt = randomBytes(32)
   const hash = password !== null ? hashWithSalt(password, salt) : null
 
-  const systemEmails = [systemAccountEmail]
-  if (systemEmails.includes(email)) {
+  if (systemAccountEmail === email) {
     ctx.error('system email used for account', { email })
     throw new PlatformError(new Status(Severity.ERROR, platform.status.AccountAlreadyExists, { account: email }))
   }
@@ -745,9 +791,9 @@ export async function createAcc (
   if (newAccount === null) {
     throw new PlatformError(new Status(Severity.ERROR, platform.status.AccountAlreadyExists, { account: email }))
   }
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
   if (!confirmed && shouldConfirm) {
-    if (sesURL !== undefined && sesURL !== '') {
+    if (mailURL !== undefined && mailURL !== '') {
       await sendConfirmation(branding, newAccount)
     } else {
       ctx.info('Please provide email service url to enable email confirmations.')
@@ -771,7 +817,7 @@ export async function createAccount (
   last: string
 ): Promise<LoginInfo> {
   const email = cleanEmail(_email)
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
   const account = await createAcc(
     ctx,
     db,
@@ -780,7 +826,7 @@ export async function createAccount (
     password,
     first,
     last,
-    sesURL === undefined || sesURL === ''
+    mailURL === undefined || mailURL === ''
   )
 
   const result = {
@@ -816,11 +862,27 @@ export async function listWorkspaces (
   ctx: MeasureContext,
   db: AccountDB,
   branding: Branding | null,
-  token: string
+  token: string,
+  region?: string | null,
+  mode?: WorkspaceMode | null
 ): Promise<WorkspaceInfo[]> {
   decodeToken(ctx, token) // Just verify token is valid
 
-  return (await db.workspace.find({})).filter((it) => it.disabled !== true).map(trimWorkspaceInfo)
+  if (region === '') {
+    region = null
+  }
+
+  const q: Query<Workspace> = {
+    disabled: { $ne: true }
+  }
+  if (region != null) {
+    q.region = region
+  }
+  if (mode != null) {
+    q.mode = mode
+  }
+
+  return (await db.workspace.find(q)).map(trimWorkspaceInfo)
 }
 
 /**
@@ -853,8 +915,11 @@ export async function countWorkspacesInRegion (
 /**
  * @public
  */
-export async function listWorkspacesRaw (db: AccountDB): Promise<Workspace[]> {
-  return (await db.workspace.find({})).filter((it) => it.disabled !== true)
+export async function listWorkspacesRaw (db: AccountDB, region?: string): Promise<Workspace[]> {
+  if (region === '') {
+    region = undefined
+  }
+  return (await db.workspace.find(region !== undefined ? { region } : {})).filter((it) => it.disabled !== true)
 }
 
 /**
@@ -925,7 +990,8 @@ async function generateWorkspaceRecord (
   branding: Branding | null,
   workspaceName: string,
   fixedWorkspace?: string,
-  region?: string
+  region?: string,
+  initMode: WorkspaceMode = 'pending-creation'
 ): Promise<Workspace> {
   type WorkspaceData = Omit<Workspace, '_id' | 'endpoint'>
   const brandingKey = branding?.key ?? 'huly'
@@ -957,7 +1023,7 @@ async function generateWorkspaceRecord (
       accounts: [],
       disabled: true,
       region: region ?? '',
-      mode: 'pending-creation',
+      mode: initMode,
       progress: 0,
       createdOn: Date.now(),
       lastVisit: Date.now(),
@@ -995,7 +1061,7 @@ async function generateWorkspaceRecord (
         accounts: [],
         disabled: true,
         region: region ?? '',
-        mode: 'pending-creation',
+        mode: initMode,
         progress: 0,
         createdOn: Date.now(),
         lastVisit: Date.now(),
@@ -1036,12 +1102,13 @@ export async function createWorkspace (
   email: string,
   workspaceName: string,
   workspace?: string,
-  region?: string
+  region?: string,
+  initMode: WorkspaceMode = 'pending-creation'
 ): Promise<Workspace> {
   // We need to search for duplicate workspaceUrl
   // Safe generate workspace record.
   return await createQueue.exec(async () => {
-    return await generateWorkspaceRecord(db, email, branding, workspaceName, workspace, region)
+    return await generateWorkspaceRecord(db, email, branding, workspaceName, workspace, region, initMode)
   })
 }
 
@@ -1072,10 +1139,8 @@ export async function workerHandshake (
     return
   }
 
-  const workspacesCnt = await ctx.with(
-    'count-workspaces-in-region',
-    {},
-    async (ctx) => await countWorkspacesInRegion(db, region, version, Date.now() - 24 * 60 * 60 * 1000)
+  const workspacesCnt = await ctx.with('count-workspaces-in-region', {}, (ctx) =>
+    countWorkspacesInRegion(db, region, version, Date.now() - 24 * 60 * 60 * 1000)
   )
 
   await db.upgrade.insertOne({
@@ -1096,21 +1161,24 @@ export async function updateWorkspaceInfo (
   branding: Branding | null,
   token: string,
   workspaceId: string,
-  event: WorkspaceEvent,
+  event: WorkspaceUpdateEvent,
   version: Data<Version>, // A worker version
   progress: number,
   message?: string
 ): Promise<void> {
   const decodedToken = decodeToken(ctx, token)
-  if (decodedToken.extra?.service !== 'workspace') {
+  if (decodedToken.extra?.service !== 'workspace' && decodedToken.email !== systemAccountEmail) {
     throw new PlatformError(new Status(Severity.ERROR, platform.status.Forbidden, {}))
   }
   const workspaceInfo = await getWorkspaceById(db, workspaceId)
   if (workspaceInfo === null) {
     throw new PlatformError(new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: workspaceId }))
   }
+  progress = Math.round(progress)
 
-  const update: Partial<WorkspaceInfo> = {}
+  const update: Partial<WorkspaceInfo> = {
+    lastProcessingTime: Date.now()
+  }
   switch (event) {
     case 'create-started':
       update.mode = 'creating'
@@ -1150,6 +1218,65 @@ export async function updateWorkspaceInfo (
     case 'progress':
       update.progress = progress
       break
+
+    case 'migrate-backup-started':
+      update.mode = 'migration-backup'
+      update.progress = progress
+      break
+    case 'migrate-backup-done':
+      update.mode = 'migration-pending-clean'
+      update.progress = progress
+      update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+      break
+    case 'migrate-clean-started':
+      update.mode = 'migration-clean'
+      update.attempts = 0
+      update.progress = progress
+      break
+    case 'migrate-clean-done':
+      update.region = workspaceInfo.targetRegion ?? ''
+      update.mode = 'pending-restore'
+      update.progress = progress
+      update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+      break
+    case 'restore-started':
+      update.mode = 'restoring'
+      update.attempts = 0
+      update.progress = progress
+      break
+    case 'restore-done':
+      update.mode = 'active'
+      update.progress = 100
+      update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+      break
+
+    case 'archiving-backup-started':
+      update.mode = 'archiving-backup'
+      update.attempts = 0
+      update.progress = progress
+      break
+    case 'archiving-backup-done':
+      update.mode = 'archiving-pending-clean'
+      update.progress = progress
+      update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+      break
+    case 'archiving-clean-started':
+      update.mode = 'archiving-clean'
+      update.attempts = 0
+      update.progress = progress
+      break
+    case 'archiving-clean-done':
+      update.mode = 'archived'
+      update.progress = 100
+      break
+    case 'delete-started':
+      update.mode = 'deleting'
+      update.progress = 0
+      break
+    case 'delete-done':
+      update.mode = 'deleted'
+      update.progress = 100
+      break
     case 'ping':
     default:
       break
@@ -1162,10 +1289,114 @@ export async function updateWorkspaceInfo (
   await db.workspace.updateOne(
     { _id: workspaceInfo._id },
     {
-      ...update,
-      lastProcessingTime: Date.now()
+      ...update
     }
   )
+}
+
+/**
+ * @public
+ */
+export async function performWorkspaceOperation (
+  ctx: MeasureContext,
+  db: AccountDB,
+  branding: Branding | null,
+  token: string,
+  workspaceId: string | string[],
+  event: 'archive' | 'migrate-to' | 'unarchive' | 'delete',
+  ...params: any
+): Promise<boolean> {
+  const decodedToken = decodeToken(ctx, token)
+
+  const account = await getAccount(db, decodedToken.email)
+  if (account === null) {
+    ctx.error('account not found', { email: decodedToken.email })
+    return false
+  }
+
+  if (account.admin !== true) {
+    if (event !== 'unarchive' || workspaceId !== decodedToken.workspace.name) {
+      return false
+    }
+  }
+  const workspaceInfos = await getWorkspacesById(db, workspaceId)
+  if (workspaceInfos.length === 0) {
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: workspaceId }))
+  }
+
+  let ops = 0
+  for (const workspaceInfo of workspaceInfos) {
+    const update: Partial<WorkspaceInfo> = {}
+    switch (event) {
+      case 'delete':
+        if (workspaceInfo.mode !== 'active') {
+          throw new PlatformError(unknownError('Delete allowed only for active workspaces'))
+        }
+
+        update.mode = 'pending-deletion'
+        update.attempts = 0
+        update.progress = 0
+        update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+        break
+      case 'archive':
+        if (workspaceInfo.mode !== 'active') {
+          throw new PlatformError(unknownError('Archive allowed only for active workspaces'))
+        }
+
+        update.mode = 'archiving-pending-backup'
+        update.attempts = 0
+        update.progress = 0
+        update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+        break
+      case 'unarchive':
+        if (event === 'unarchive') {
+          if (workspaceInfo.mode !== 'archived') {
+            throw new PlatformError(unknownError('Unarchive allowed only for archived workspaces'))
+          }
+        }
+
+        update.mode = 'pending-restore'
+        update.attempts = 0
+        update.progress = 0
+        update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+        break
+      case 'migrate-to': {
+        if (workspaceInfo.mode !== 'active') {
+          return false
+        }
+        if (params.length !== 1 && params[0] == null) {
+          throw new PlatformError(unknownError('Invalid region passed to migrate operation'))
+        }
+        const regions = getRegions()
+        if (regions.find((it) => it.region === params[0]) === undefined) {
+          throw new PlatformError(unknownError('Invalid region passed to migrate operation'))
+        }
+        if ((workspaceInfo.region ?? '') === params[0]) {
+          throw new PlatformError(unknownError('Invalid region passed to migrate operation'))
+        }
+
+        update.mode = 'migration-pending-backup'
+        update.targetRegion = params[0]
+        update.attempts = 0
+        update.progress = 0
+        update.lastProcessingTime = Date.now() - processingTimeoutMs // To not wait for next step
+        break
+      }
+      default:
+        break
+    }
+
+    if (Object.keys(update).length !== 0) {
+      await db.workspace.updateOne(
+        { _id: workspaceInfo._id },
+        {
+          ...update
+        }
+      )
+      ops++
+    }
+  }
+  return ops > 0
 }
 
 /**
@@ -1198,6 +1429,28 @@ export async function updateBackupInfo (
   )
 }
 
+/**
+ * @public
+ */
+export async function updateArchiveInfo (
+  ctx: MeasureContext,
+  db: AccountDB,
+  workspace: string,
+  value: boolean
+): Promise<void> {
+  const workspaceInfo = await getWorkspaceById(db, workspace)
+  if (workspaceInfo === null) {
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace }))
+  }
+
+  await db.workspace.updateOne(
+    { _id: workspaceInfo._id },
+    {
+      mode: 'archived'
+    }
+  )
+}
+
 async function postCreateUserWorkspace (
   ctx: MeasureContext,
   db: AccountDB,
@@ -1213,7 +1466,7 @@ async function postCreateUserWorkspace (
     }
   )
   try {
-    await assignWorkspace(
+    await assignAccountToWs(
       ctx,
       db,
       branding,
@@ -1255,6 +1508,8 @@ async function postUpgradeUserWorkspace (
   )
 }
 
+const processingTimeoutMs = 30 * 1000
+
 /**
  * Retrieves one workspace for which there are things to process.
  *
@@ -1277,7 +1532,6 @@ export async function getPendingWorkspace (
     throw new PlatformError(new Status(Severity.ERROR, platform.status.Forbidden, {}))
   }
   // Move to config?
-  const processingTimeoutMs = 30 * 1000
   const wsLivenessDays = getMetadata(accountPlugin.metadata.WsLivenessDays)
   const wsLivenessMs = wsLivenessDays !== undefined ? wsLivenessDays * 24 * 60 * 60 * 1000 : undefined
 
@@ -1322,6 +1576,16 @@ export async function createUserWorkspace (
     throw new PlatformError(new Status(Severity.ERROR, platform.status.AccountNotConfirmed, { account: email }))
   }
 
+  // Get a list of created workspaces
+  const created = (await db.workspace.find({ createdBy: email })).length
+
+  if (created >= (userAccount.workspaceLimit ?? workspaceLimitPerUser)) {
+    ctx.warn('created-by-limit', { email, workspace: workspaceName, limit: userAccount.workspaceLimit })
+    throw new PlatformError(
+      new Status(Severity.ERROR, platform.status.WorkspaceLimitReached, { workspace: workspaceName })
+    )
+  }
+
   if (userAccount.lastWorkspace !== undefined && userAccount.admin === false) {
     if (Date.now() - userAccount.lastWorkspace < 60 * 1000) {
       throw new PlatformError(
@@ -1340,7 +1604,9 @@ export async function createUserWorkspace (
     endpoint: getEndpoint(ctx, workspaceInfo, EndpointKind.External),
     email,
     token: generateToken(email, getWorkspaceId(workspaceInfo.workspace), getExtra(userAccount)),
-    workspace: workspaceInfo.workspaceUrl
+    workspace: workspaceInfo.workspaceUrl,
+    workspaceId: workspaceInfo.workspace,
+    workspaceName: workspaceInfo.workspaceName
   }
   ctx.info('Creating user side done', { workspaceName, email })
   return result
@@ -1383,6 +1649,46 @@ export async function getInviteLink (
   return result
 }
 
+/**
+ * @public
+ * @description This function gets or create an invitation. The second return parameter
+ * can be used to check if invite is created
+ */
+async function getOrCreateInvite (
+  db: AccountDB,
+  workspace: WorkspaceId,
+  emailMask: string,
+  personId?: Ref<Person>
+): Promise<[ObjectId, boolean]> {
+  let invite = await db.invite.findOne({ emailMask })
+
+  if (invite !== null) {
+    return [invite, false]
+  }
+
+  if (invite === null) {
+    const expHours = 48
+    const newExp = Date.now() + expHours * 60 * 60 * 1000
+
+    const data = {
+      workspace,
+      exp: newExp,
+      emailMask,
+      limit: 1,
+      role: AccountRole.User,
+      personId
+    }
+
+    invite = await db.invite.insertOne(data, '_id')
+  }
+
+  if (invite === null) {
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.InviteNotFound, { email: emailMask }))
+  }
+
+  return [invite, true]
+}
+
 function mapToClientWorkspace (ws: Workspace): ClientWorkspaceInfo {
   const { _id, accounts, ...data } = ws
   return { ...data, workspace: ws.workspaceUrl ?? ws.workspace, workspaceId: ws.workspace }
@@ -1409,17 +1715,49 @@ export async function getUserWorkspaces (
     return []
   }
 
-  if (account.admin !== true && account.workspaces.length === 0) {
+  if (account.workspaces.length === 0) {
     return []
   }
 
   return (
-    await db.workspace.find(account.admin === true ? {} : { _id: { $in: account.workspaces } }, {
-      lastVisit: 'descending'
-    })
+    await db.workspace.find(
+      { _id: { $in: account.workspaces } },
+      {
+        lastVisit: 'descending'
+      }
+    )
   )
     .filter((it) => it.disabled !== true || isWorkspaceCreating(it.mode))
     .map(mapToClientWorkspace)
+}
+
+/**
+ * Admin only operation to list workspaced based on last visit, for admin purposes.
+ *
+ * @public
+ */
+export async function getAllWorkspaces (
+  ctx: MeasureContext,
+  db: AccountDB,
+  branding: Branding | null,
+  token: string,
+  mode?: WorkspaceMode
+): Promise<BaseWorkspaceInfo[]> {
+  const { email } = decodeToken(ctx, token)
+  const account = await getAccount(db, email)
+  if (account === null) {
+    ctx.error('account not found', { email })
+    return []
+  }
+
+  if (account.admin !== true) {
+    return []
+  }
+
+  return (await db.workspace.find({})).map((it) => {
+    ;(it as any).accounts = (it.accounts ?? []).length
+    return it
+  })
 }
 
 export type ClientWSInfoWithUpgrade = ClientWorkspaceInfo & {
@@ -1448,7 +1786,7 @@ export async function getWorkspaceInfo (
     workspace: workspace.name
   }
   if (email !== systemAccountEmail && !guest) {
-    account = await ctx.with('get-account', {}, async () => await getAccount(db, email))
+    account = await ctx.with('get-account', {}, () => getAccount(db, email))
     if (account === null) {
       ctx.error('no account', { email, token })
       throw new PlatformError(new Status(Severity.ERROR, platform.status.Forbidden, {}))
@@ -1475,17 +1813,15 @@ export async function getWorkspaceInfo (
 
   const [ws] = await ctx.with('get-workspace', {}, async () =>
     (await db.workspace.find(query)).filter(
-      (it) => it.disabled !== true || account?.admin === true || it.mode !== 'active'
+      (it) => it.disabled !== true || account?.admin === true || !isActiveMode(it.mode)
     )
   )
   if (ws == null) {
     ctx.error('no workspace', { workspace: workspace.name, email })
     throw new PlatformError(new Status(Severity.ERROR, platform.status.Forbidden, {}))
   }
-  if (_updateLastVisit && (isAccount(account) || email === systemAccountEmail)) {
-    void ctx.with('update-last-visit', {}, async () => {
-      await updateLastVisit(db, ws, account as Account)
-    })
+  if (!isArchivingMode(ws.mode) && _updateLastVisit && (isAccount(account) || email === systemAccountEmail)) {
+    void ctx.with('update-last-visit', {}, () => updateLastVisit(db, ws, account as Account))
   }
 
   const clientWs: ClientWSInfoWithUpgrade = mapToClientWorkspace(ws)
@@ -1506,6 +1842,34 @@ export async function getWorkspaceInfo (
   clientWs.upgrade = upgrade
 
   return clientWs
+}
+
+/**
+ * @public
+ */
+export async function getWorkspacesInfo (
+  ctx: MeasureContext,
+  db: AccountDB,
+  branding: Branding | null,
+  token: string,
+  ids: string[]
+): Promise<ClientWorkspaceInfo[]> {
+  const { email } = decodeToken(ctx, token)
+
+  if (email !== systemAccountEmail) {
+    ctx.error('getWorkspaceInfos with wrong email', { email, token })
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.Forbidden, {}))
+  }
+  const query: Query<Workspace> = {
+    workspace: { $in: ids }
+  }
+  const workspaces = await ctx.with(
+    'get-workspace',
+    {},
+    async () => await db.workspace.find(query, { lastVisit: 'descending' })
+  )
+
+  return workspaces.map(mapToClientWorkspace)
 }
 
 async function getUpgradeStatistics (db: AccountDB, region: string): Promise<UpgradeStatistic | undefined> {
@@ -1607,6 +1971,38 @@ export async function createMissingEmployee (
  * @public
  */
 export async function assignWorkspace (
+  ctx: MeasureContext,
+  db: AccountDB,
+  branding: Branding | null,
+  token: string,
+  _email: string,
+  workspaceId: string,
+  role: AccountRole,
+  personId?: Ref<Person>,
+  shouldReplaceAccount: boolean = false,
+  client?: Client,
+  personAccountId?: Ref<PersonAccount>
+): Promise<Workspace> {
+  const decodedToken = decodeToken(ctx, token)
+  if (decodedToken.extra?.service !== 'aibot') {
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.Forbidden, {}))
+  }
+
+  return await assignAccountToWs(
+    ctx,
+    db,
+    branding,
+    _email,
+    workspaceId,
+    role,
+    personId,
+    shouldReplaceAccount,
+    client,
+    personAccountId
+  )
+}
+
+export async function assignAccountToWs (
   ctx: MeasureContext,
   db: AccountDB,
   branding: Branding | null,
@@ -1764,7 +2160,7 @@ async function createPersonAccount (
         return
       }
     }
-    const shouldCreateEmployee = roleOrder[role] >= roleOrder[AccountRole.Guest]
+    const shouldCreateEmployee = roleOrder[role] >= roleOrder[AccountRole.User]
     const existingAccount = await ops.findOne(contact.class.PersonAccount, { email: account.email })
     if (existingAccount === undefined) {
       let person: Ref<Person> | undefined
@@ -1786,6 +2182,9 @@ async function createPersonAccount (
         personAccountId
       )
     } else {
+      if (roleOrder[existingAccount.role] < roleOrder[role]) {
+        await ops.update(existingAccount, { role })
+      }
       const person = await ops.findOne(contact.class.Person, { _id: existingAccount.person })
       if (person === undefined) {
         // Employee was deleted, let's restore it.
@@ -1794,10 +2193,16 @@ async function createPersonAccount (
         await ops.updateDoc(contact.class.PersonAccount, existingAccount.space, existingAccount._id, {
           person: employeeId
         })
-      } else if (ops.getHierarchy().hasMixin(person, contact.mixin.Employee)) {
-        const employee = ops.getHierarchy().as(person, contact.mixin.Employee)
-        if (!employee.active) {
-          await ops.update(employee, {
+      } else if (shouldCreateEmployee) {
+        if (ops.getHierarchy().hasMixin(person, contact.mixin.Employee)) {
+          const employee = ops.getHierarchy().as(person, contact.mixin.Employee)
+          if (!employee.active) {
+            await ops.update(employee, {
+              active: true
+            })
+          }
+        } else {
+          await ops.createMixin(person._id, contact.class.Person, contact.space.Contacts, contact.mixin.Employee, {
             active: true
           })
         }
@@ -1876,8 +2281,8 @@ export async function requestPassword (
     throw new PlatformError(new Status(Severity.ERROR, platform.status.AccountNotFound, { account: email }))
   }
 
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
-  if (sesURL === undefined || sesURL === '') {
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
+  if (mailURL === undefined || mailURL === '') {
     throw new Error('Please provide email service url')
   }
   const front = branding?.front ?? getMetadata(accountPlugin.metadata.FrontURL)
@@ -1900,7 +2305,7 @@ export async function requestPassword (
   const subject = await translate(accountPlugin.string.RecoverySubject, {}, lang)
 
   const to = account.email
-  await fetch(concatLink(sesURL, '/send'), {
+  const response = await fetch(concatLink(mailURL, '/send'), {
     method: 'post',
     headers: {
       'Content-Type': 'application/json'
@@ -1912,7 +2317,15 @@ export async function requestPassword (
       to
     })
   })
-  ctx.info('recovery email sent', { email, accountEmail: account.email })
+  if (response.ok) {
+    ctx.info('recovery email sent', { email, accountEmail: account.email })
+  } else {
+    ctx.error('Failed to send reset password email', {
+      email,
+      accountEmail: account.email,
+      error: response.statusText
+    })
+  }
 }
 
 /**
@@ -2019,14 +2432,16 @@ export async function dropWorkspace (
 export async function dropWorkspaceFull (
   ctx: MeasureContext,
   db: AccountDB,
-  client: MongoClient,
+  dbUrl: string,
   branding: Branding | null,
   workspaceId: string,
   storageAdapter?: StorageAdapter
 ): Promise<void> {
   const ws = await dropWorkspace(ctx, db, branding, workspaceId)
-  const workspaceDb = client.db(ws.workspace)
-  await workspaceDb.dropDatabase()
+
+  const adapter = getWorkspaceDestroyAdapter(dbUrl)
+  await adapter.deleteWorkspace(ctx, sharedPipelineContextVars, { name: ws.workspace })
+
   const wspace = getWorkspaceId(workspaceId)
   const hasBucket = await storageAdapter?.exists(ctx, wspace)
   if (storageAdapter !== undefined && hasBucket === true) {
@@ -2101,6 +2516,16 @@ export async function leaveWorkspace (
   ctx.info('Account removed from workspace', { email, workspace })
 }
 
+export function sanitizeEmail (email: string): string {
+  if (email == null || typeof email !== 'string') return ''
+  const sanitizedEmail = email
+    .trim()
+    .replace(/[<>/\\@{}()[\]'"`]/g, '') // Remove special chars and quotes
+    .replace(/^(http|ssh|ftp|https|mailto|javascript|data|file):?\/?\/?\s*/i, '') // Remove potentially dangerous protocols
+    .slice(0, 40)
+  return sanitizedEmail
+}
+
 /**
  * @public
  */
@@ -2115,7 +2540,7 @@ export async function sendInvite (
 ): Promise<void> {
   const tokenData = decodeToken(ctx, token)
   const currentAccount = await getAccount(db, tokenData.email)
-  if (currentAccount === null) {
+  if (currentAccount == null) {
     throw new PlatformError(new Status(Severity.ERROR, platform.status.AccountNotFound, { account: tokenData.email }))
   }
 
@@ -2125,13 +2550,10 @@ export async function sendInvite (
       new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: tokenData.workspace.name })
     )
   }
+  await checkSendRateLimit(currentAccount, tokenData.workspace.name, db)
 
-  // TODO: Why we not send invite if user has account???
-  // const account = await getAccount(db, email)
-  // if (account !== null) return
-
-  const sesURL = getMetadata(accountPlugin.metadata.SES_URL)
-  if (sesURL === undefined || sesURL === '') {
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
+  if (mailURL === undefined || mailURL === '') {
     throw new Error('Please provide email service url')
   }
   const front = branding?.front ?? getMetadata(accountPlugin.metadata.FrontURL)
@@ -2142,17 +2564,18 @@ export async function sendInvite (
   const expHours = 48
   const exp = expHours * 60 * 60 * 1000
 
-  const inviteId = await getInviteLink(ctx, db, branding, token, exp, email, 1)
+  const inviteId = await getInviteLink(ctx, db, branding, token, exp, email, 1, role, personId)
   const link = concatLink(front, `/login/join?inviteId=${inviteId.toString()}`)
 
-  const ws = workspace.workspaceName ?? workspace.workspace
+  const ws = sanitizeEmail(workspace.workspaceName ?? workspace.workspaceUrl ?? workspace.workspace)
+
   const lang = branding?.language
   const text = await translate(accountPlugin.string.InviteText, { link, ws, expHours }, lang)
   const html = await translate(accountPlugin.string.InviteHTML, { link, ws, expHours }, lang)
   const subject = await translate(accountPlugin.string.InviteSubject, { ws }, lang)
 
   const to = email
-  await fetch(concatLink(sesURL, '/send'), {
+  const response = await fetch(concatLink(mailURL, '/send'), {
     method: 'post',
     headers: {
       'Content-Type': 'application/json'
@@ -2164,7 +2587,109 @@ export async function sendInvite (
       to
     })
   })
-  ctx.info('Invite sent', { email, workspace, link })
+  if (response.ok) {
+    ctx.info('Invite sent', { email, workspace, link })
+  } else {
+    ctx.error('Failed to send invite email', {
+      email,
+      workspace,
+      link,
+      error: response.statusText
+    })
+  }
+}
+
+async function checkSendRateLimit (currentAccount: Account, workspace: string, db: AccountDB): Promise<void> {
+  let sendOps = (currentAccount.sendOperations ?? 0) + 1
+
+  const timePassed = Date.now() - (currentAccount.lastWorkspace ?? 0)
+
+  if (timePassed < 60 * 1000 && sendOps > 5) {
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.WorkspaceRateLimit, { workspace }))
+  }
+  if (timePassed > (sendOps - 1) * 60 * 1000) {
+    sendOps = 1
+  }
+  await db.account.updateOne({ _id: currentAccount._id }, { lastWorkspace: Date.now(), sendOperations: sendOps })
+}
+
+/**
+ *
+ * @public
+ */
+export async function resendInvite (
+  ctx: MeasureContext,
+  db: AccountDB,
+  branding: Branding | null,
+  token: string,
+  emailMask: string,
+  personId?: Ref<Person>
+): Promise<void> {
+  const { workspace, email } = decodeToken(ctx, token)
+  const currentAccount = await getAccount(db, email)
+  if (currentAccount === null) {
+    throw new PlatformError(new Status(Severity.ERROR, platform.status.AccountNotFound, { account: email }))
+  }
+
+  const wsPromise = await getWorkspaceById(db, workspace.name)
+  if (wsPromise === null) {
+    throw new PlatformError(
+      new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: workspace.name })
+    )
+  }
+
+  const [invite, created] = await getOrCreateInvite(db, workspace, emailMask, personId)
+
+  const inviteId = invite._id
+  const expHours = 48
+
+  if (!created) {
+    const newExp = Date.now() + expHours * 60 * 60 * 1000
+
+    await db.invite.updateOne({ _id: db.getObjectId(inviteId) }, { exp: newExp })
+  }
+
+  await checkSendRateLimit(currentAccount, workspace.name, db)
+
+  const mailURL = getMetadata(accountPlugin.metadata.MAIL_URL)
+  if (mailURL === undefined || mailURL === '') {
+    throw new Error('Please provide email service url')
+  }
+  const front = branding?.front ?? getMetadata(accountPlugin.metadata.FrontURL)
+  if (front === undefined || front === '') {
+    throw new Error('Please provide front url')
+  }
+
+  const link = concatLink(front, `/login/join?inviteId=${inviteId.toString()}`)
+  const ws = sanitizeEmail(wsPromise.workspaceName ?? wsPromise.workspaceUrl ?? wsPromise.workspace)
+  const lang = branding?.language
+  const text = await translate(accountPlugin.string.ResendInviteText, { link, ws, expHours }, lang)
+  const html = await translate(accountPlugin.string.ResendInviteHTML, { link, ws, expHours }, lang)
+  const subject = await translate(accountPlugin.string.ResendInviteSubject, { ws }, lang)
+
+  const to = emailMask
+  const response = await fetch(concatLink(mailURL, '/send'), {
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      text,
+      html,
+      subject,
+      to
+    })
+  })
+  if (response.ok) {
+    ctx.info('Invite resend and email sent', { email: emailMask, workspace: wsPromise.workspace, link })
+  } else {
+    ctx.error('Failed to send invite resend email', {
+      email: emailMask,
+      workspace: wsPromise.workspace,
+      link,
+      error: response.statusText
+    })
+  }
 }
 
 async function deactivatePersonAccount (
@@ -2233,6 +2758,12 @@ function wrap (
             error: new Status(Severity.ERROR, platform.status.Unauthorized, {})
           }
         }
+        if (status.code === platform.status.InvalidPassword || status.code === platform.status.AccountNotFound) {
+          ctx.warn('error', { status: status.code, err: err.message })
+          return {
+            error: status
+          }
+        }
         if (status.code === platform.status.InternalServerError) {
           Analytics.handleError(err)
           ctx.error('error', { status, err })
@@ -2265,7 +2796,14 @@ export async function joinWithProvider (
     }
     let account = await getAccount(db, email)
     if (account == null && extra !== undefined) {
-      account = await getAccountByQuery(db, extra)
+      // Temporary: we don't want to use githubUser to search yet
+      // but we want to save it in the account
+      const extraSearch = {
+        ...extra
+      }
+      delete extraSearch.githubUser
+
+      account = await getAccountByQuery(db, extraSearch)
     }
     if (account !== null) {
       // we should clean password if account is not confirmed
@@ -2275,8 +2813,12 @@ export async function joinWithProvider (
 
       const token = generateToken(email, getWorkspaceId(''), getExtra(account))
       const ws = await getWorkspaceById(db, workspace.name)
-
-      if (ws != null && ws.accounts.includes(account._id)) {
+      if (ws == null) {
+        throw new PlatformError(
+          new Status(Severity.ERROR, platform.status.WorkspaceNotFound, { workspace: workspace.name })
+        )
+      }
+      if (ws.accounts.includes(account._id)) {
         const result = {
           endpoint: getEndpoint(ctx, ws, EndpointKind.External),
           email,
@@ -2285,7 +2827,7 @@ export async function joinWithProvider (
         return result
       }
 
-      const wsRes = await assignWorkspace(
+      const wsRes = await assignAccountToWs(
         ctx,
         db,
         branding,
@@ -2309,7 +2851,7 @@ export async function joinWithProvider (
     }
     const newAccount = await createAcc(ctx, db, branding, email, null, first, last, true, true, extra)
     const token = generateToken(email, getWorkspaceId(''), getExtra(newAccount))
-    const ws = await assignWorkspace(
+    const ws = await assignAccountToWs(
       ctx,
       db,
       branding,
@@ -2347,7 +2889,14 @@ export async function loginWithProvider (
     }
     let account = await getAccount(db, email)
     if (account == null && extra !== undefined) {
-      account = await getAccountByQuery(db, extra)
+      // Temporary: we don't want to use githubUser to search yet
+      // but we want to save it in the account
+      const extraSearch = {
+        ...extra
+      }
+      delete extraSearch.githubUser
+
+      account = await getAccountByQuery(db, extraSearch)
     }
     if (account !== null) {
       // we should clean password if account is not confirmed
@@ -2484,8 +3033,11 @@ export function getMethods (hasSignUp: boolean = true): Record<string, AccountMe
     selectWorkspace: wrap(selectWorkspace),
     getRegionInfo: wrap(getRegionInfo),
     getUserWorkspaces: wrap(getUserWorkspaces),
+    performWorkspaceOperation: wrap(performWorkspaceOperation),
+    getAllWorkspaces: wrap(getAllWorkspaces),
     getInviteLink: wrap(getInviteLink),
     getAccountInfo: wrap(getAccountInfo),
+    getWorkspacesInfo: wrap(getWorkspacesInfo),
     getWorkspaceInfo: wrap(getWorkspaceInfo),
     ...(hasSignUp ? { createAccount: wrap(createAccount) } : {}),
     createWorkspace: wrap(createUserWorkspace),
@@ -2497,6 +3049,7 @@ export function getMethods (hasSignUp: boolean = true): Record<string, AccountMe
     requestPassword: wrap(requestPassword),
     restorePassword: wrap(restorePassword),
     sendInvite: wrap(sendInvite),
+    resendInvite: wrap(resendInvite),
     confirm: wrap(confirm),
     getAccountInfoByToken: wrap(getAccountInfoByToken),
     createMissingEmployee: wrap(createMissingEmployee),

@@ -14,8 +14,8 @@
 //
 
 import { Analytics } from '@hcengineering/analytics'
-import { generateId, toWorkspaceString, type MeasureContext } from '@hcengineering/core'
-import { UNAUTHORIZED, unknownStatus } from '@hcengineering/platform'
+import { generateId, systemAccountEmail, toWorkspaceString, type MeasureContext, type Tx } from '@hcengineering/core'
+import platform, { Severity, Status, UNAUTHORIZED, unknownStatus } from '@hcengineering/platform'
 import { RPCHandler, type Response } from '@hcengineering/rpc'
 import {
   doSessionOp,
@@ -29,10 +29,12 @@ import {
 } from '@hcengineering/server'
 import {
   LOGGING_ENABLED,
+  pingConst,
+  pongConst,
   type ConnectionSocket,
   type HandleRequestFunction,
-  type SessionManager,
   type PipelineFactory,
+  type SessionManager,
   type StorageAdapter
 } from '@hcengineering/server-core'
 import { decodeToken, type Token } from '@hcengineering/server-token'
@@ -43,9 +45,18 @@ import os from 'os'
 import { WebSocketServer, type RawData, type WebSocket } from 'ws'
 
 import 'bufferutil'
+import { compress } from 'snappy'
 import 'utf-8-validate'
+import { registerRPC } from './rpc'
+import { retrieveJson } from './utils'
+import morgan from 'morgan'
+
+import { setImmediate } from 'timers/promises'
+
 let profiling = false
 const rpcHandler = new RPCHandler()
+
+const backpressureSize = 100 * 1024
 /**
  * @public
  * @param sessionFactory -
@@ -58,14 +69,12 @@ export function startHttpServer (
   ctx: MeasureContext,
   pipelineFactory: PipelineFactory,
   port: number,
-  enableCompression: boolean,
   accountsUrl: string,
   externalStorage: StorageAdapter
 ): () => Promise<void> {
   if (LOGGING_ENABLED) {
     ctx.info('starting server on', {
       port,
-      enableCompression,
       accountsUrl,
       parallel: os.availableParallelism()
     })
@@ -74,10 +83,29 @@ export function startHttpServer (
   const app = express()
   app.use(cors())
 
+  const childLogger = ctx.logger.childLogger?.('requests', {
+    enableConsole: 'true'
+  })
+  const requests = ctx.newChild('requests', {}, {}, childLogger)
+
+  class MyStream {
+    write (text: string): void {
+      requests.info(text)
+    }
+  }
+
+  const myStream = new MyStream()
+
+  app.use(morgan('short', { stream: myStream }))
+
   const getUsers = (): any => Array.from(sessions.sessions.entries()).map(([k, v]) => v.session.getUser())
 
   app.get('/api/v1/version', (req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      Connection: 'keep-alive',
+      'keep-alive': 'timeout=5, max=1000'
+    })
     res.end(
       JSON.stringify({
         version: process.env.MODEL_VERSION
@@ -87,7 +115,7 @@ export function startHttpServer (
 
   app.get('/api/v1/statistics', (req, res) => {
     try {
-      const token = req.query.token as string
+      const token = (req.query.token as string) ?? (req.headers.authorization ?? '').split(' ')[1]
       const payload = decodeToken(token)
       const admin = payload.extra?.admin === 'true'
       const jsonData = {
@@ -97,7 +125,11 @@ export function startHttpServer (
         profiling
       }
       const json = JSON.stringify(jsonData)
-      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        Connection: 'keep-alive',
+        'keep-alive': 'timeout=5, max=1000'
+      })
       res.end(json)
     } catch (err: any) {
       Analytics.handleError(err)
@@ -106,6 +138,7 @@ export function startHttpServer (
       res.end()
     }
   })
+
   app.get('/api/v1/profiling', (req, res) => {
     try {
       const token = req.query.token as string
@@ -125,9 +158,9 @@ export function startHttpServer (
   })
   app.put('/api/v1/manage', (req, res) => {
     try {
-      const token = req.query.token as string
+      const token = (req.query.token as string) ?? (req.headers.authorization ?? '').split(' ')[1]
       const payload = decodeToken(token)
-      if (payload.extra?.admin !== 'true') {
+      if (payload.extra?.admin !== 'true' && payload.email !== systemAccountEmail) {
         console.warn('Non admin attempt to maintenance action', { payload })
         res.writeHead(404, {})
         res.end()
@@ -183,7 +216,7 @@ export function startHttpServer (
         }
         case 'force-close': {
           const wsId = req.query.wsId as string
-          void sessions.forceClose(wsId)
+          void sessions.forceClose(wsId ?? payload.workspace.name)
           res.writeHead(200)
           res.end()
           return
@@ -216,6 +249,13 @@ export function startHttpServer (
       const name = req.query.name as string
       const contentType = req.query.contentType as string
       const size = parseInt((req.query.size as string) ?? '-1')
+      const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB limit
+
+      if (size > MAX_FILE_SIZE) {
+        res.writeHead(413, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'File too large' }))
+        return
+      }
       if (Number.isNaN(size)) {
         ctx.error('/api/v1/blob put error', {
           message: 'invalid NaN file size',
@@ -234,7 +274,11 @@ export function startHttpServer (
           { file: name, contentType }
         )
         .then(() => {
-          res.writeHead(200, { 'Cache-Control': 'no-cache' })
+          res.writeHead(200, {
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'keep-alive': 'timeout=5, max=1000'
+          })
           res.end()
         })
         .catch((err) => {
@@ -288,30 +332,45 @@ export function startHttpServer (
     }
   })
 
+  registerRPC(app, sessions, ctx, pipelineFactory)
+
+  app.put('/api/v1/broadcast', (req, res) => {
+    try {
+      const token = req.query.token as string
+      decodeToken(token)
+      const ws = sessions.workspaces.get(req.query.workspace as string)
+      if (ws !== undefined) {
+        // push the data to body
+        void retrieveJson(req)
+          .then((data) => {
+            if (Array.isArray(data)) {
+              sessions.broadcastAll(ws, data as Tx[])
+            } else {
+              sessions.broadcastAll(ws, [data as unknown as Tx])
+            }
+            res.end()
+          })
+          .catch((err) => {
+            ctx.error('JSON parse error', { err })
+            res.writeHead(400, {})
+            res.end()
+          })
+      } else {
+        res.writeHead(404, {})
+        res.end()
+      }
+    } catch (err: any) {
+      Analytics.handleError(err)
+      ctx.error('error', { err })
+      res.writeHead(404, {})
+      res.end()
+    }
+  })
+
   const httpServer = http.createServer(app)
   const wss = new WebSocketServer({
     noServer: true,
-    perMessageDeflate: enableCompression
-      ? {
-          zlibDeflateOptions: {
-            // See zlib defaults.
-            chunkSize: 32 * 1024,
-            memLevel: 1,
-            level: 1
-          },
-          zlibInflateOptions: {
-            chunkSize: 32 * 1024,
-            level: 1,
-            memLevel: 1
-          },
-          serverNoContextTakeover: true,
-          clientNoContextTakeover: true,
-          // Below options specified as default values.
-          concurrencyLimit: Math.max(10, os.availableParallelism()), // Limits zlib concurrency for perf.
-          threshold: 1024 // Size (in bytes) below which messages
-          // should not be compressed if context takeover is disabled.
-        }
-      : false,
+    perMessageDeflate: false,
     skipUTF8Validation: true,
     maxPayload: 250 * 1024 * 1024,
     clientTracking: false // We do not need to track clients inside clients.
@@ -338,26 +397,54 @@ export function startHttpServer (
       connectionSocket: cs,
       payload: token,
       token: rawToken,
-      session: sessions.addSession(ctx, cs, token, rawToken, pipelineFactory, sessionId, accountsUrl),
+      session: sessions.addSession(ctx, cs, token, rawToken, pipelineFactory, sessionId),
       url: ''
     }
 
     if (webSocketData.session instanceof Promise) {
       void webSocketData.session.then((s) => {
         if ('error' in s) {
-          cs.send(
-            ctx,
-            { id: -1, error: unknownStatus(s.error.message ?? 'Unknown error'), terminate: s.terminate },
-            false,
-            false
-          )
+          if (s.specialError === 'archived') {
+            void cs.send(
+              ctx,
+              {
+                id: -1,
+                error: new Status(Severity.ERROR, platform.status.WorkspaceArchived, {
+                  workspace: token.workspace.name
+                }),
+                terminate: s.terminate
+              },
+              false,
+              false
+            )
+          } else if (s.specialError === 'migration') {
+            void cs.send(
+              ctx,
+              {
+                id: -1,
+                error: new Status(Severity.ERROR, platform.status.WorkspaceMigration, {
+                  workspace: token.workspace.name
+                }),
+                terminate: s.terminate
+              },
+              false,
+              false
+            )
+          } else {
+            void cs.send(
+              ctx,
+              { id: -1, error: unknownStatus(s.error.message ?? 'Unknown error'), terminate: s.terminate },
+              false,
+              false
+            )
+          }
           // No connection to account service, retry from client.
           setTimeout(() => {
             cs.close()
           }, 1000)
         }
         if ('upgrade' in s) {
-          cs.send(ctx, { id: -1, result: { state: 'upgrading', stats: (s as any).upgradeInfo } }, false, false)
+          void cs.send(ctx, { id: -1, result: { state: 'upgrading', stats: (s as any).upgradeInfo } }, false, false)
           setTimeout(() => {
             cs.close()
           }, 5000)
@@ -375,7 +462,7 @@ export function startHttpServer (
         if (msg instanceof Buffer) {
           buff = msg
         } else if (Array.isArray(msg)) {
-          buff = Buffer.concat(msg)
+          buff = Buffer.concat(msg as any)
         }
         if (buff !== undefined) {
           doSessionOp(
@@ -413,6 +500,10 @@ export function startHttpServer (
         webSocketData,
         (s) => {
           ctx.error('error', { err, user: s.session.getUser() })
+          if (!(s.session.workspaceClosed ?? false)) {
+            // remove session after 1seconds, give a time to reconnect.
+            void sessions.close(ctx, cs, toWorkspaceString(token.workspace))
+          }
         },
         Buffer.from('')
       )
@@ -498,6 +589,17 @@ function createWebsocketClientSocket (
       ws.close()
       ws.terminate()
     },
+    isBackpressure: () => ws.bufferedAmount > backpressureSize,
+    backpressure: async (ctx) => {
+      if (ws.bufferedAmount < backpressureSize) {
+        return
+      }
+      await ctx.with('backpressure', {}, async () => {
+        while (ws.bufferedAmount > backpressureSize) {
+          await setImmediate()
+        }
+      })
+    },
     checkState: () => {
       if (ws.readyState === ws.CLOSED || ws.readyState === ws.CLOSING) {
         ws.terminate()
@@ -506,10 +608,19 @@ function createWebsocketClientSocket (
       return true
     },
     readRequest: (buffer: Buffer, binary: boolean) => {
+      if (buffer.length === pingConst.length && buffer.toString() === pingConst) {
+        return { method: pingConst, params: [], id: -1, time: Date.now() }
+      }
       return rpcHandler.readRequest(buffer, binary)
     },
     data: () => data,
-    send: (ctx: MeasureContext, msg, binary, compression) => {
+    sendPong: () => {
+      if (ws.readyState !== ws.OPEN || cs.isClosed) {
+        return
+      }
+      ws.send(pongConst)
+    },
+    send: async (ctx: MeasureContext, msg, binary, _compression): Promise<void> => {
       const smsg = rpcHandler.serialize(msg, binary)
 
       ctx.measure('send-data', smsg.length)
@@ -517,14 +628,28 @@ function createWebsocketClientSocket (
       if (ws.readyState !== ws.OPEN || cs.isClosed) {
         return
       }
-      ws.send(smsg, { binary: true, compress: compression }, (err) => {
-        if (err != null) {
-          if (!`${err.message}`.includes('WebSocket is not open')) {
-            ctx.error('send error', { err })
-            Analytics.handleError(err)
+
+      // We need to be sure all data is send before we will send more.
+      if (cs.isBackpressure()) {
+        await cs.backpressure(ctx)
+      }
+
+      let sendMsg = smsg
+      if (_compression) {
+        sendMsg = await compress(smsg)
+      }
+      await new Promise<void>((resolve) => {
+        const handleErr = (err?: Error): void => {
+          ctx.measure('msg-send-delta', Date.now() - st)
+          if (err != null) {
+            if (!`${err.message}`.includes('WebSocket is not open')) {
+              ctx.error('send error', { err })
+              Analytics.handleError(err)
+            }
           }
+          resolve() // In any case we need to resolve.
         }
-        ctx.measure('msg-send-delta', Date.now() - st)
+        ws.send(sendMsg, { binary: true }, handleErr)
       })
     }
   }

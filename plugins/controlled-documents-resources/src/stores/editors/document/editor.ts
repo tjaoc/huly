@@ -43,6 +43,7 @@ import {
   documentAllVersionsUpdated,
   editorModeUpdated,
   reviewRequestUpdated,
+  reviewRequestHistoryUpdated,
   rightPanelTabChanged,
   documentSnapshotsUpdated,
   trainingUpdated,
@@ -120,6 +121,10 @@ export const $training = createStore<Training | null>(null)
 
 export const $reviewRequest = createStore<DocumentReviewRequest | null>(null)
   .on(reviewRequestUpdated, (_, payload) => payload)
+  .reset(controlledDocumentClosed)
+
+export const $reviewRequestHistory = createStore<DocumentReviewRequest[] | null>(null)
+  .on(reviewRequestHistoryUpdated, (_, payload) => payload)
   .reset(controlledDocumentClosed)
 
 export const $approvalRequest = createStore<DocumentApprovalRequest | null>(null)
@@ -361,7 +366,7 @@ export const $availableRightPanelTabs = combine($canViewDocumentComments, (canVi
   tabs.push({
     id: RightPanelTab.APPROVALS,
     icon: plugin.icon.Approvals,
-    showTooltip: { label: plugin.string.DocumentApprovals }
+    showTooltip: { label: plugin.string.ValidationWorkflow }
   })
 
   return tabs

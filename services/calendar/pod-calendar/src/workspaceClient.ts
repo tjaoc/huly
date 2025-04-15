@@ -16,8 +16,10 @@
 import calendar, { Event, ExternalCalendar } from '@hcengineering/calendar'
 import contact, { Channel, Contact, type Employee, type PersonAccount } from '@hcengineering/contact'
 import core, {
+  RateLimiter,
   TxOperations,
   TxProcessor,
+  systemAccountEmail,
   toIdMap,
   type Account,
   type Client,
@@ -34,15 +36,21 @@ import { Collection, type Db } from 'mongodb'
 import { CalendarClient } from './calendar'
 import { CalendarController } from './calendarController'
 import { getClient } from './client'
+import { SyncHistory, Token, type User } from './types'
 import config from './config'
-import { SyncHistory, type ProjectCredentials, type User } from './types'
 
 export class WorkspaceClient {
   private readonly txHandlers: ((...tx: Tx[]) => Promise<void>)[] = []
 
-  private client!: Client
-  private readonly clients: Map<string, CalendarClient> = new Map<string, CalendarClient>()
+  client!: Client
+  private readonly clients: Map<string, CalendarClient | Promise<CalendarClient>> = new Map<
+  string,
+  CalendarClient | Promise<CalendarClient>
+  >()
+
   private readonly syncHistory: Collection<SyncHistory>
+  private readonly tokens: Collection<Token>
+  private closeTimer: NodeJS.Timeout | undefined = undefined
   private channels = new Map<Ref<Channel>, Channel>()
   private readonly calendarsByEmail = new Map<string, ExternalCalendar[]>()
   readonly calendars = {
@@ -62,47 +70,62 @@ export class WorkspaceClient {
   }
 
   private constructor (
-    private readonly credentials: ProjectCredentials,
     private readonly mongo: Db,
     private readonly workspace: string,
     private readonly serviceController: CalendarController
   ) {
+    this.tokens = mongo.collection<Token>('tokens')
     this.syncHistory = mongo.collection<SyncHistory>('syncHistories')
   }
 
-  static async create (
-    credentials: ProjectCredentials,
-    mongo: Db,
-    workspace: string,
-    serviceController: CalendarController
-  ): Promise<WorkspaceClient> {
-    const instance = new WorkspaceClient(credentials, mongo, workspace, serviceController)
+  static async getSystemClient (workspace: string): Promise<Client> {
+    const token = generateToken(systemAccountEmail, { name: workspace })
+    return await getClient(token)
+  }
+
+  static async create (mongo: Db, workspace: string, serviceController: CalendarController): Promise<WorkspaceClient> {
+    const instance = new WorkspaceClient(mongo, workspace, serviceController)
+    console.log('create workspace client', workspace)
     await instance.initClient(workspace)
     return instance
   }
 
-  async createCalendarClient (user: User): Promise<CalendarClient> {
+  async createCalendarClient (user: User, stayAlive: boolean = false): Promise<CalendarClient> {
     const current = this.getCalendarClient(user.email)
-    if (current !== undefined) return current
-    const newClient = await CalendarClient.create(this.credentials, user, this.mongo, this.client, this)
+    if (current !== undefined) {
+      if (current instanceof Promise) {
+        return await current
+      }
+      return current
+    }
+    const newClient = CalendarClient.create(user, this.mongo, this.client, this, stayAlive)
+    if (this.clients.has(user.email)) {
+      console.error('Calendar client already exists', user.workspace, user.userId)
+    }
     this.clients.set(user.email, newClient)
-    return newClient
+    const res = await newClient
+    this.clients.set(user.email, res)
+    return res
   }
 
   async newCalendarClient (user: User, code: string): Promise<CalendarClient> {
-    const newClient = await CalendarClient.create(this.credentials, user, this.mongo, this.client, this)
+    const newClient = await CalendarClient.create(user, this.mongo, this.client, this)
     const email = await newClient.authorize(code)
     if (this.clients.has(email)) {
-      await newClient.close()
+      newClient.close()
       throw new Error('Client already exist')
     }
     this.clients.set(email, newClient)
+    this.serviceController.pushWorkspaceByEmail(email, user.workspace)
     return newClient
   }
 
   async close (): Promise<void> {
-    for (const client of this.clients.values()) {
-      await client.close()
+    for (let client of this.clients.values()) {
+      if (client instanceof Promise) {
+        client = await client
+      }
+      client.close()
     }
     this.clients.clear()
     await this.client?.close()
@@ -117,9 +140,12 @@ export class WorkspaceClient {
   }
 
   async signout (value: string, byError: boolean = false): Promise<number> {
-    const client = this.clients.get(value)
+    let client = this.clients.get(value)
     if (client !== undefined) {
-      await client.signout(byError)
+      if (client instanceof Promise) {
+        client = await client
+      }
+      await client.signout()
     } else {
       const integration = await this.client.findOne(setting.class.Integration, {
         type: calendar.integrationType.Calendar,
@@ -140,22 +166,46 @@ export class WorkspaceClient {
 
   removeClient (email: string): void {
     this.clients.delete(email)
-    this.serviceController.removeClient(email)
     if (this.clients.size > 0) return
-    this.serviceController.removeWorkspace(this.workspace)
+    if (this.closeTimer !== undefined) clearTimeout(this.closeTimer)
+    this.closeTimer = setTimeout(() => {
+      if (this.clients.size > 0) return
+      void this.close()
+      this.serviceController.removeWorkspace(this.workspace)
+    }, 20000)
   }
 
-  private getCalendarClient (email: string): CalendarClient | undefined {
+  getCalendarClient (email: string): CalendarClient | Promise<CalendarClient> | undefined {
     return this.clients.get(email)
   }
 
-  private getCalendarClientByCalendar (id: Ref<ExternalCalendar>): CalendarClient | undefined {
+  private async getCalendarClientByCalendar (
+    id: Ref<ExternalCalendar>,
+    create: boolean = false
+  ): Promise<CalendarClient | undefined> {
     const calendar = this.calendars.byId.get(id)
-    return calendar != null ? this.clients.get(calendar.externalUser) : undefined
+    if (calendar === undefined) {
+      return
+    }
+    const client = this.clients.get(calendar.externalUser)
+    if (client instanceof Promise) {
+      return await client
+    }
+    if (client === undefined && create) {
+      const user = await this.tokens.findOne({
+        workspace: this.workspace,
+        access_token: { $exists: true },
+        email: calendar.externalUser
+      })
+      if (user != null) {
+        return await this.createCalendarClient(user)
+      }
+    }
+    return client
   }
 
   private async initClient (workspace: string): Promise<Client> {
-    const token = generateToken(config.SystemEmail, { name: workspace })
+    const token = generateToken(systemAccountEmail, { name: workspace })
     const client = await getClient(token)
     client.notify = (...tx: Tx[]) => {
       void this.txHandler(...tx)
@@ -182,7 +232,22 @@ export class WorkspaceClient {
   }
 
   async sync (): Promise<void> {
-    await this.getNewEvents()
+    try {
+      await this.getNewEvents()
+    } catch (err) {
+      console.error('sync error', err)
+    }
+    const limiter = new RateLimiter(config.InitLimit)
+    for (let client of this.clients.values()) {
+      await limiter.add(async () => {
+        if (client instanceof Promise) {
+          client = await client
+        }
+        await client.startSync()
+        await client.release()
+      })
+    }
+    await limiter.waitProcessing()
   }
 
   // #region Events
@@ -194,8 +259,8 @@ export class WorkspaceClient {
     return res?.timestamp
   }
 
-  async updateSyncTime (): Promise<void> {
-    const timestamp = Date.now()
+  async updateSyncTime (to: number | undefined = undefined): Promise<void> {
+    const timestamp = to ?? Date.now()
     await this.syncHistory.updateOne(
       {
         workspace: this.workspace
@@ -209,6 +274,22 @@ export class WorkspaceClient {
     )
   }
 
+  async pushEvent (event: Event, type: 'create' | 'update' | 'delete'): Promise<void> {
+    const client = await this.getCalendarClientByCalendar(event.calendar as Ref<ExternalCalendar>, true)
+    if (client === undefined) {
+      return
+    }
+    // if client synced our events just call resync
+    if (event.access === 'owner' || event.access === 'writer') {
+      if (type === 'delete') {
+        await client.removeEvent(event)
+      } else {
+        await client.syncMyEvent(event)
+      }
+      await this.updateSyncTime()
+    }
+  }
+
   async getNewEvents (): Promise<void> {
     const lastSync = await this.getSyncTime()
     const query = lastSync !== undefined ? { modifiedOn: { $gt: lastSync } } : {}
@@ -217,29 +298,29 @@ export class WorkspaceClient {
       await this.txEventHandler(...tx)
     })
     for (const newEvent of newEvents) {
-      const client = this.getCalendarClientByCalendar(newEvent.calendar as Ref<ExternalCalendar>)
+      const client = await this.getCalendarClientByCalendar(newEvent.calendar as Ref<ExternalCalendar>)
       if (client === undefined) {
-        return
+        continue
       }
       await client.syncMyEvent(newEvent)
-      await this.updateSyncTime()
+      await this.updateSyncTime(newEvent.modifiedOn)
     }
+    await this.updateSyncTime()
   }
 
   private async txEventHandler (...txes: Tx[]): Promise<void> {
     for (const tx of txes) {
-      const actualTx = TxProcessor.extractTx(tx)
-      switch (actualTx._class) {
+      switch (tx._class) {
         case core.class.TxCreateDoc: {
-          await this.txCreateEvent(actualTx as TxCreateDoc<Doc>)
-          return
+          await this.txCreateEvent(tx as TxCreateDoc<Doc>)
+          continue
         }
         case core.class.TxUpdateDoc: {
-          await this.txUpdateEvent(actualTx as TxUpdateDoc<Event>)
-          return
+          await this.txUpdateEvent(tx as TxUpdateDoc<Event>)
+          continue
         }
         case core.class.TxRemoveDoc: {
-          await this.txRemoveEvent(actualTx as TxRemoveDoc<Doc>)
+          await this.txRemoveEvent(tx as TxRemoveDoc<Doc>)
         }
       }
     }
@@ -250,7 +331,7 @@ export class WorkspaceClient {
     if (hierarhy.isDerived(tx.objectClass, calendar.class.Event)) {
       const doc = TxProcessor.createDoc2Doc(tx as TxCreateDoc<Event>)
       if (doc.access !== 'owner') return
-      const client = this.getCalendarClientByCalendar(doc.calendar as Ref<ExternalCalendar>)
+      const client = await this.getCalendarClientByCalendar(doc.calendar as Ref<ExternalCalendar>)
       if (client === undefined) {
         return
       }
@@ -258,7 +339,7 @@ export class WorkspaceClient {
         await client.createEvent(doc)
         await this.updateSyncTime()
       } catch (err) {
-        console.log(err)
+        console.error(err)
       }
     }
   }
@@ -269,13 +350,13 @@ export class WorkspaceClient {
       return
     }
     try {
-      const txes = await this.client.findAll(core.class.TxCollectionCUD, {
-        'tx.objectId': tx.objectId
+      const txes = await this.client.findAll(core.class.TxCUD, {
+        objectId: tx.objectId
       })
-      const extracted = txes.map((tx) => TxProcessor.extractTx(tx)).filter((p) => p._id !== tx._id)
+      const extracted = txes.filter((p) => p._id !== tx._id)
       const ev = TxProcessor.buildDoc2Doc<Event>(extracted)
       if (ev !== undefined) {
-        const oldClient = this.getCalendarClientByCalendar(ev.calendar as Ref<ExternalCalendar>)
+        const oldClient = await this.getCalendarClientByCalendar(ev.calendar as Ref<ExternalCalendar>)
         if (oldClient !== undefined) {
           const oldCalendar = this.calendars.byId.get(ev.calendar as Ref<ExternalCalendar>)
           if (oldCalendar !== undefined) {
@@ -284,16 +365,16 @@ export class WorkspaceClient {
         }
       }
     } catch (err) {
-      console.log('Error on remove event', err)
+      console.error('Error on remove event', err)
     }
     try {
-      const client = this.getCalendarClientByCalendar(event.calendar as Ref<ExternalCalendar>)
+      const client = await this.getCalendarClientByCalendar(event.calendar as Ref<ExternalCalendar>)
       if (client !== undefined) {
         await client.syncMyEvent(event)
       }
       await this.updateSyncTime()
     } catch (err) {
-      console.log('Error on move event', err)
+      console.error('Error on move event', err)
     }
   }
 
@@ -309,15 +390,15 @@ export class WorkspaceClient {
         return
       }
       if (event.access !== 'owner' && event.access !== 'writer') return
-      const client = this.getCalendarClientByCalendar(event.calendar as Ref<ExternalCalendar>)
+      const client = await this.getCalendarClientByCalendar(event.calendar as Ref<ExternalCalendar>)
       if (client === undefined) {
         return
       }
       try {
-        await client.updateEvent(event, tx)
+        await client.updateEvent(event)
         await this.updateSyncTime()
       } catch (err) {
-        console.log(err)
+        console.error(err)
       }
     }
   }
@@ -325,13 +406,13 @@ export class WorkspaceClient {
   private async txRemoveEvent (tx: TxRemoveDoc<Doc>): Promise<void> {
     const hierarhy = this.client.getHierarchy()
     if (hierarhy.isDerived(tx.objectClass, calendar.class.Event)) {
-      const txes = await this.client.findAll(core.class.TxCollectionCUD, {
-        'tx.objectId': tx.objectId
+      const txes = await this.client.findAll(core.class.TxCUD, {
+        objectId: tx.objectId
       })
-      const ev = TxProcessor.buildDoc2Doc<Event>(txes.map((tx) => TxProcessor.extractTx(tx)))
+      const ev = TxProcessor.buildDoc2Doc<Event>(txes)
       if (ev === undefined) return
       if (ev.access !== 'owner' && ev.access !== 'writer') return
-      const client = this.getCalendarClientByCalendar(ev?.calendar as Ref<ExternalCalendar>)
+      const client = await this.getCalendarClientByCalendar(ev?.calendar as Ref<ExternalCalendar>)
       if (client === undefined) {
         return
       }
@@ -368,8 +449,7 @@ export class WorkspaceClient {
     return this.calendarsByEmail.get(email) ?? []
   }
 
-  private async txCalendarHandler (tx: Tx): Promise<void> {
-    const actualTx = TxProcessor.extractTx(tx)
+  private async txCalendarHandler (actualTx: Tx): Promise<void> {
     if (actualTx._class === core.class.TxCreateDoc) {
       if ((actualTx as TxCreateDoc<Doc>).objectClass === calendar.class.ExternalCalendar) {
         const calendar = TxProcessor.createDoc2Doc(actualTx as TxCreateDoc<ExternalCalendar>)
@@ -428,8 +508,7 @@ export class WorkspaceClient {
     })
   }
 
-  private async txChannelHandler (tx: Tx): Promise<void> {
-    const actualTx = TxProcessor.extractTx(tx)
+  private async txChannelHandler (actualTx: Tx): Promise<void> {
     if (actualTx._class === core.class.TxCreateDoc) {
       if ((actualTx as TxCreateDoc<Doc>).objectClass === contact.class.Channel) {
         const channel = TxProcessor.createDoc2Doc(actualTx as TxCreateDoc<Channel>)
@@ -536,8 +615,7 @@ export class WorkspaceClient {
     this.integrations.byId.delete(integration._id)
   }
 
-  private async txIntegrationHandler (tx: Tx): Promise<void> {
-    const actualTx = TxProcessor.extractTx(tx)
+  private async txIntegrationHandler (actualTx: Tx): Promise<void> {
     if (actualTx._class === core.class.TxCreateDoc) {
       if ((actualTx as TxCreateDoc<Doc>).objectClass === setting.class.Integration) {
         const integration = TxProcessor.createDoc2Doc(actualTx as TxCreateDoc<Integration>)

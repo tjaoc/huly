@@ -27,17 +27,15 @@ import core, {
   MigrationState,
   ModelDb,
   systemAccountEmail,
-  toWorkspaceString,
   Tx,
   TxOperations,
   WorkspaceId,
   WorkspaceIdWithUrl,
   type Client,
-  type Doc,
   type Ref,
   type WithLookup
 } from '@hcengineering/core'
-import { consoleModelLogger, MigrateOperation, ModelLogger, tryMigrate } from '@hcengineering/model'
+import { consoleModelLogger, MigrateOperation, ModelLogger, tryMigrate, type MigrateMode } from '@hcengineering/model'
 import { DomainIndexHelperImpl, Pipeline, StorageAdapter, type DbAdapter } from '@hcengineering/server-core'
 import { InitScript, WorkspaceInitializer } from './initializer'
 import toolPlugin from './plugin'
@@ -78,11 +76,9 @@ export class FileModelLogger implements ModelLogger {
  * @public
  */
 export function prepareTools (rawTxes: Tx[]): {
-  mongodbUri: string | undefined
   dbUrl: string
   txes: Tx[]
 } {
-  const mongodbUri = process.env.MONGO_URL
   const dbUrl = process.env.DB_URL
   if (dbUrl === undefined) {
     console.error('please provide db url.')
@@ -90,7 +86,6 @@ export function prepareTools (rawTxes: Tx[]): {
   }
 
   return {
-    mongodbUri,
     dbUrl,
     txes: JSON.parse(JSON.stringify(rawTxes)) as Tx[]
   }
@@ -115,15 +110,16 @@ export async function initModel (
 
   try {
     logger.log('creating database...', workspaceId)
-    await adapter.upload(ctx, DOMAIN_TX, [
-      {
-        _class: core.class.Tx,
-        _id: 'first-tx' as Ref<Doc>,
-        modifiedBy: core.account.System,
-        modifiedOn: Date.now(),
-        space: core.space.DerivedTx
-      }
-    ])
+    const firstTx: Tx = {
+      _class: core.class.Tx,
+      _id: 'first-tx' as Ref<Tx>,
+      modifiedBy: core.account.System,
+      modifiedOn: Date.now(),
+      space: core.space.DerivedTx,
+      objectSpace: core.space.DerivedTx
+    }
+
+    await adapter.upload(ctx, DOMAIN_TX, [firstTx])
 
     await progress(30)
 
@@ -150,31 +146,41 @@ export async function updateModel (
   connection: TxOperations,
   pipeline: Pipeline,
   logger: ModelLogger = consoleModelLogger,
-  progress: (value: number) => Promise<void>
+  progress: (value: number) => Promise<void>,
+  mode: MigrateMode
 ): Promise<void> {
   logger.log('connecting to transactor', { workspaceId })
 
   const states = await connection.findAll<MigrationState>(core.class.MigrationState, {})
   const sts = Array.from(groupByArray(states, (it) => it.plugin).entries())
-  const migrateState = new Map(sts.map((it) => [it[0], new Set(it[1].map((q) => q.state))]))
 
-  try {
-    let i = 0
-    for (const op of migrateOperations) {
-      const st = Date.now()
-      await op[1].upgrade(migrateState, async () => connection as any, logger)
-      const tdelta = Date.now() - st
-      if (tdelta > 0) {
-        logger.log('Create', { name: op[0], time: tdelta })
-      }
-      i++
-      await progress((((100 / migrateOperations.length) * i) / 100) * 100)
-    }
-    await progress(100)
-  } catch (e: any) {
-    logger.error('error', { error: e })
-    throw e
+  const _toSet = (vals: WithLookup<MigrationState>[]): Set<string> => {
+    return new Set(vals.map((q) => q.state))
   }
+
+  const migrateState = new Map<string, Set<string>>(sts.map((it) => [it[0], _toSet(it[1])]))
+
+  await ctx.with('create-upgrade', {}, async () => {
+    try {
+      let i = 0
+      for (const op of migrateOperations) {
+        const st = Date.now()
+        await ctx.with(op[0], {}, async () => {
+          await op[1].upgrade(migrateState, async () => connection as any, mode)
+        })
+        const tdelta = Date.now() - st
+        if (tdelta > 0) {
+          logger.log('Create', { name: op[0], time: tdelta })
+        }
+        i++
+        await progress((((100 / migrateOperations.length) * i) / 100) * 100)
+      }
+      await progress(100)
+    } catch (e: any) {
+      logger.error('error', { error: e })
+      throw e
+    }
+  })
 }
 
 /**
@@ -190,14 +196,20 @@ export async function initializeWorkspace (
   progress: (value: number) => Promise<void>
 ): Promise<void> {
   const initWS = branding?.initWorkspace ?? getMetadata(toolPlugin.metadata.InitWorkspace)
-  const scriptUrl = getMetadata(toolPlugin.metadata.InitScriptURL)
-  ctx.info('Init script details', { scriptUrl, initWS })
-  if (initWS === undefined || scriptUrl === undefined) return
+  const initRepoDir = getMetadata(toolPlugin.metadata.InitRepoDir)
+  ctx.info('Init script details', { initWS, initRepoDir })
+  if (initWS === undefined || initRepoDir === undefined) return
+
+  const initScriptFile = path.resolve(initRepoDir, 'script.yaml')
+  if (!fs.existsSync(initScriptFile)) {
+    ctx.warn('Init script file not found in init directory', { initScriptFile })
+    return
+  }
+
   try {
-    // `https://raw.githubusercontent.com/hcengineering/init/main/script.yaml`
-    const req = await fetch(scriptUrl)
-    const text = await req.text()
+    const text = fs.readFileSync(initScriptFile, 'utf8')
     const scripts = yaml.load(text) as any as InitScript[]
+
     let script: InitScript | undefined
     if (initWS !== undefined) {
       script = scripts.find((it) => it.name === initWS)
@@ -209,7 +221,7 @@ export async function initializeWorkspace (
       return
     }
 
-    const initializer = new WorkspaceInitializer(ctx, storageAdapter, wsUrl, client)
+    const initializer = new WorkspaceInitializer(ctx, storageAdapter, wsUrl, client, initRepoDir)
     await initializer.processScript(script, logger, progress)
   } catch (err: any) {
     ctx.error('Failed to initialize workspace', { error: err })
@@ -231,7 +243,8 @@ export async function upgradeModel (
   migrateOperations: [string, MigrateOperation][],
   logger: ModelLogger = consoleModelLogger,
   progress: (value: number) => Promise<void>,
-  updateIndexes: 'perform' | 'skip' | 'disable' = 'skip'
+  updateIndexes: 'perform' | 'skip' | 'disable' = 'skip',
+  mode: MigrateMode = 'create'
 ): Promise<Tx[]> {
   if (txes.some((tx) => tx.objectSpace !== core.space.Model)) {
     throw Error('Model txes must target only core.space.Model')
@@ -262,9 +275,7 @@ export async function upgradeModel (
 
       const t = Date.now()
       try {
-        await ctx.with(op[0], {}, async (ctx) => {
-          await preMigrate(preMigrateClient, logger)
-        })
+        await ctx.with(op[0], {}, (ctx) => preMigrate(preMigrateClient, logger, mode))
       } catch (err: any) {
         logger.error(`error during pre-migrate: ${op[0]} ${err.message}`, err)
         throw err
@@ -307,9 +318,7 @@ export async function upgradeModel (
     for (const op of migrateOperations) {
       try {
         const t = Date.now()
-        await ctx.with(op[0], {}, async () => {
-          await op[1].migrate(migrateClient, logger)
-        })
+        await ctx.with(op[0], {}, () => op[1].migrate(migrateClient, mode))
         const tdelta = Date.now() - t
         if (tdelta > 0) {
           logger.log('migrate:', { workspaceId: workspaceId.name, operation: op[0], time: Date.now() - t })
@@ -323,7 +332,7 @@ export async function upgradeModel (
     }
 
     if (updateIndexes === 'skip') {
-      await tryMigrate(migrateClient, coreId, [
+      await tryMigrate('upgrade', migrateClient, coreId, [
         {
           state: 'indexes-v5',
           func: upgradeIndexes
@@ -338,7 +347,7 @@ export async function upgradeModel (
     let i = 0
     for (const op of migrateOperations) {
       const t = Date.now()
-      await ctx.with(op[0], {}, () => op[1].upgrade(migrateState, async () => connection, logger))
+      await ctx.with(op[0], {}, () => op[1].upgrade(migrateState, async () => connection, mode))
       const tdelta = Date.now() - t
       if (tdelta > 0) {
         logger.log('upgrade:', { operation: op[0], time: tdelta, workspaceId: workspaceId.name })
@@ -353,12 +362,9 @@ export async function upgradeModel (
   const serverEndpoint = transactorUrl.replaceAll('wss://', 'https://').replace('ws://', 'http://')
   const token = generateToken(systemAccountEmail, workspaceId, { admin: 'true' })
   try {
-    await fetch(
-      serverEndpoint + `/api/v1/manage?token=${token}&operation=force-close&wsId=${toWorkspaceString(workspaceId)}`,
-      {
-        method: 'PUT'
-      }
-    )
+    await fetch(serverEndpoint + `/api/v1/manage?token=${token}&operation=force-close`, {
+      method: 'PUT'
+    })
   } catch (err: any) {
     // Ignore error if transactor is not yet ready
   }
@@ -428,9 +434,11 @@ async function createUpdateIndexes (
     if (adapter === undefined) {
       throw new PlatformError(unknownError(`Adapter for domain ${domain} not found`))
     }
-    const dbHelper = adapter.helper()
+    const dbHelper = adapter.helper?.()
 
-    await domainHelper.checkDomain(ctx, domain, await dbHelper.estimatedCount(domain), dbHelper)
+    if (dbHelper !== undefined) {
+      await domainHelper.checkDomain(ctx, domain, await dbHelper.estimatedCount(domain), dbHelper)
+    }
     completed++
     await progress((100 / allDomains.length) * completed)
   }

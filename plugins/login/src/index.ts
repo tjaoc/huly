@@ -35,9 +35,7 @@ export interface Workspace {
   progress?: number
 
   lastVisit: number
-
   backupInfo?: BackupStatus
-
   region?: string
 }
 
@@ -66,6 +64,23 @@ export interface OtpInfo {
   retryOn: Timestamp
 }
 
+export const pages = [
+  'login',
+  'signup',
+  'createWorkspace',
+  'password',
+  'recovery',
+  'selectWorkspace',
+  'admin',
+  'join',
+  'confirm',
+  'confirmationSend',
+  'auth',
+  'login-password'
+] as const
+
+export type Pages = (typeof pages)[number]
+
 export default plugin(loginId, {
   metadata: {
     AccountsUrl: '' as Asset,
@@ -73,7 +88,15 @@ export default plugin(loginId, {
     LastToken: '' as Metadata<string>,
     LoginEndpoint: '' as Metadata<string>,
     LoginEmail: '' as Metadata<string>,
-    DisableSignUp: '' as Metadata<boolean>
+    DisableSignUp: '' as Metadata<boolean>,
+    TransactorOverride: '' as Metadata<string>,
+    PasswordValidations: '' as Metadata<{
+      MinLength: number
+      MinSpecialChars: number
+      MinDigits: number
+      MinUpperChars: number
+      MinLowerChars: number
+    }>
   },
   component: {
     LoginApp: '' as AnyComponent,
@@ -86,10 +109,19 @@ export default plugin(loginId, {
     LinkValidHours: '' as IntlString,
     EmailMask: '' as IntlString,
     NoLimit: '' as IntlString,
-    InviteLimit: '' as IntlString
+    InviteLimit: '' as IntlString,
+    PasswordMinLength: '' as IntlString<{ count: number }>,
+    PasswordMinSpecialChars: '' as IntlString<{ count: number }>,
+    PasswordMinDigits: '' as IntlString<{ count: number }>,
+    PasswordMinUpperChars: '' as IntlString<{ count: number }>,
+    PasswordMinLowerChars: '' as IntlString<{ count: number }>,
+    WorkspaceArchived: '' as IntlString,
+    WorkspaceArchivedDesc: '' as IntlString,
+    RestoreArchivedWorkspace: '' as IntlString
   },
   function: {
     SendInvite: '' as Resource<(email: string, personId?: Ref<Doc>, role?: AccountRole) => Promise<void>>,
+    ResendInvite: '' as Resource<(inviteId: string) => Promise<void>>,
     GetInviteLink: '' as Resource<
     (
       expHours: number,
