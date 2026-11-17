@@ -44,6 +44,6 @@
     "@hcengineering/query": "^0.6.12",
     "fast-equals": "^5.0.1",
     "@hcengineering/storage": "^0.6.0",
-    "uuid": "^8.3.2"
+    "uuid": "^14.0.3"
   }
 }
